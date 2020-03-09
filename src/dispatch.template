@@ -1,0 +1,7 @@
+device:
+- vkCreatePipelineCache
+
+instance:
+#ifdef VK_USE_PLATFORM_XCB_KHR
+- vkCreateXcbSurfaceKHR
+#endif
