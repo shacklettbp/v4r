@@ -7,22 +7,37 @@
 #include <v4r.hpp>
 
 #include "dispatch.hpp"
+#include "vulkan_state.hpp"
+#include "scene.hpp"
 
 using namespace std;
 
 namespace v4r {
 
-void entry() {
-    vector<thread> threads;
-    for (int i = 0; i < 16; i++) {
-        threads.emplace_back([i]() {
-            cout << "blah " << i << endl;
-        });
-    }
+template <typename T, typename... Args>
+static inline RenderContext::Handle<T> make_handle(Args&&... args) {
+    return RenderContext::Handle<T>(new T(forward<Args>(args)...));
+};
 
-    for (thread &t : threads) {
-        t.join();
-    }
+template <typename T>
+void RenderContext::HandleDeleter<T>::operator()(T *ptr) const {
+    delete ptr;
+}
+template struct RenderContext::HandleDeleter<SceneID>;
+
+RenderContext::RenderContext(int gpu_id)
+    : state_(make_unique<VulkanState>(gpu_id))
+{
+}
+
+RenderContext::~RenderContext() = default;
+
+
+RenderContext::Handle<SceneID> RenderContext::loadScene(const std::string &file) {
+    return make_handle<SceneID>();
+}
+
+void RenderContext::dropScene(RenderContext::Handle<SceneID> &&handle) {
 }
 
 }

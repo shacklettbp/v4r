@@ -1,7 +1,13 @@
 device:
-- vkCreatePipelineCache
+- vkCreateCommandPool
 
 instance:
+- vkEnumeratePhysicalDevices
+- vkGetPhysicalDeviceProperties2
+- vkGetPhysicalDeviceFeatures2
+- vkGetPhysicalDeviceMemoryProperties2
+- vkGetPhysicalDeviceQueueFamilyProperties2
+- vkCreateDevice
 #ifdef VK_USE_PLATFORM_XCB_KHR
 - vkCreateXcbSurfaceKHR
 #endif

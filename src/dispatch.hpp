@@ -9,12 +9,16 @@ struct InstanceDispatch {
 #include "dispatch_instance_impl.hpp"
     
     InstanceDispatch(VkInstance inst);
+
+    InstanceDispatch(const InstanceDispatch &) = delete;
 };
 
 struct DeviceDispatch {
 #include "dispatch_device_impl.hpp"
 
     DeviceDispatch(VkDevice dev);
+
+    DeviceDispatch(const DeviceDispatch &) = delete;
 };
 
 }

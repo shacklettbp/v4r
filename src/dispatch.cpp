@@ -2,6 +2,13 @@
 #include <iostream>
 #include <cstdlib>
 
+extern "C" {
+    VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(
+        VkInstance, const char *);
+    VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
+        VkDevice, const char *);
+}
+
 namespace v4r {
 
 static inline PFN_vkVoidFunction checkPtr(PFN_vkVoidFunction ptr,
