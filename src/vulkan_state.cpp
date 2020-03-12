@@ -12,8 +12,8 @@ using namespace std;
 
 extern "C" {
     VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(
-        const VkInstanceCreateInfo *, const VkAllocationCallbacks *,
-        VkInstance *);
+            const VkInstanceCreateInfo *, const VkAllocationCallbacks *,
+            VkInstance *);
 }
 
 namespace v4r {
@@ -54,12 +54,39 @@ InstanceState::InstanceState()
 {}
 
 void fillQueueInfo(VkDeviceQueueCreateInfo &info, uint32_t idx,
-                   const std::vector<float> &priorities)
+                   const vector<float> &priorities)
 {
     info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     info.queueFamilyIndex = idx;
     info.queueCount = priorities.size();
     info.pQueuePriorities = priorities.data();
+}
+
+VkFormat InstanceState::getDeviceDepthFormat(VkPhysicalDevice phy) const
+{
+    static const array desired_formats {
+        VK_FORMAT_D32_SFLOAT_S8_UINT,
+        VK_FORMAT_D32_SFLOAT,
+        VK_FORMAT_D24_UNORM_S8_UINT
+    };
+
+    const VkFormatFeatureFlags desired_features =
+        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
+        VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+
+    for (auto &fmt : desired_formats) {
+        VkFormatProperties2 props;
+        props.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
+        props.pNext = nullptr;
+
+        dt.getPhysicalDeviceFormatProperties2(phy, fmt, &props);
+        if (props.formatProperties.optimalTilingFeatures & desired_features) {
+            return fmt;
+        }
+    }
+
+    cerr << "Unable to find required depth format" << endl;
+    fatalExit();
 }
 
 DeviceState InstanceState::makeDevice(uint32_t gpu_id) const
@@ -187,13 +214,13 @@ DeviceState InstanceState::makeDevice(uint32_t gpu_id) const
         *gfx_queue_family,
         *compute_queue_family,
         *transfer_queue_family,
+        getDeviceDepthFormat(phy),
         dev,
         DeviceDispatch(dev)
     };
 }
 
-VkCommandPool createCmdPool(const VkDevice dev, const DeviceDispatch &devD,
-                            uint32_t qf_idx)
+VkCommandPool createCmdPool(const DeviceState &dev, uint32_t qf_idx)
 {
     VkCommandPoolCreateInfo pool_info = {};
     pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -201,18 +228,34 @@ VkCommandPool createCmdPool(const VkDevice dev, const DeviceDispatch &devD,
     pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 
     VkCommandPool pool;
-    REQ_VK(devD.createCommandPool(dev, &pool_info, nullptr, &pool));
+    REQ_VK(dev.dt.createCommandPool(dev.hdl, &pool_info, nullptr, &pool));
     return pool;
 }
+
+VkQueue createQueue(const DeviceState &dev, uint32_t qf_idx, uint32_t queue_idx)
+{
+    VkDeviceQueueInfo2 queue_info;
+    queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2;
+    queue_info.pNext = nullptr;
+    queue_info.flags = 0;
+    queue_info.queueFamilyIndex = qf_idx;
+    queue_info.queueIndex = queue_idx;
+
+    VkQueue queue;
+    dev.dt.getDeviceQueue2(dev.hdl, &queue_info, &queue);
+
+    return queue;
+}
+
+CommandStreamState::CommandStreamState(const DeviceState &d)
+    : dev(d),
+      gfxPool(createCmdPool(d, d.gfxQF)),
+      gfxQueue(createQueue(d, d.gfxQF, 0))
+{}
 
 VulkanState::VulkanState(uint32_t gpu_id)
     : inst(),
       dev(inst.makeDevice(gpu_id))
-{}
-
-VulkanThreadState::VulkanThreadState(const DeviceState &d)
-    : dev(d),
-      gfxPool(createCmdPool(dev.hdl, dev.dt, dev.gfxQF))
 {}
 
 }

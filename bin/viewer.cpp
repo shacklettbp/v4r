@@ -15,5 +15,9 @@ int main(int argc, char *argv[]) {
 
     auto scene_handle { r.loadScene(argv[1]) };
 
+    auto cmd_stream = r.makeCommandStream();
+    auto frame = cmd_stream.renderCamera();
+    (void)frame;
+
     r.dropScene(move(scene_handle));
 }

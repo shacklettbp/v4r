@@ -1,10 +1,12 @@
 device:
 - vkCreateCommandPool
+- vkGetDeviceQueue2
 
 instance:
 - vkEnumeratePhysicalDevices
-- vkGetPhysicalDeviceProperties2
 - vkGetPhysicalDeviceFeatures2
+- vkGetPhysicalDeviceProperties2
+- vkGetPhysicalDeviceFormatProperties2
 - vkGetPhysicalDeviceMemoryProperties2
 - vkGetPhysicalDeviceQueueFamilyProperties2
 - vkCreateDevice

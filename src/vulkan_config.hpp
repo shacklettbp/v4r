@@ -1,6 +1,8 @@
 #ifndef VULKAN_CONFIG_HPP_INCLUDED
 #define VULKAN_CONFIG_HPP_INCLUDED
 
+#include <vulkan/vulkan.hpp>
+
 namespace v4r {
 
 namespace VulkanConfig {

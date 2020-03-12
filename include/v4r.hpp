@@ -6,7 +6,11 @@
 namespace v4r {
 
 struct VulkanState;
+struct CommandStreamState;
 class SceneID;
+
+class RenderResult {
+};
 
 class RenderContext {
 public:
@@ -18,12 +22,28 @@ public:
 
     template <typename T>
     using Handle = std::unique_ptr<T, HandleDeleter<T>>;
+    using SceneHandle = Handle<SceneID>;
+
+    class CommandStream {
+    public:
+        RenderResult renderCamera();
+
+    private:
+        using StreamStateHandle = Handle<CommandStreamState>;
+
+        CommandStream(StreamStateHandle &&state);
+        StreamStateHandle state_;
+
+        friend class RenderContext;
+    };
 
     RenderContext(int gpu_id);
     ~RenderContext();
 
-    Handle<SceneID> loadScene(const std::string &file);
-    void dropScene(Handle<SceneID> &&handle);
+    SceneHandle loadScene(const std::string &file);
+    void dropScene(SceneHandle &&handle);
+
+    CommandStream makeCommandStream() const;
 
 private:
     std::unique_ptr<VulkanState> state_;

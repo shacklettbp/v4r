@@ -4,9 +4,9 @@
 
 extern "C" {
     VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(
-        VkInstance, const char *);
+            VkInstance, const char *);
     VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
-        VkDevice, const char *);
+            VkDevice, const char *);
 }
 
 namespace v4r {
