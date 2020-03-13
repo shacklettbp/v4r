@@ -43,4 +43,4 @@ add_library(v4r SHARED
 
 add_dependencies(v4r generate_vk_dispatch)
 
-target_link_libraries(v4r ${Vulkan_LIBRARY} ${ASSIMP_LIBRARIES} Threads::Threads)
+target_link_libraries(v4r Vulkan::Vulkan Threads::Threads ${ASSIMP_LIBRARIES})
