@@ -72,7 +72,7 @@ VkFormat getDeviceDepthFormat(VkPhysicalDevice phy, const InstanceState &inst)
 
     const VkFormatFeatureFlags desired_features =
         VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
-        VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+        VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
 
     for (auto &fmt : desired_formats) {
         VkFormatProperties2 props;
@@ -152,28 +152,51 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
     // Create an image that will have the same settings as the real
     // framebuffer images later. This is necessary to cache the
     // memory requirements of the image.
-    VkImage test_img;
-    REQ_VK(dev.dt.createImage(dev.hdl, &color_img_info, nullptr, &test_img));
+    VkImage color_test;
+    REQ_VK(dev.dt.createImage(dev.hdl, &color_img_info, nullptr, &color_test));
 
-    VkMemoryRequirements mem_req;
-    dev.dt.getImageMemoryRequirements(dev.hdl, test_img, &mem_req);
+    VkMemoryRequirements color_req;
+    dev.dt.getImageMemoryRequirements(dev.hdl, color_test, &color_req);
 
-    dev.dt.destroyImage(dev.hdl, test_img, nullptr);
+    dev.dt.destroyImage(dev.hdl, color_test, nullptr);
 
     VkMemoryAllocateInfo color_alloc_info;
     color_alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     color_alloc_info.pNext = nullptr;
-    color_alloc_info.allocationSize = mem_req.size;
+    color_alloc_info.allocationSize = color_req.size;
     color_alloc_info.memoryTypeIndex =
-        findMemoryTypeIndex(dev.phy, mem_req.memoryTypeBits,
+        findMemoryTypeIndex(dev.phy, color_req.memoryTypeBits,
                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, inst);
 
+    // Set depth specific settings
+    VkImageCreateInfo depth_img_info = color_img_info;
+    depth_img_info.format = depth_fmt;
+    depth_img_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                           VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
+    VkImage depth_test;
+    REQ_VK(dev.dt.createImage(dev.hdl, &depth_img_info, nullptr, &depth_test));
+
+    VkMemoryRequirements depth_req;
+    dev.dt.getImageMemoryRequirements(dev.hdl, depth_test, &depth_req);
+
+    dev.dt.destroyImage(dev.hdl, depth_test, nullptr);
+
+    VkMemoryAllocateInfo depth_alloc_info;
+    depth_alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    depth_alloc_info.pNext = nullptr;
+    depth_alloc_info.allocationSize = depth_req.size;
+    depth_alloc_info.memoryTypeIndex =
+        findMemoryTypeIndex(dev.phy, depth_req.memoryTypeBits,
+                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, inst);
 
     return FramebufferConfig {
         depth_fmt,
         color_fmt,
         color_img_info,
-        color_alloc_info
+        color_alloc_info,
+        depth_img_info,
+        depth_alloc_info
     };
 }
 
@@ -346,25 +369,40 @@ static FramebufferState makeFramebuffer(const FramebufferConfig &fb_cfg,
                                  nullptr, &color_mem));
     REQ_VK(dev.dt.bindImageMemory(dev.hdl, color_img, color_mem, 0));
 
-    VkImageViewCreateInfo color_view_info {};
-    color_view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    color_view_info.image = color_img;
-    color_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    color_view_info.format = fb_cfg.colorFmt;
-    VkImageSubresourceRange &color_view_info_sr =
-        color_view_info.subresourceRange;
-    color_view_info_sr.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    color_view_info_sr.baseMipLevel = 0;
-    color_view_info_sr.levelCount = 1;
-    color_view_info_sr.baseArrayLayer = 0;
-    color_view_info_sr.layerCount = 1;
+    VkImageViewCreateInfo view_info {};
+    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image = color_img;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format = fb_cfg.colorFmt;
+    VkImageSubresourceRange &view_info_sr = view_info.subresourceRange;
+    view_info_sr.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    view_info_sr.baseMipLevel = 0;
+    view_info_sr.levelCount = 1;
+    view_info_sr.baseArrayLayer = 0;
+    view_info_sr.layerCount = 1;
 
     VkImageView color_view;
-    REQ_VK(dev.dt.createImageView(dev.hdl, &color_view_info,
+    REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
                                   nullptr, &color_view));
 
-    (void)fb_cfg;
-    (void)dev;
+    VkImage depth_img;
+    REQ_VK(dev.dt.createImage(dev.hdl, &fb_cfg.depthCreationSettings,
+                              nullptr, &depth_img));
+
+    VkDeviceMemory depth_mem;
+    REQ_VK(dev.dt.allocateMemory(dev.hdl, &fb_cfg.depthMemorySettings,
+                                 nullptr, &depth_mem));
+    REQ_VK(dev.dt.bindImageMemory(dev.hdl, depth_img, depth_mem, 0));
+
+    view_info.image = depth_img;
+    view_info.format = fb_cfg.depthFmt;
+    view_info_sr.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT |
+                              VK_IMAGE_ASPECT_STENCIL_BIT;
+
+    VkImageView depth_view;
+    REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
+                                  nullptr, &depth_view));
+
     return FramebufferState {
         0
     };
