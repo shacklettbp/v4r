@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
-cmake_policy(VERSION 3.12)
+cmake_minimum_required(VERSION 3.10 FATAL_ERROR)
+cmake_policy(VERSION 3.10)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 
 set(NAME v4r)
@@ -48,7 +48,7 @@ find_package(Threads REQUIRED)
 
 if (!HEADLESS)
     find_package(XCB REQUIRED)
-    add_compile_definitions(VK_USE_PLATFORM_XCB_KHR)
+    add_definitions(-DVK_USE_PLATFORM_XCB_KHR)
 ENDIF()
 
 find_package(glm REQUIRED CONFIG)

@@ -1,15 +1,18 @@
 include_directories(${ASSIMP_INCLUDE_DIRS})
 include_directories(${GLM_INCLUDE_DIRS})
 
-add_compile_definitions(VK_NO_PROTOTYPES)
+add_definitions(-DVK_NO_PROTOTYPES)
 
 get_directory_property( DIR_DEFINES DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} COMPILE_DEFINITIONS )
-list(TRANSFORM DIR_DEFINES PREPEND -D)
-list(JOIN DIR_DEFINES " " DEFINE_STR)
+IF (DIR_DEFINES STREQUAL "")
+    set(DEFINE_STR "")
+ELSE()
+    string(REPLACE ";" ";-D" DEFINE_STR ";${DIR_DEFINES}")
+ENDIF()
 
 add_custom_command(
     OUTPUT dispatch/dispatch.template
-    COMMAND mkdir -p dispatch && ${CMAKE_CXX_COMPILER} -x c -E -P -nostdinc ${DEFINE_STR} ${CMAKE_CURRENT_SOURCE_DIR}/dispatch.template -o dispatch/dispatch.template
+    COMMAND mkdir -p dispatch && ${CMAKE_CXX_COMPILER} -x c -E -P -nostdinc ${DEFINE_STR} "${CMAKE_CURRENT_SOURCE_DIR}/dispatch.template" -o dispatch/dispatch.template
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/dispatch.template
 )
 
