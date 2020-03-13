@@ -4,6 +4,10 @@ device:
 - vkCreateImage
 - vkDestroyImage
 - vkGetImageMemoryRequirements
+- vkAllocateMemory
+- vkBindImageMemory
+- vkCreateImageView
+- vkDestroyImageView
 
 instance:
 - vkEnumeratePhysicalDevices

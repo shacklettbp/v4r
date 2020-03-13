@@ -133,35 +133,38 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
     VkFormat depth_fmt = getDeviceDepthFormat(dev.phy, inst);
     VkFormat color_fmt = getDeviceColorFormat(dev.phy, inst);
 
-    VkImageCreateInfo img_info {};
-    img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    img_info.imageType = VK_IMAGE_TYPE_2D;
-    img_info.format = color_fmt;
-    img_info.extent.width = cfg.imgWidth;
-    img_info.extent.height = cfg.imgHeight;
-    img_info.extent.depth = 1;
-    img_info.mipLevels = 1;
-    img_info.arrayLayers = 1;
-    img_info.samples = VK_SAMPLE_COUNT_1_BIT;
-    img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    img_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    img_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    img_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImageCreateInfo color_img_info {};
+    color_img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    color_img_info.imageType = VK_IMAGE_TYPE_2D;
+    color_img_info.format = color_fmt;
+    color_img_info.extent.width = cfg.imgWidth;
+    color_img_info.extent.height = cfg.imgHeight;
+    color_img_info.extent.depth = 1;
+    color_img_info.mipLevels = 1;
+    color_img_info.arrayLayers = 1;
+    color_img_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    color_img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    color_img_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                           VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    color_img_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    color_img_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
+    // Create an image that will have the same settings as the real
+    // framebuffer images later. This is necessary to cache the
+    // memory requirements of the image.
     VkImage test_img;
-    REQ_VK(dev.dt.createImage(dev.hdl, &img_info, nullptr, &test_img));
+    REQ_VK(dev.dt.createImage(dev.hdl, &color_img_info, nullptr, &test_img));
 
     VkMemoryRequirements mem_req;
     dev.dt.getImageMemoryRequirements(dev.hdl, test_img, &mem_req);
 
     dev.dt.destroyImage(dev.hdl, test_img, nullptr);
 
-    VkMemoryAllocateInfo alloc_info;
-    alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    alloc_info.pNext = nullptr;
-    alloc_info.allocationSize = mem_req.size;
-    alloc_info.memoryTypeIndex =
+    VkMemoryAllocateInfo color_alloc_info;
+    color_alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    color_alloc_info.pNext = nullptr;
+    color_alloc_info.allocationSize = mem_req.size;
+    color_alloc_info.memoryTypeIndex =
         findMemoryTypeIndex(dev.phy, mem_req.memoryTypeBits,
                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, inst);
 
@@ -169,8 +172,8 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
     return FramebufferConfig {
         depth_fmt,
         color_fmt,
-        img_info,
-        alloc_info
+        color_img_info,
+        color_alloc_info
     };
 }
 
@@ -333,6 +336,33 @@ static VkQueue createQueue(const DeviceState &dev, uint32_t qf_idx,
 static FramebufferState makeFramebuffer(const FramebufferConfig &fb_cfg,
                                         const DeviceState &dev)
 {
+    VkImage color_img;
+    REQ_VK(dev.dt.createImage(dev.hdl, &fb_cfg.colorCreationSettings,
+                              nullptr, &color_img));
+
+    VkDeviceMemory color_mem;
+    // FIXME probably want to allocate this somewhere else and use part here
+    REQ_VK(dev.dt.allocateMemory(dev.hdl, &fb_cfg.colorMemorySettings,
+                                 nullptr, &color_mem));
+    REQ_VK(dev.dt.bindImageMemory(dev.hdl, color_img, color_mem, 0));
+
+    VkImageViewCreateInfo color_view_info {};
+    color_view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    color_view_info.image = color_img;
+    color_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    color_view_info.format = fb_cfg.colorFmt;
+    VkImageSubresourceRange &color_view_info_sr =
+        color_view_info.subresourceRange;
+    color_view_info_sr.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    color_view_info_sr.baseMipLevel = 0;
+    color_view_info_sr.levelCount = 1;
+    color_view_info_sr.baseArrayLayer = 0;
+    color_view_info_sr.layerCount = 1;
+
+    VkImageView color_view;
+    REQ_VK(dev.dt.createImageView(dev.hdl, &color_view_info,
+                                  nullptr, &color_view));
+
     (void)fb_cfg;
     (void)dev;
     return FramebufferState {

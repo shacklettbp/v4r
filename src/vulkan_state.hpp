@@ -16,8 +16,8 @@ public:
     VkFormat depthFmt;
     VkFormat colorFmt;
 
-    VkImageCreateInfo imageCreationSettings;
-    VkMemoryAllocateInfo imageMemorySettings;
+    VkImageCreateInfo colorCreationSettings;
+    VkMemoryAllocateInfo colorMemorySettings;
 };
 
 struct FramebufferState {
