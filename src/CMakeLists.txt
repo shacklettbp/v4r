@@ -4,11 +4,10 @@ include_directories(${GLM_INCLUDE_DIRS})
 add_definitions(-DVK_NO_PROTOTYPES)
 
 get_directory_property( DIR_DEFINES DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} COMPILE_DEFINITIONS )
-IF (DIR_DEFINES STREQUAL "")
-    set(DEFINE_STR "")
-ELSE()
-    string(REPLACE ";" ";-D" DEFINE_STR ";${DIR_DEFINES}")
-ENDIF()
+set(DEFINE_STR "")
+FOREACH(f ${DIR_DEFINES})
+    list(APPEND DEFINE_STR "-D${f}")
+ENDFOREACH()
 
 add_custom_command(
     OUTPUT dispatch/dispatch.template
