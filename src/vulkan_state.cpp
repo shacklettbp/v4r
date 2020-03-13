@@ -18,12 +18,12 @@ extern "C" {
 
 namespace v4r {
 
-static const char *extensions[] = {
+static const char *instance_extensions[] = {
     //VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME
 };
 
-static constexpr uint32_t num_extensions =
-    sizeof(extensions) / sizeof(const char *);
+static constexpr uint32_t num_instance_extensions =
+    sizeof(instance_extensions) / sizeof(const char *);
 
 static VkInstance createInstance()
 {
@@ -37,9 +37,9 @@ static VkInstance createInstance()
     inst_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     inst_info.pApplicationInfo = &app_info;
 
-    if (num_extensions > 0) {
-        inst_info.enabledExtensionCount = num_extensions;
-        inst_info.ppEnabledExtensionNames = extensions;
+    if (num_instance_extensions > 0) {
+        inst_info.enabledExtensionCount = num_instance_extensions;
+        inst_info.ppEnabledExtensionNames = instance_extensions;
     }
 
     VkInstance inst;
@@ -53,8 +53,8 @@ InstanceState::InstanceState()
       dt(hdl)
 {}
 
-void fillQueueInfo(VkDeviceQueueCreateInfo &info, uint32_t idx,
-                   const vector<float> &priorities)
+static void fillQueueInfo(VkDeviceQueueCreateInfo &info, uint32_t idx,
+                          const vector<float> &priorities)
 {
     info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     info.queueFamilyIndex = idx;
@@ -62,7 +62,7 @@ void fillQueueInfo(VkDeviceQueueCreateInfo &info, uint32_t idx,
     info.pQueuePriorities = priorities.data();
 }
 
-VkFormat InstanceState::getDeviceDepthFormat(VkPhysicalDevice phy) const
+VkFormat getDeviceDepthFormat(VkPhysicalDevice phy, const InstanceState &inst)
 {
     static const array desired_formats {
         VK_FORMAT_D32_SFLOAT_S8_UINT,
@@ -79,8 +79,9 @@ VkFormat InstanceState::getDeviceDepthFormat(VkPhysicalDevice phy) const
         props.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
         props.pNext = nullptr;
 
-        dt.getPhysicalDeviceFormatProperties2(phy, fmt, &props);
-        if (props.formatProperties.optimalTilingFeatures & desired_features) {
+        inst.dt.getPhysicalDeviceFormatProperties2(phy, fmt, &props);
+        if ((props.formatProperties.optimalTilingFeatures &
+                    desired_features) == desired_features) {
             return fmt;
         }
     }
@@ -89,7 +90,91 @@ VkFormat InstanceState::getDeviceDepthFormat(VkPhysicalDevice phy) const
     fatalExit();
 }
 
-DeviceState InstanceState::makeDevice(uint32_t gpu_id) const
+VkFormat getDeviceColorFormat(VkPhysicalDevice phy, const InstanceState &inst)
+{
+    (void)phy;
+    (void)inst;
+    // FIXME check support
+    return VK_FORMAT_R16G16B16A16_UNORM;
+}
+
+static uint32_t findMemoryTypeIndex(VkPhysicalDevice phy,
+                                    uint32_t allowed_type_bits, 
+                                    VkMemoryPropertyFlags required_props,
+                                    const InstanceState &inst)
+{
+    VkPhysicalDeviceMemoryProperties2 mem_props;
+    mem_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+    mem_props.pNext = nullptr;
+    inst.dt.getPhysicalDeviceMemoryProperties2(phy, &mem_props);
+
+    uint32_t num_mems = mem_props.memoryProperties.memoryTypeCount;
+
+    for (uint32_t idx = 0; idx < num_mems; idx++) {
+        uint32_t mem_type_bits = (1 << idx);
+        if (!(allowed_type_bits & mem_type_bits)) continue;
+
+        VkMemoryPropertyFlags supported_props =
+            mem_props.memoryProperties.memoryTypes[idx].propertyFlags;
+
+        if ((required_props & supported_props) == required_props) {
+            return idx;
+        }
+    }
+
+    cerr << "Failed to find desired memory type" << endl;
+    fatalExit();
+}
+
+static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
+                                              const InstanceState &inst,
+                                              const RenderConfig &cfg)
+{
+    VkFormat depth_fmt = getDeviceDepthFormat(dev.phy, inst);
+    VkFormat color_fmt = getDeviceColorFormat(dev.phy, inst);
+
+    VkImageCreateInfo img_info {};
+    img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    img_info.imageType = VK_IMAGE_TYPE_2D;
+    img_info.format = color_fmt;
+    img_info.extent.width = cfg.imgWidth;
+    img_info.extent.height = cfg.imgHeight;
+    img_info.extent.depth = 1;
+    img_info.mipLevels = 1;
+    img_info.arrayLayers = 1;
+    img_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    img_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    img_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    img_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkImage test_img;
+    REQ_VK(dev.dt.createImage(dev.hdl, &img_info, nullptr, &test_img));
+
+    VkMemoryRequirements mem_req;
+    dev.dt.getImageMemoryRequirements(dev.hdl, test_img, &mem_req);
+
+    dev.dt.destroyImage(dev.hdl, test_img, nullptr);
+
+    VkMemoryAllocateInfo alloc_info;
+    alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_info.pNext = nullptr;
+    alloc_info.allocationSize = mem_req.size;
+    alloc_info.memoryTypeIndex =
+        findMemoryTypeIndex(dev.phy, mem_req.memoryTypeBits,
+                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, inst);
+
+
+    return FramebufferConfig {
+        depth_fmt,
+        color_fmt,
+        img_info,
+        alloc_info
+    };
+}
+
+DeviceState InstanceState::makeDevice(const uint32_t gpu_id) const
 {
     uint32_t num_gpus;
     REQ_VK(dt.enumeratePhysicalDevices(hdl, &num_gpus, nullptr));
@@ -114,11 +199,6 @@ DeviceState InstanceState::makeDevice(uint32_t gpu_id) const
     feats.pNext = nullptr;
     dt.getPhysicalDeviceFeatures2(phy, &feats);
 
-    VkPhysicalDeviceMemoryProperties2 mem_props;
-    mem_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
-    mem_props.pNext = nullptr;
-    dt.getPhysicalDeviceMemoryProperties2(phy, &mem_props);
-
     uint32_t num_queue_families;
     dt.getPhysicalDeviceQueueFamilyProperties2(phy, &num_queue_families,
                                                   nullptr);
@@ -137,6 +217,8 @@ DeviceState InstanceState::makeDevice(uint32_t gpu_id) const
     dt.getPhysicalDeviceQueueFamilyProperties2(phy, &num_queue_families,
                                                queue_family_props.data());
 
+    // Currently only finds dedicated transfer, compute, and gfx queues
+    // FIXME implement more flexiblity in queue choices
     optional<uint32_t> compute_queue_family;
     optional<uint32_t> gfx_queue_family;
     optional<uint32_t> transfer_queue_family;
@@ -214,13 +296,13 @@ DeviceState InstanceState::makeDevice(uint32_t gpu_id) const
         *gfx_queue_family,
         *compute_queue_family,
         *transfer_queue_family,
-        getDeviceDepthFormat(phy),
+        phy,
         dev,
         DeviceDispatch(dev)
     };
 }
 
-VkCommandPool createCmdPool(const DeviceState &dev, uint32_t qf_idx)
+static VkCommandPool createCmdPool(const DeviceState &dev, uint32_t qf_idx)
 {
     VkCommandPoolCreateInfo pool_info = {};
     pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -232,7 +314,8 @@ VkCommandPool createCmdPool(const DeviceState &dev, uint32_t qf_idx)
     return pool;
 }
 
-VkQueue createQueue(const DeviceState &dev, uint32_t qf_idx, uint32_t queue_idx)
+static VkQueue createQueue(const DeviceState &dev, uint32_t qf_idx,
+                           uint32_t queue_idx)
 {
     VkDeviceQueueInfo2 queue_info;
     queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2;
@@ -247,15 +330,29 @@ VkQueue createQueue(const DeviceState &dev, uint32_t qf_idx, uint32_t queue_idx)
     return queue;
 }
 
-CommandStreamState::CommandStreamState(const DeviceState &d)
+static FramebufferState makeFramebuffer(const FramebufferConfig &fb_cfg,
+                                        const DeviceState &dev)
+{
+    (void)fb_cfg;
+    (void)dev;
+    return FramebufferState {
+        0
+    };
+}
+
+CommandStreamState::CommandStreamState(const DeviceState &d,
+                                       const FramebufferConfig &fb_cfg)
     : dev(d),
       gfxPool(createCmdPool(d, d.gfxQF)),
-      gfxQueue(createQueue(d, d.gfxQF, 0))
+      gfxQueue(createQueue(d, d.gfxQF, 0)),
+      fb(makeFramebuffer(fb_cfg, d))
 {}
 
-VulkanState::VulkanState(uint32_t gpu_id)
-    : inst(),
-      dev(inst.makeDevice(gpu_id))
+VulkanState::VulkanState(const RenderConfig &config)
+    : cfg(config),
+      inst(),
+      dev(inst.makeDevice(cfg.gpuID)),
+      fbCfg(getFramebufferConfig(dev, inst, cfg))
 {}
 
 }

@@ -5,9 +5,25 @@
 #include <vector>
 #include <vulkan/vulkan.h>
 
+#include <v4r/config.hpp>
+
 #include "dispatch.hpp"
 
 namespace v4r {
+
+struct FramebufferConfig {
+public:
+    VkFormat depthFmt;
+    VkFormat colorFmt;
+
+    VkImageCreateInfo imageCreationSettings;
+    VkMemoryAllocateInfo imageMemorySettings;
+};
+
+struct FramebufferState {
+public:
+    VkImage image;
+};
 
 struct DeviceState {
 public:
@@ -15,8 +31,7 @@ public:
     uint32_t computeQF;
     uint32_t transferQF;
 
-    VkFormat depthFmt;
-
+    const VkPhysicalDevice phy;
     const VkDevice hdl;
     const DeviceDispatch dt;
 
@@ -31,31 +46,36 @@ public:
     InstanceState();
 
     DeviceState makeDevice(uint32_t gpu_id) const;
-private:
-    VkFormat getDeviceDepthFormat(VkPhysicalDevice phy) const;
 };
+
 
 struct CommandStreamState {
 public:
-    CommandStreamState(const DeviceState &dev);
+    CommandStreamState(const DeviceState &dev,
+                       const FramebufferConfig &fb_cfg);
     CommandStreamState(const CommandStreamState &) = delete;
     CommandStreamState(CommandStreamState &&) = default;
 
     const DeviceState &dev;
     const VkCommandPool gfxPool;
     const VkQueue gfxQueue;
-};
 
+    const FramebufferState fb;
+};
 
 struct VulkanState {
 public:
-    VulkanState(uint32_t gpu_id);
+    VulkanState(const RenderConfig &cfg);
     VulkanState(const VulkanState &) = delete;
     VulkanState(VulkanState &&) = delete;
 
+    const RenderConfig cfg;
+
     const InstanceState inst;
     const DeviceState dev;
+    const FramebufferConfig fbCfg;
 };
+
 }
 
 #endif

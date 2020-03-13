@@ -34,7 +34,7 @@ add_library(v4r SHARED
     scene.hpp
     utils.hpp
     vk_utils.hpp vk_utils.cpp
-    vulkan_config.hpp
+    vulkan_config.hpp ../include/v4r/config.hpp
     vulkan_state.hpp vulkan_state.cpp
     ../include/v4r.hpp v4r.cpp
 )

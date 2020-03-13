@@ -39,26 +39,26 @@ RenderResult CommandStream::renderCamera()
     return RenderResult();
 }
 
-RenderContext::RenderContext(int gpu_id)
-    : state_(make_unique<VulkanState>(gpu_id))
+RenderContext::RenderContext(const RenderConfig &cfg)
+    : state_(make_unique<VulkanState>(cfg))
 {
 }
 
 RenderContext::~RenderContext() = default;
 
 
-RenderContext::Handle<SceneID> RenderContext::loadScene(const std::string &file)
+RenderContext::SceneHandle RenderContext::loadScene(const std::string &file)
 {
     return make_handle<SceneID>();
 }
 
-void RenderContext::dropScene(RenderContext::Handle<SceneID> &&handle)
+void RenderContext::dropScene(RenderContext::SceneHandle &&handle)
 {
 }
 
 RenderContext::CommandStream RenderContext::makeCommandStream() const
 {
-    auto hdl = make_handle<CommandStreamState>(state_->dev);
+    auto hdl = make_handle<CommandStreamState>(state_->dev, state_->fbCfg);
 
     return CommandStream(move(hdl));
 }

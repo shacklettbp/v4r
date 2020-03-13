@@ -1,6 +1,9 @@
 device:
 - vkCreateCommandPool
 - vkGetDeviceQueue2
+- vkCreateImage
+- vkDestroyImage
+- vkGetImageMemoryRequirements
 
 instance:
 - vkEnumeratePhysicalDevices

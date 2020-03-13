@@ -11,7 +11,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    RenderContext r(0);
+    RenderContext r({0, 128, 128});
 
     auto scene_handle { r.loadScene(argv[1]) };
 

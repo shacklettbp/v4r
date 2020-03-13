@@ -3,6 +3,8 @@
 
 #include <memory>
 
+#include <v4r/config.hpp>
+
 namespace v4r {
 
 struct VulkanState;
@@ -37,7 +39,7 @@ public:
         friend class RenderContext;
     };
 
-    RenderContext(int gpu_id);
+    RenderContext(const RenderConfig &cfg);
     ~RenderContext();
 
     SceneHandle loadScene(const std::string &file);
