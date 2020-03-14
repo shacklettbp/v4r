@@ -62,6 +62,17 @@ static void fillQueueInfo(VkDeviceQueueCreateInfo &info, uint32_t idx,
     info.pQueuePriorities = priorities.data();
 }
 
+VkFormatProperties2 getPhysicalDeviceProperties(const InstanceState &inst,
+                                                VkPhysicalDevice phy,
+                                                auto &fmt) {
+    VkFormatProperties2 props;
+    props.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
+    props.pNext = nullptr;
+
+    inst.dt.getPhysicalDeviceFormatProperties2(phy, fmt, &props);
+    return props;
+}
+
 VkFormat getDeviceDepthFormat(VkPhysicalDevice phy, const InstanceState &inst)
 {
     static const array desired_formats {
@@ -75,11 +86,7 @@ VkFormat getDeviceDepthFormat(VkPhysicalDevice phy, const InstanceState &inst)
         VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
 
     for (auto &fmt : desired_formats) {
-        VkFormatProperties2 props;
-        props.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
-        props.pNext = nullptr;
-
-        inst.dt.getPhysicalDeviceFormatProperties2(phy, fmt, &props);
+        VkFormatProperties2 props = getPhysicalDeviceProperties(inst, phy, fmt);
         if ((props.formatProperties.optimalTilingFeatures &
                     desired_features) == desired_features) {
             return fmt;
@@ -92,14 +99,30 @@ VkFormat getDeviceDepthFormat(VkPhysicalDevice phy, const InstanceState &inst)
 
 VkFormat getDeviceColorFormat(VkPhysicalDevice phy, const InstanceState &inst)
 {
-    (void)phy;
-    (void)inst;
-    // FIXME check support
-    return VK_FORMAT_R16G16B16A16_UNORM;
+  static const array desired_formats {
+      VK_FORMAT_R16G16B16A16_SFLOAT,
+      VK_FORMAT_R16G16B16A16_UNORM,
+      VK_FORMAT_R16G16B16A16_SNORM
+  };
+
+  const VkFormatFeatureFlags desired_features =
+      VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
+      VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+
+  for (auto &fmt : desired_formats) {
+      VkFormatProperties2 props = getPhysicalDeviceProperties(inst, phy, fmt);
+      if ((props.formatProperties.optimalTilingFeatures &
+                  desired_features) == desired_features) {
+          return fmt;
+      }
+  }
+
+  cerr << "Unable to find required color format" << endl;
+  fatalExit();
 }
 
 static uint32_t findMemoryTypeIndex(VkPhysicalDevice phy,
-                                    uint32_t allowed_type_bits, 
+                                    uint32_t allowed_type_bits,
                                     VkMemoryPropertyFlags required_props,
                                     const InstanceState &inst)
 {
@@ -259,7 +282,7 @@ DeviceState InstanceState::makeDevice(const uint32_t gpu_id) const
             !(qf_prop.queueFlags & VK_QUEUE_COMPUTE_BIT) &&
             !(qf_prop.queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
 
-            transfer_queue_family = i; 
+            transfer_queue_family = i;
         } else if (!compute_queue_family &&
                    (qf_prop.queueFlags & VK_QUEUE_COMPUTE_BIT) &&
                    !(qf_prop.queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
@@ -276,7 +299,7 @@ DeviceState InstanceState::makeDevice(const uint32_t gpu_id) const
             break;
         }
     }
-    
+
     if (!compute_queue_family || !gfx_queue_family || !transfer_queue_family) {
         cerr << "GPU does not support required separate queues" << endl;
         fatalExit();
