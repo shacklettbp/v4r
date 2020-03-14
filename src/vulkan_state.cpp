@@ -191,6 +191,8 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, inst);
 
     return FramebufferConfig {
+        cfg.imgWidth,
+        cfg.imgHeight,
         depth_fmt,
         color_fmt,
         color_img_info,
@@ -356,6 +358,99 @@ static VkQueue createQueue(const DeviceState &dev, uint32_t qf_idx,
     return queue;
 }
 
+static VkRenderPass makeRenderPass(const FramebufferConfig &fb_cfg,
+                                   const DeviceState &dev)
+{
+    array<VkAttachmentDescription, 2> attachment_descs {{
+        {
+            0,
+            fb_cfg.colorFmt,
+            VK_SAMPLE_COUNT_1_BIT,
+            VK_ATTACHMENT_LOAD_OP_CLEAR,
+            VK_ATTACHMENT_STORE_OP_STORE,
+            VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+        },
+        {
+            0,
+            fb_cfg.depthFmt,
+            VK_SAMPLE_COUNT_1_BIT,
+            VK_ATTACHMENT_LOAD_OP_CLEAR,
+            VK_ATTACHMENT_STORE_OP_STORE,
+            VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+        }
+    }};
+
+    array<VkAttachmentReference, 2> attachment_refs {{
+        { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL },
+        { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL }
+    }};
+
+    VkSubpassDescription subpass_desc {};
+    subpass_desc.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass_desc.colorAttachmentCount = 1;
+    subpass_desc.pColorAttachments = &attachment_refs[0];
+    subpass_desc.pDepthStencilAttachment = &attachment_refs[1];
+
+    const VkPipelineStageFlags write_stages =
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+
+    // FIXME is the incoming memory dependency necessary here
+    // to prevent overwriting with a new draw call before the transfer
+    // out is finished
+
+    array<VkSubpassDependency, 2> subpass_deps {{
+        {
+            VK_SUBPASS_EXTERNAL,
+            0,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            write_stages,
+            VK_ACCESS_TRANSFER_READ_BIT,
+            VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+           0 
+        },
+        {
+            0,
+            VK_SUBPASS_EXTERNAL,
+            write_stages,
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            VK_ACCESS_TRANSFER_READ_BIT,
+            0 
+        }
+    }};
+
+    VkRenderPassCreateInfo render_pass_info;
+    render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    render_pass_info.pNext = nullptr;
+    render_pass_info.flags = 0;
+    render_pass_info.attachmentCount = 
+        static_cast<uint32_t>(attachment_descs.size());
+    render_pass_info.pAttachments = attachment_descs.data();
+    render_pass_info.subpassCount = 1;
+    render_pass_info.pSubpasses = &subpass_desc;
+    render_pass_info.dependencyCount =
+        static_cast<uint32_t>(subpass_deps.size());
+    render_pass_info.pDependencies = subpass_deps.data();
+
+    VkRenderPass render_pass;
+    REQ_VK(dev.dt.createRenderPass(dev.hdl, &render_pass_info,
+                                   nullptr, &render_pass));
+
+    return render_pass;
+}
+
 static FramebufferState makeFramebuffer(const FramebufferConfig &fb_cfg,
                                         const DeviceState &dev)
 {
@@ -381,9 +476,9 @@ static FramebufferState makeFramebuffer(const FramebufferConfig &fb_cfg,
     view_info_sr.baseArrayLayer = 0;
     view_info_sr.layerCount = 1;
 
-    VkImageView color_view;
+    array<VkImageView, 2> views;
     REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
-                                  nullptr, &color_view));
+                                  nullptr, &views[0]));
 
     VkImage depth_img;
     REQ_VK(dev.dt.createImage(dev.hdl, &fb_cfg.depthCreationSettings,
@@ -399,12 +494,32 @@ static FramebufferState makeFramebuffer(const FramebufferConfig &fb_cfg,
     view_info_sr.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT |
                               VK_IMAGE_ASPECT_STENCIL_BIT;
 
-    VkImageView depth_view;
     REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
-                                  nullptr, &depth_view));
+                                  nullptr, &views[1]));
+
+    VkRenderPass render_pass = makeRenderPass(fb_cfg, dev);
+
+    VkFramebufferCreateInfo fb_info;
+    fb_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fb_info.pNext = nullptr;
+    fb_info.flags = 0;
+    fb_info.renderPass = render_pass;
+    fb_info.attachmentCount = static_cast<uint32_t>(views.size());
+    fb_info.pAttachments = views.data();
+    fb_info.width = fb_cfg.width;
+    fb_info.height = fb_cfg.height;
+    fb_info.layers = 1;
+
+    VkFramebuffer fb_handle;
+    REQ_VK(dev.dt.createFramebuffer(dev.hdl, &fb_info, nullptr, &fb_handle));
 
     return FramebufferState {
-        0
+        color_img,
+        color_mem,
+        depth_img,
+        depth_mem,
+        views,
+        fb_handle
     };
 }
 

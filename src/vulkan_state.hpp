@@ -1,8 +1,10 @@
 #ifndef VULKAN_STATE_HPP_INCLUDED
 #define VULKAN_STATE_HPP_INCLUDED
 
+#include <array>
 #include <string>
 #include <vector>
+
 #include <vulkan/vulkan.h>
 
 #include <v4r/config.hpp>
@@ -13,6 +15,9 @@ namespace v4r {
 
 struct FramebufferConfig {
 public:
+    uint32_t width;
+    uint32_t height;
+
     VkFormat depthFmt;
     VkFormat colorFmt;
 
@@ -25,7 +30,15 @@ public:
 
 struct FramebufferState {
 public:
-    VkImage image;
+    VkImage colorImg;
+    VkDeviceMemory colorMem;
+
+    VkImage depthImg;
+    VkDeviceMemory depthMem;
+
+    std::array<VkImageView, 2> attachmentViews; 
+
+    VkFramebuffer hdl;
 };
 
 struct DeviceState {

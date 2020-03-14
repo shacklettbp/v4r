@@ -8,6 +8,16 @@ device:
 - vkBindImageMemory
 - vkCreateImageView
 - vkDestroyImageView
+- vkCreateRenderPass
+- vkDestroyRenderPass
+- vkCreateFramebuffer
+- vkDestroyFramebuffer
+- vkCreateDescriptorSetLayout
+- vkDestroyDescriptorSetLayout
+- vkCreatePipelineLayout
+- vkDestroyPipelineLayout
+- vkCreatePipelineCache
+- vkDestroyPipelineCache
 
 instance:
 - vkEnumeratePhysicalDevices
