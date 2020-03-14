@@ -66,7 +66,7 @@ static void fillQueueInfo(VkDeviceQueueCreateInfo &info, uint32_t idx,
 
 VkFormatProperties2 getFormatProperties(const InstanceState &inst,
                                         VkPhysicalDevice phy,
-                                        VkFormat &fmt) 
+                                        VkFormat fmt)
 {
     VkFormatProperties2 props;
     props.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
@@ -88,7 +88,7 @@ VkFormat getDeviceDepthFormat(VkPhysicalDevice phy, const InstanceState &inst)
         VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
         VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
 
-    for (auto &fmt : desired_formats) {
+    for (auto fmt : desired_formats) {
         VkFormatProperties2 props = getFormatProperties(inst, phy, fmt);
         if ((props.formatProperties.optimalTilingFeatures &
                     desired_features) == desired_features) {
