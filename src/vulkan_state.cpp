@@ -99,26 +99,26 @@ VkFormat getDeviceDepthFormat(VkPhysicalDevice phy, const InstanceState &inst)
 
 VkFormat getDeviceColorFormat(VkPhysicalDevice phy, const InstanceState &inst)
 {
-  static const array desired_formats {
-      VK_FORMAT_R16G16B16A16_SFLOAT,
-      VK_FORMAT_R16G16B16A16_UNORM,
-      VK_FORMAT_R16G16B16A16_SNORM
-  };
+    static const array desired_formats {
+        VK_FORMAT_R16G16B16A16_SFLOAT,
+        VK_FORMAT_R16G16B16A16_UNORM,
+        VK_FORMAT_R16G16B16A16_SNORM
+    };
 
-  const VkFormatFeatureFlags desired_features =
-      VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
-      VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+    const VkFormatFeatureFlags desired_features =
+        VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
+        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
 
-  for (auto &fmt : desired_formats) {
-      VkFormatProperties2 props = getFormatProperties(inst, phy, fmt);
-      if ((props.formatProperties.optimalTilingFeatures &
-                  desired_features) == desired_features) {
-          return fmt;
-      }
-  }
+    for (auto &fmt : desired_formats) {
+        VkFormatProperties2 props = getFormatProperties(inst, phy, fmt);
+        if ((props.formatProperties.optimalTilingFeatures &
+                    desired_features) == desired_features) {
+            return fmt;
+        }
+    }
 
-  cerr << "Unable to find required color format" << endl;
-  fatalExit();
+    cerr << "Unable to find required color format" << endl;
+    fatalExit();
 }
 
 static uint32_t findMemoryTypeIndex(VkPhysicalDevice phy,
