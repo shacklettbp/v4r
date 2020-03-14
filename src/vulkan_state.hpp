@@ -41,6 +41,9 @@ public:
     VkFramebuffer hdl;
 };
 
+struct PipelineState {
+};
+
 struct DeviceState {
 public:
     uint32_t gfxQF;
@@ -63,7 +66,6 @@ public:
 
     DeviceState makeDevice(uint32_t gpu_id) const;
 };
-
 
 struct CommandStreamState {
 public:

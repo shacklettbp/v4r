@@ -1,7 +1,7 @@
 include_directories(${ASSIMP_INCLUDE_DIRS})
 include_directories(${GLM_INCLUDE_DIRS})
 
-add_definitions(-DVK_NO_PROTOTYPES)
+add_definitions(-DVK_NO_PROTOTYPES -DGLM_FORCE_DEPTH_ZERO_TO_ONE)
 
 get_directory_property( DIR_DEFINES DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} COMPILE_DEFINITIONS )
 set(DEFINE_STR "")

@@ -8,6 +8,8 @@
 #include <optional>
 #include <vector>
 
+#include <glm/glm.hpp>
+
 using namespace std;
 
 extern "C" {
@@ -544,6 +546,106 @@ static FramebufferState makeFramebuffer(const FramebufferConfig &fb_cfg,
         depth_mem,
         views,
         fb_handle
+    };
+}
+
+static PipelineState makePipeline(const DeviceState &dev)
+{
+    VkPushConstantRange mvp_consts;
+    mvp_consts.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    mvp_consts.offset = 0;
+    mvp_consts.size = sizeof(glm::mat4);
+
+    VkPipelineLayoutCreateInfo pipeline_layout_info;
+    pipeline_layout_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipeline_layout_info.pNext = nullptr;
+    pipeline_layout_info.flags = 0;
+    pipeline_layout_info.setLayoutCount = 0;
+    pipeline_layout_info.pSetLayouts = nullptr;
+    pipeline_layout_info.pushConstantRangeCount = 1;
+    pipeline_layout_info.pPushConstantRanges = &mvp_consts;
+
+    VkPipelineLayout pipeline_layout;
+    REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &pipeline_layout_info,
+                                       nullptr, &pipeline_layout));
+
+    VkPipelineCacheCreateInfo pcache_info {};
+    pcache_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    VkPipelineCache pipeline_cache;
+    REQ_VK(dev.dt.createPipelineCache(dev.hdl, &pcache_info,
+                                      nullptr, &pipeline_cache));
+
+    VkPipelineInputAssemblyStateCreateInfo input_assembly_info {};
+    input_assembly_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    input_assembly_info.topology =
+        VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    input_assembly_info.primitiveRestartEnable = VK_FALSE;
+
+    VkPipelineRasterizationStateCreateInfo raster_info {};
+    raster_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    raster_info.depthClampEnable = VK_FALSE;
+    raster_info.rasterizerDiscardEnable = VK_FALSE;
+    raster_info.polygonMode = VK_POLYGON_MODE_FILL;
+    raster_info.cullMode = VK_CULL_MODE_BACK_BIT;
+    raster_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    raster_info.depthBiasEnable = VK_FALSE;
+    raster_info.lineWidth = 1.0f;
+
+    VkPipelineColorBlendAttachmentState blend_attach_state {};
+    blend_attach_state.blendEnable = VK_FALSE;
+
+    VkPipelineColorBlendStateCreateInfo blend_info {};
+    blend_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blend_info.logicOpEnable = VK_FALSE;
+    blend_info.attachmentCount = 1;
+    blend_info.pAttachments = &blend_attach_state;
+
+    VkPipelineMultisampleStateCreateInfo multisample_info {};
+    multisample_info.sType = 
+        VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisample_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    multisample_info.sampleShadingEnable = VK_FALSE;
+    multisample_info.alphaToCoverageEnable = VK_FALSE;
+    multisample_info.alphaToOneEnable = VK_FALSE;
+
+    VkPipelineDepthStencilStateCreateInfo depth_info {};
+    depth_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_info.depthTestEnable = VK_TRUE;
+    depth_info.depthWriteEnable = VK_TRUE;
+    depth_info.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depth_info.depthBoundsTestEnable = VK_FALSE;
+    depth_info.stencilTestEnable = VK_FALSE;
+    depth_info.back.compareOp = VK_COMPARE_OP_ALWAYS;
+
+    VkDynamicState dyn_viewport_enable = VK_DYNAMIC_STATE_VIEWPORT;
+
+    VkPipelineDynamicStateCreateInfo dyn_info {};
+    dyn_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dyn_info.dynamicStateCount = 1;
+    dyn_info.pDynamicStates = &dyn_viewport_enable;
+
+    VkRect2D scissors {
+        { 0, 0 },
+        { 1, 1 }
+    };
+
+    VkPipelineViewportStateCreateInfo viewport_info {};
+    viewport_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport_info.viewportCount = 1;
+    viewport_info.pViewports = nullptr;
+    viewport_info.scissorCount = 1;
+    viewport_info.pScissors = &scissors;
+
+    //array shader_stages {
+    //};
+    
+    return PipelineState {
     };
 }
 
