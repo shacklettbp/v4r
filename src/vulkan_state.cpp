@@ -64,7 +64,8 @@ static void fillQueueInfo(VkDeviceQueueCreateInfo &info, uint32_t idx,
 
 VkFormatProperties2 getFormatProperties(const InstanceState &inst,
                                         VkPhysicalDevice phy,
-                                        VkFormat &fmt) {
+                                        VkFormat &fmt) 
+{
     VkFormatProperties2 props;
     props.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
     props.pNext = nullptr;
