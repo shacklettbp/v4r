@@ -86,7 +86,7 @@ VkFormat getDeviceDepthFormat(VkPhysicalDevice phy, const InstanceState &inst)
         VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
 
     for (auto &fmt : desired_formats) {
-        VkFormatProperties2 props = getPhysicalDeviceProperties(inst, phy, fmt);
+        VkFormatProperties2 props = getFormatProperties(inst, phy, fmt);
         if ((props.formatProperties.optimalTilingFeatures &
                     desired_features) == desired_features) {
             return fmt;
@@ -110,7 +110,7 @@ VkFormat getDeviceColorFormat(VkPhysicalDevice phy, const InstanceState &inst)
       VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
 
   for (auto &fmt : desired_formats) {
-      VkFormatProperties2 props = getPhysicalDeviceProperties(inst, phy, fmt);
+      VkFormatProperties2 props = getFormatProperties(inst, phy, fmt);
       if ((props.formatProperties.optimalTilingFeatures &
                   desired_features) == desired_features) {
           return fmt;
