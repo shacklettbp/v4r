@@ -62,9 +62,9 @@ static void fillQueueInfo(VkDeviceQueueCreateInfo &info, uint32_t idx,
     info.pQueuePriorities = priorities.data();
 }
 
-VkFormatProperties2 getPhysicalDeviceProperties(const InstanceState &inst,
-                                                VkPhysicalDevice phy,
-                                                auto &fmt) {
+VkFormatProperties2 getFormatProperties(const InstanceState &inst,
+                                        VkPhysicalDevice phy,
+                                        VkFormat &fmt) {
     VkFormatProperties2 props;
     props.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
     props.pNext = nullptr;
@@ -440,7 +440,7 @@ static VkRenderPass makeRenderPass(const FramebufferConfig &fb_cfg,
                 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-           0 
+           0
         },
         {
             0,
@@ -450,7 +450,7 @@ static VkRenderPass makeRenderPass(const FramebufferConfig &fb_cfg,
             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
             VK_ACCESS_TRANSFER_READ_BIT,
-            0 
+            0
         }
     }};
 
@@ -458,7 +458,7 @@ static VkRenderPass makeRenderPass(const FramebufferConfig &fb_cfg,
     render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     render_pass_info.pNext = nullptr;
     render_pass_info.flags = 0;
-    render_pass_info.attachmentCount = 
+    render_pass_info.attachmentCount =
         static_cast<uint32_t>(attachment_descs.size());
     render_pass_info.pAttachments = attachment_descs.data();
     render_pass_info.subpassCount = 1;
