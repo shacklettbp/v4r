@@ -783,8 +783,9 @@ static PipelineState makePipeline(const FramebufferConfig &fb_cfg,
 
 CommandStreamState::CommandStreamState(const DeviceState &d,
                                        const FramebufferConfig &fb_cfg,
-                                       const PipelineState &pipeline)
+                                       const PipelineState &pl)
     : dev(d),
+      pipeline(pl),
       gfxPool(createCmdPool(dev, dev.gfxQF)),
       gfxQueue(createQueue(dev, dev.gfxQF, 0)),
       fb(makeFramebuffer(fb_cfg, pipeline, dev))

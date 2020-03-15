@@ -2,8 +2,6 @@
 #include <thread>
 #include <vector>
 
-#include <vulkan/vulkan.h>
-
 #include <v4r.hpp>
 
 #include "dispatch.hpp"
@@ -34,26 +32,31 @@ CommandStream::CommandStream(CommandStream::StreamStateHandle &&state)
     : state_(move(state))
 {}
 
-RenderResult CommandStream::renderCamera()
+RenderResult CommandStream::renderCamera(const SceneHandle &scene)
 {
-    return RenderResult();
+    return RenderResult {
+        nullptr
+    };
 }
 
 RenderContext::RenderContext(const RenderConfig &cfg)
-    : state_(make_unique<VulkanState>(cfg))
+    : state_(make_unique<VulkanState>(cfg)),
+      scene_mgr_(make_unique<SceneManager>())
 {
 }
 
 RenderContext::~RenderContext() = default;
 
 
-RenderContext::SceneHandle RenderContext::loadScene(const std::string &file)
+RenderContext::SceneHandle RenderContext::loadScene(const string &file)
 {
-    return make_handle<SceneID>();
+    SceneID id = scene_mgr_->loadScene(file);
+    return make_handle<SceneID>(id);
 }
 
 void RenderContext::dropScene(RenderContext::SceneHandle &&handle)
 {
+    scene_mgr_->dropScene(move(*handle));
 }
 
 RenderContext::CommandStream RenderContext::makeCommandStream() const

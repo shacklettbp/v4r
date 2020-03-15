@@ -85,11 +85,12 @@ struct CommandStreamState {
 public:
     CommandStreamState(const DeviceState &dev,
                        const FramebufferConfig &fb_cfg,
-                       const PipelineState &pipeline);
+                       const PipelineState &pl);
     CommandStreamState(const CommandStreamState &) = delete;
     CommandStreamState(CommandStreamState &&) = default;
 
     const DeviceState &dev;
+    const PipelineState &pipeline;
     const VkCommandPool gfxPool;
     const VkQueue gfxQueue;
 

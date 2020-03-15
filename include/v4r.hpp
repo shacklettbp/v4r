@@ -10,8 +10,11 @@ namespace v4r {
 struct VulkanState;
 struct CommandStreamState;
 class SceneID;
+class SceneManager;
 
-class RenderResult {
+struct RenderResult {
+public:
+    void *cudaDevicePtr;
 };
 
 class RenderContext {
@@ -28,7 +31,7 @@ public:
 
     class CommandStream {
     public:
-        RenderResult renderCamera();
+        RenderResult renderCamera(const SceneHandle &scene);
 
     private:
         using StreamStateHandle = Handle<CommandStreamState>;
@@ -49,6 +52,7 @@ public:
 
 private:
     std::unique_ptr<VulkanState> state_;
+    std::unique_ptr<SceneManager> scene_mgr_;
 };
 
 }

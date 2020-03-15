@@ -13,10 +13,10 @@ int main(int argc, char *argv[]) {
 
     RenderContext r({0, 128, 128});
 
-    auto scene_handle { r.loadScene(argv[1]) };
+    auto scene_handle = r.loadScene(argv[1]);
 
     auto cmd_stream = r.makeCommandStream();
-    auto frame = cmd_stream.renderCamera();
+    auto frame = cmd_stream.renderCamera(scene_handle);
     (void)frame;
 
     r.dropScene(move(scene_handle));
