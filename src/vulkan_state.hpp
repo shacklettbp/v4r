@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include <glm/glm.hpp>
 #include <vulkan/vulkan.h>
 
 #include <v4r/config.hpp>
@@ -14,8 +15,24 @@
 namespace v4r {
 
 struct Vertex {
-    float position[3];
-    float color[3];
+    glm::vec3 position;
+    glm::vec2 uv;
+    glm::vec3 color;
+};
+
+struct SceneMesh {
+    uint32_t startIndex;
+    uint32_t numIndices;
+};
+
+struct SceneAssets {
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+
+    std::vector<SceneMesh> meshes;
+};
+
+struct SceneState {
 };
 
 struct FramebufferConfig {
@@ -102,6 +119,8 @@ public:
     VulkanState(const RenderConfig &cfg);
     VulkanState(const VulkanState &) = delete;
     VulkanState(VulkanState &&) = delete;
+
+    SceneState loadScene(const SceneAssets &assets) const;
 
     const RenderConfig cfg;
 

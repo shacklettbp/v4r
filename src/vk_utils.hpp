@@ -5,9 +5,9 @@
 
 #include <vulkan/vulkan.h>
 
-namespace v4r {
+#include "utils.hpp"
 
-[[noreturn]] void fatalExit() noexcept;
+namespace v4r {
 
 void printVkError(VkResult res, const char *msg);
 

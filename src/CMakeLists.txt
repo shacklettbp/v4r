@@ -44,7 +44,7 @@ add_definitions("-DSHADER_DIR=${SHADER_DIR}")
 add_library(v4r SHARED
     dispatch.hpp dispatch.cpp
     scene.hpp scene.cpp
-    utils.hpp
+    utils.hpp utils.cpp
     vk_utils.hpp vk_utils.cpp
     vulkan_config.hpp ../include/v4r/config.hpp
     vulkan_state.hpp vulkan_state.cpp

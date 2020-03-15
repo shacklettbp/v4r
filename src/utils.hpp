@@ -6,6 +6,8 @@
 
 namespace v4r {
 
+[[noreturn]] void fatalExit() noexcept;
+
 template <typename T>
 class DynArray {
 public:

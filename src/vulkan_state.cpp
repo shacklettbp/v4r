@@ -9,8 +9,6 @@
 #include <optional>
 #include <vector>
 
-#include <glm/glm.hpp>
-
 using namespace std;
 
 extern "C" {
@@ -798,5 +796,12 @@ VulkanState::VulkanState(const RenderConfig &config)
       fbCfg(getFramebufferConfig(dev, inst, cfg)),
       pipeline(makePipeline(fbCfg, dev))
 {}
+
+SceneState VulkanState::loadScene(const SceneAssets &assets) const
+{
+
+    return SceneState {
+    };
+}
 
 }

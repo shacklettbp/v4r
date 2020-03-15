@@ -41,7 +41,7 @@ RenderResult CommandStream::renderCamera(const SceneHandle &scene)
 
 RenderContext::RenderContext(const RenderConfig &cfg)
     : state_(make_unique<VulkanState>(cfg)),
-      scene_mgr_(make_unique<SceneManager>())
+      scene_mgr_(make_unique<SceneManager>(*state_))
 {
 }
 

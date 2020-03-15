@@ -7,11 +7,6 @@ using namespace std;
 
 namespace v4r {
 
-[[noreturn]] void fatalExit() noexcept
-{
-    abort();
-}
-
 void printVkError(VkResult res, const char *msg)
 {
 #define ERR_CASE(val) case VK_##val: cerr << #val; break
