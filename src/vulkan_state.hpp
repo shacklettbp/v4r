@@ -13,6 +13,11 @@
 
 namespace v4r {
 
+struct Vertex {
+    float position[3];
+    float color[3];
+};
+
 struct FramebufferConfig {
 public:
     uint32_t width;
@@ -41,7 +46,16 @@ public:
     VkFramebuffer hdl;
 };
 
+// FIXME separate out things like the layout, cache (maybe renderpass)
+// into a PipelineConfig type struct
 struct PipelineState {
+    VkRenderPass renderPass;
+
+    std::array<VkShaderModule, 2> shaders;
+
+    VkPipelineCache pipelineCache;
+    VkPipelineLayout gfxLayout;
+    VkPipeline gfxPipeline;
 };
 
 struct DeviceState {
@@ -70,7 +84,8 @@ public:
 struct CommandStreamState {
 public:
     CommandStreamState(const DeviceState &dev,
-                       const FramebufferConfig &fb_cfg);
+                       const FramebufferConfig &fb_cfg,
+                       const PipelineState &pipeline);
     CommandStreamState(const CommandStreamState &) = delete;
     CommandStreamState(CommandStreamState &&) = default;
 
@@ -92,6 +107,7 @@ public:
     const InstanceState inst;
     const DeviceState dev;
     const FramebufferConfig fbCfg;
+    const PipelineState pipeline;
 };
 
 }

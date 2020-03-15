@@ -24,9 +24,9 @@ static inline VkResult checkVk(VkResult res, const char *msg,
     return res;
 }
 
-#define LINE_SAFE(m) #m
-#define LINE_STR(m) LINE_SAFE(m)
-#define LOC_APPEND(m) m ": " __FILE__ " @ " LINE_STR(__LINE__)
+#define STRINGIFY_HELPER(m) #m
+#define STRINGIFY(m) STRINGIFY_HELPER(m)
+#define LOC_APPEND(m) m ": " __FILE__ " @ " STRINGIFY(__LINE__)
 #define REQ_VK(expr) checkVk((expr), LOC_APPEND(#expr))
 #define CHK_VK(expr) checkVk((expr), LOC_APPEND(#expr), false)
 

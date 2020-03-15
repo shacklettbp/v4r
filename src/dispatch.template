@@ -18,6 +18,10 @@ device:
 - vkDestroyPipelineLayout
 - vkCreatePipelineCache
 - vkDestroyPipelineCache
+- vkCreateGraphicsPipelines
+- vkDestroyPipeline
+- vkCreateShaderModule
+- vkDestroyShaderModule
 
 instance:
 - vkEnumeratePhysicalDevices

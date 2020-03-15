@@ -58,7 +58,8 @@ void RenderContext::dropScene(RenderContext::SceneHandle &&handle)
 
 RenderContext::CommandStream RenderContext::makeCommandStream() const
 {
-    auto hdl = make_handle<CommandStreamState>(state_->dev, state_->fbCfg);
+    auto hdl = make_handle<CommandStreamState>(state_->dev, state_->fbCfg,
+                                               state_->pipeline);
 
     return CommandStream(move(hdl));
 }

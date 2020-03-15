@@ -5,6 +5,7 @@
 #include "vulkan_config.hpp"
 
 #include <iostream>
+#include <fstream>
 #include <optional>
 #include <vector>
 
@@ -64,9 +65,9 @@ static void fillQueueInfo(VkDeviceQueueCreateInfo &info, uint32_t idx,
     info.pQueuePriorities = priorities.data();
 }
 
-VkFormatProperties2 getFormatProperties(const InstanceState &inst,
-                                        VkPhysicalDevice phy,
-                                        VkFormat fmt)
+static VkFormatProperties2 getFormatProperties(const InstanceState &inst,
+                                               VkPhysicalDevice phy,
+                                               VkFormat fmt)
 {
     VkFormatProperties2 props;
     props.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
@@ -76,7 +77,8 @@ VkFormatProperties2 getFormatProperties(const InstanceState &inst,
     return props;
 }
 
-VkFormat getDeviceDepthFormat(VkPhysicalDevice phy, const InstanceState &inst)
+static VkFormat getDeviceDepthFormat(VkPhysicalDevice phy,
+                                     const InstanceState &inst)
 {
     static const array desired_formats {
         VK_FORMAT_D32_SFLOAT_S8_UINT,
@@ -100,7 +102,8 @@ VkFormat getDeviceDepthFormat(VkPhysicalDevice phy, const InstanceState &inst)
     fatalExit();
 }
 
-VkFormat getDeviceColorFormat(VkPhysicalDevice phy, const InstanceState &inst)
+static VkFormat getDeviceColorFormat(VkPhysicalDevice phy,
+                                     const InstanceState &inst)
 {
     static const array desired_formats {
         VK_FORMAT_R16G16B16A16_SFLOAT,
@@ -112,7 +115,7 @@ VkFormat getDeviceColorFormat(VkPhysicalDevice phy, const InstanceState &inst)
         VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
         VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
 
-    for (auto &fmt : desired_formats) {
+    for (auto fmt : desired_formats) {
         VkFormatProperties2 props = getFormatProperties(inst, phy, fmt);
         if ((props.formatProperties.optimalTilingFeatures &
                     desired_features) == desired_features) {
@@ -478,6 +481,7 @@ static VkRenderPass makeRenderPass(const FramebufferConfig &fb_cfg,
 }
 
 static FramebufferState makeFramebuffer(const FramebufferConfig &fb_cfg,
+                                        const PipelineState &pipeline,
                                         const DeviceState &dev)
 {
     VkImage color_img;
@@ -523,13 +527,11 @@ static FramebufferState makeFramebuffer(const FramebufferConfig &fb_cfg,
     REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
                                   nullptr, &views[1]));
 
-    VkRenderPass render_pass = makeRenderPass(fb_cfg, dev);
-
     VkFramebufferCreateInfo fb_info;
     fb_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     fb_info.pNext = nullptr;
     fb_info.flags = 0;
-    fb_info.renderPass = render_pass;
+    fb_info.renderPass = pipeline.renderPass;
     fb_info.attachmentCount = static_cast<uint32_t>(views.size());
     fb_info.pAttachments = views.data();
     fb_info.width = fb_cfg.width;
@@ -549,8 +551,178 @@ static FramebufferState makeFramebuffer(const FramebufferConfig &fb_cfg,
     };
 }
 
-static PipelineState makePipeline(const DeviceState &dev)
+static VkShaderModule loadShader(const string &base_name,
+                                 const DeviceState &dev)
 {
+    const string full_path = string(STRINGIFY(SHADER_DIR)) + base_name;
+    
+    ifstream shader_file(full_path, ios::binary | ios::ate);
+
+    streampos fend = shader_file.tellg();
+    shader_file.seekg(0, ios::beg);
+    streampos fbegin = shader_file.tellg();
+    size_t file_size = fend - fbegin;
+
+    if (file_size == 0) {
+        cerr << "Empty shader file" << endl;
+        fatalExit();
+    }
+
+    DynArray<char> shader_code(file_size);
+    shader_file.read(shader_code.data(), file_size);
+    shader_file.close();
+
+    VkShaderModuleCreateInfo shader_info;
+    shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    shader_info.pNext = nullptr;
+    shader_info.flags = 0;
+    shader_info.codeSize = file_size;
+    shader_info.pCode = reinterpret_cast<const uint32_t *>(shader_code.data());
+
+    VkShaderModule shader_module;
+    REQ_VK(dev.dt.createShaderModule(dev.hdl, &shader_info, nullptr,
+                                     &shader_module));
+
+    return shader_module;
+}
+
+static PipelineState makePipeline(const FramebufferConfig &fb_cfg,
+                                  const DeviceState &dev)
+{
+    // Pipeline cache (FIXME)
+    VkPipelineCacheCreateInfo pcache_info {};
+    pcache_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    VkPipelineCache pipeline_cache;
+    REQ_VK(dev.dt.createPipelineCache(dev.hdl, &pcache_info,
+                                      nullptr, &pipeline_cache));
+
+    // Shaders
+    array shader_modules {
+        loadShader("unlit.vert.spv", dev),
+        loadShader("unlit.frag.spv", dev)
+    };
+
+    array<VkPipelineShaderStageCreateInfo, 2> shader_stages {{
+        {
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            nullptr,
+            0,
+            VK_SHADER_STAGE_VERTEX_BIT,
+            shader_modules[0],
+            "main",
+            nullptr
+        },
+        {
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            nullptr,
+            0,
+            VK_SHADER_STAGE_FRAGMENT_BIT,
+            shader_modules[1],
+            "main",
+            nullptr
+        }
+    }};
+
+    // Vertices
+    array<VkVertexInputBindingDescription, 1> input_bindings {{
+        {
+            0,
+            sizeof(Vertex),
+            VK_VERTEX_INPUT_RATE_VERTEX
+        }
+    }};
+
+    array<VkVertexInputAttributeDescription, 2> input_attrs {{
+        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 }, // Position
+        { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(float) * 3}
+    }};
+
+    VkPipelineVertexInputStateCreateInfo vert_info;
+    vert_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vert_info.pNext = nullptr;
+    vert_info.flags = 0;
+    vert_info.vertexBindingDescriptionCount =
+        static_cast<uint32_t>(input_bindings.size());
+    vert_info.pVertexBindingDescriptions = input_bindings.data();
+    vert_info.vertexAttributeDescriptionCount =
+        static_cast<uint32_t>(input_attrs.size());
+    vert_info.pVertexAttributeDescriptions = input_attrs.data();
+    
+    // Assembly
+    VkPipelineInputAssemblyStateCreateInfo input_assembly_info {};
+    input_assembly_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    input_assembly_info.topology =
+        VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    input_assembly_info.primitiveRestartEnable = VK_FALSE;
+
+    // Viewport
+    VkRect2D scissors {
+        { 0, 0 },
+        { 1, 1 }
+    };
+
+    VkPipelineViewportStateCreateInfo viewport_info {};
+    viewport_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport_info.viewportCount = 1;
+    viewport_info.pViewports = nullptr;
+    viewport_info.scissorCount = 1;
+    viewport_info.pScissors = &scissors;
+
+    // Multisample
+    VkPipelineMultisampleStateCreateInfo multisample_info {};
+    multisample_info.sType = 
+        VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisample_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    multisample_info.sampleShadingEnable = VK_FALSE;
+    multisample_info.alphaToCoverageEnable = VK_FALSE;
+    multisample_info.alphaToOneEnable = VK_FALSE;
+
+    // Rasterization
+    VkPipelineRasterizationStateCreateInfo raster_info {};
+    raster_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    raster_info.depthClampEnable = VK_FALSE;
+    raster_info.rasterizerDiscardEnable = VK_FALSE;
+    raster_info.polygonMode = VK_POLYGON_MODE_FILL;
+    raster_info.cullMode = VK_CULL_MODE_BACK_BIT;
+    raster_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    raster_info.depthBiasEnable = VK_FALSE;
+    raster_info.lineWidth = 1.0f;
+    
+    // Depth/Stencil
+    VkPipelineDepthStencilStateCreateInfo depth_info {};
+    depth_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_info.depthTestEnable = VK_TRUE;
+    depth_info.depthWriteEnable = VK_TRUE;
+    depth_info.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    depth_info.depthBoundsTestEnable = VK_FALSE;
+    depth_info.stencilTestEnable = VK_FALSE;
+    depth_info.back.compareOp = VK_COMPARE_OP_ALWAYS;
+
+    // Blend
+    VkPipelineColorBlendAttachmentState blend_attach_state {};
+    blend_attach_state.blendEnable = VK_FALSE;
+
+    VkPipelineColorBlendStateCreateInfo blend_info {};
+    blend_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blend_info.logicOpEnable = VK_FALSE;
+    blend_info.attachmentCount = 1;
+    blend_info.pAttachments = &blend_attach_state;
+
+    // Dynamic
+    VkDynamicState dyn_viewport_enable = VK_DYNAMIC_STATE_VIEWPORT;
+
+    VkPipelineDynamicStateCreateInfo dyn_info {};
+    dyn_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dyn_info.dynamicStateCount = 1;
+    dyn_info.pDynamicStates = &dyn_viewport_enable;
+
+    // Layout configuration
+    // One push constant for MVP matrix
     VkPushConstantRange mvp_consts;
     mvp_consts.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     mvp_consts.offset = 0;
@@ -570,98 +742,60 @@ static PipelineState makePipeline(const DeviceState &dev)
     REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &pipeline_layout_info,
                                        nullptr, &pipeline_layout));
 
-    VkPipelineCacheCreateInfo pcache_info {};
-    pcache_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
-    VkPipelineCache pipeline_cache;
-    REQ_VK(dev.dt.createPipelineCache(dev.hdl, &pcache_info,
-                                      nullptr, &pipeline_cache));
 
-    VkPipelineInputAssemblyStateCreateInfo input_assembly_info {};
-    input_assembly_info.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    input_assembly_info.topology =
-        VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    input_assembly_info.primitiveRestartEnable = VK_FALSE;
+    // Make pipeline
+    VkRenderPass render_pass = makeRenderPass(fb_cfg, dev);
 
-    VkPipelineRasterizationStateCreateInfo raster_info {};
-    raster_info.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    raster_info.depthClampEnable = VK_FALSE;
-    raster_info.rasterizerDiscardEnable = VK_FALSE;
-    raster_info.polygonMode = VK_POLYGON_MODE_FILL;
-    raster_info.cullMode = VK_CULL_MODE_BACK_BIT;
-    raster_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
-    raster_info.depthBiasEnable = VK_FALSE;
-    raster_info.lineWidth = 1.0f;
+    VkGraphicsPipelineCreateInfo pipeline_info;
+    pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipeline_info.pNext = nullptr;
+    pipeline_info.flags = 0;
+    pipeline_info.stageCount = static_cast<uint32_t>(shader_stages.size());
+    pipeline_info.pStages = shader_stages.data();
+    pipeline_info.pVertexInputState = &vert_info;
+    pipeline_info.pInputAssemblyState = &input_assembly_info;
+    pipeline_info.pTessellationState = nullptr;
+    pipeline_info.pViewportState = &viewport_info;
+    pipeline_info.pRasterizationState = &raster_info;
+    pipeline_info.pMultisampleState = &multisample_info;
+    pipeline_info.pDepthStencilState = &depth_info;
+    pipeline_info.pColorBlendState = &blend_info;
+    pipeline_info.pDynamicState = &dyn_info;
+    pipeline_info.layout = pipeline_layout;
+    pipeline_info.renderPass = render_pass;
+    pipeline_info.subpass = 0;
+    pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
+    pipeline_info.basePipelineIndex = -1;
 
-    VkPipelineColorBlendAttachmentState blend_attach_state {};
-    blend_attach_state.blendEnable = VK_FALSE;
-
-    VkPipelineColorBlendStateCreateInfo blend_info {};
-    blend_info.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blend_info.logicOpEnable = VK_FALSE;
-    blend_info.attachmentCount = 1;
-    blend_info.pAttachments = &blend_attach_state;
-
-    VkPipelineMultisampleStateCreateInfo multisample_info {};
-    multisample_info.sType = 
-        VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisample_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    multisample_info.sampleShadingEnable = VK_FALSE;
-    multisample_info.alphaToCoverageEnable = VK_FALSE;
-    multisample_info.alphaToOneEnable = VK_FALSE;
-
-    VkPipelineDepthStencilStateCreateInfo depth_info {};
-    depth_info.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depth_info.depthTestEnable = VK_TRUE;
-    depth_info.depthWriteEnable = VK_TRUE;
-    depth_info.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-    depth_info.depthBoundsTestEnable = VK_FALSE;
-    depth_info.stencilTestEnable = VK_FALSE;
-    depth_info.back.compareOp = VK_COMPARE_OP_ALWAYS;
-
-    VkDynamicState dyn_viewport_enable = VK_DYNAMIC_STATE_VIEWPORT;
-
-    VkPipelineDynamicStateCreateInfo dyn_info {};
-    dyn_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dyn_info.dynamicStateCount = 1;
-    dyn_info.pDynamicStates = &dyn_viewport_enable;
-
-    VkRect2D scissors {
-        { 0, 0 },
-        { 1, 1 }
-    };
-
-    VkPipelineViewportStateCreateInfo viewport_info {};
-    viewport_info.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewport_info.viewportCount = 1;
-    viewport_info.pViewports = nullptr;
-    viewport_info.scissorCount = 1;
-    viewport_info.pScissors = &scissors;
-
-    //array shader_stages {
-    //};
-    
+    VkPipeline pipeline;
+    REQ_VK(dev.dt.createGraphicsPipelines(dev.hdl, pipeline_cache, 1,
+                                          &pipeline_info, nullptr,
+                                          &pipeline));
+ 
     return PipelineState {
+        render_pass,
+        shader_modules,
+        pipeline_cache,
+        pipeline_layout,
+        pipeline
     };
 }
 
 CommandStreamState::CommandStreamState(const DeviceState &d,
-                                       const FramebufferConfig &fb_cfg)
+                                       const FramebufferConfig &fb_cfg,
+                                       const PipelineState &pipeline)
     : dev(d),
-      gfxPool(createCmdPool(d, d.gfxQF)),
-      gfxQueue(createQueue(d, d.gfxQF, 0)),
-      fb(makeFramebuffer(fb_cfg, d))
+      gfxPool(createCmdPool(dev, dev.gfxQF)),
+      gfxQueue(createQueue(dev, dev.gfxQF, 0)),
+      fb(makeFramebuffer(fb_cfg, pipeline, dev))
 {}
 
 VulkanState::VulkanState(const RenderConfig &config)
     : cfg(config),
       inst(),
       dev(inst.makeDevice(cfg.gpuID)),
-      fbCfg(getFramebufferConfig(dev, inst, cfg))
+      fbCfg(getFramebufferConfig(dev, inst, cfg)),
+      pipeline(makePipeline(fbCfg, dev))
 {}
 
 }
