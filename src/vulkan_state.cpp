@@ -125,9 +125,9 @@ static VkFormat getDeviceColorFormat(VkPhysicalDevice phy,
     fatalExit();
 }
 
-static uint32_t findMemoryTypeIndex(VkPhysicalDevice phy,
-                                    uint32_t allowed_type_bits,
+static uint32_t findMemoryTypeIndex(uint32_t allowed_type_bits,
                                     VkMemoryPropertyFlags required_props,
+                                    VkPhysicalDevice phy,
                                     const InstanceState &inst)
 {
     VkPhysicalDeviceMemoryProperties2 mem_props;
@@ -192,8 +192,9 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
     color_alloc_info.pNext = nullptr;
     color_alloc_info.allocationSize = color_req.size;
     color_alloc_info.memoryTypeIndex =
-        findMemoryTypeIndex(dev.phy, color_req.memoryTypeBits,
-                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, inst);
+        findMemoryTypeIndex(color_req.memoryTypeBits,
+                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                            dev.phy, inst);
 
     // Set depth specific settings
     VkImageCreateInfo depth_img_info = color_img_info;
@@ -214,8 +215,9 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
     depth_alloc_info.pNext = nullptr;
     depth_alloc_info.allocationSize = depth_req.size;
     depth_alloc_info.memoryTypeIndex =
-        findMemoryTypeIndex(dev.phy, depth_req.memoryTypeBits,
-                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, inst);
+        findMemoryTypeIndex(depth_req.memoryTypeBits,
+                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                            dev.phy, inst);
 
     return FramebufferConfig {
         cfg.imgWidth,
@@ -226,6 +228,59 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
         color_alloc_info,
         depth_img_info,
         depth_alloc_info
+    };
+}
+
+static VkMemoryRequirements getBufferMemReqs(VkBufferUsageFlags usage_flags,
+                                             const DeviceState &dev,
+                                             const InstanceState &inst)
+{
+    VkBufferCreateInfo buffer_info;
+    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_info.pNext = nullptr;
+    buffer_info.flags = 0;
+    buffer_info.size = 1;
+    buffer_info.usage = usage_flags;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VkBuffer test_buffer;
+    REQ_VK(dev.dt.createBuffer(dev.hdl, &buffer_info, nullptr,
+                               &test_buffer));
+
+    VkMemoryRequirements reqs;
+    dev.dt.getBufferMemoryRequirements(dev.hdl, test_buffer, &reqs);
+
+    dev.dt.destroyBuffer(dev.hdl, test_buffer, nullptr);
+
+    return reqs;
+}
+
+static SceneLoaderConfig getSceneLoaderConfig(const DeviceState &dev,
+                                              const InstanceState &inst)
+{
+    VkMemoryRequirements stage_reqs =
+        getBufferMemReqs(VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                         dev, inst);
+
+    uint32_t stage_type_idx = findMemoryTypeIndex(stage_reqs.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            dev.phy, inst);
+
+    VkMemoryRequirements scene_reqs =
+        getBufferMemReqs(VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+            dev, inst);
+
+    uint32_t scene_type_idx = findMemoryTypeIndex(scene_reqs.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            dev.phy, inst);
+
+    return SceneLoaderConfig {
+        stage_type_idx,
+        scene_type_idx
     };
 }
 
@@ -794,12 +849,12 @@ VulkanState::VulkanState(const RenderConfig &config)
       inst(),
       dev(inst.makeDevice(cfg.gpuID)),
       fbCfg(getFramebufferConfig(dev, inst, cfg)),
+      sceneLoaderCfg(getSceneLoaderConfig(dev, inst)),
       pipeline(makePipeline(fbCfg, dev))
 {}
 
 SceneState VulkanState::loadScene(const SceneAssets &assets) const
 {
-
     return SceneState {
     };
 }

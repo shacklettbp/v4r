@@ -32,6 +32,12 @@ struct SceneAssets {
     std::vector<SceneMesh> meshes;
 };
 
+struct SceneLoaderConfig {
+public:
+    uint32_t stageMemTypeIdx;
+    uint32_t sceneMemTypeIdx;
+};
+
 struct SceneState {
 };
 
@@ -127,6 +133,7 @@ public:
     const InstanceState inst;
     const DeviceState dev;
     const FramebufferConfig fbCfg;
+    const SceneLoaderConfig sceneLoaderCfg;
     const PipelineState pipeline;
 };
 

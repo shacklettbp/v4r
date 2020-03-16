@@ -22,6 +22,9 @@ device:
 - vkDestroyPipeline
 - vkCreateShaderModule
 - vkDestroyShaderModule
+- vkCreateBuffer
+- vkDestroyBuffer
+- vkGetBufferMemoryRequirements
 
 instance:
 - vkEnumeratePhysicalDevices
