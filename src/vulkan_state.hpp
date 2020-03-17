@@ -108,7 +108,7 @@ public:
 
     ~StageBuffer();
 private:
-    StageBuffer(MemoryAllocate &alloc);
+    StageBuffer(MemoryAllocator &alloc);
 
     VkDeviceMemory mem_;
     MemoryAllocator &alloc_;
@@ -119,26 +119,34 @@ private:
 class LocalBuffer {
 public:
     VkBuffer buffer;
+
     ~LocalBuffer();
 
 private:
     LocalBuffer(MemoryAllocator &alloc);
 
-    VkDeviceMemory mem_;
     MemoryAllocator &alloc_;
 
     friend class MemoryAllocator;
 };
 
+struct MemoryTypeIndices {
+    uint32_t stageBuffer;
+    uint32_t localGeometryBuffer;
+};
+
 class MemoryAllocator {
 public:
     MemoryAllocator(const DeviceState &dev, const InstanceState &inst);
-private:
+    MemoryAllocator(const MemoryAllocator &) = delete;
+    MemoryAllocator(MemoryAllocator &&) = default;
 
-    struct {
-        uint32_t stageBuffer;
-        uint32_t localGeometryBuffer;
-    } type_indices_;
+    StageBuffer makeStagingBuffer(VkDeviceSize num_bytes);
+    LocalBuffer makeGeometryBuffer(VkDeviceSize num_bytes);
+
+private:
+    const DeviceState &dev;
+    MemoryTypeIndices type_indices_;
 };
 
 struct CommandStreamState {
@@ -169,6 +177,7 @@ public:
 
     const InstanceState inst;
     const DeviceState dev;
+    MemoryAllocator alloc;
     const FramebufferConfig fbCfg;
     const PipelineState pipeline;
 };

@@ -20,7 +20,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED 17)
 
-add_compile_options(-Wall -Wextra -Wshadow -Weffc++)
+add_compile_options(-Wall -Wextra -Wshadow)
 
 # Hack to prefer linking against vulkan sdk
 IF (DEFINED ENV{VULKAN_SDK})

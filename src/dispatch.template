@@ -25,6 +25,9 @@ device:
 - vkCreateBuffer
 - vkDestroyBuffer
 - vkGetBufferMemoryRequirements
+- vkBindBufferMemory
+- vkMapMemory
+- vkUnmapMemory
 
 instance:
 - vkEnumeratePhysicalDevices
