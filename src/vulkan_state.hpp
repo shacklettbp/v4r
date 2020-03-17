@@ -32,12 +32,6 @@ struct SceneAssets {
     std::vector<SceneMesh> meshes;
 };
 
-struct SceneLoaderConfig {
-public:
-    uint32_t stageMemTypeIdx;
-    uint32_t sceneMemTypeIdx;
-};
-
 struct SceneState {
 };
 
@@ -46,14 +40,15 @@ public:
     uint32_t width;
     uint32_t height;
 
-    VkFormat depthFmt;
     VkFormat colorFmt;
-
     VkImageCreateInfo colorCreationSettings;
-    VkMemoryAllocateInfo colorMemorySettings;
+    VkDeviceSize colorMemorySize;
+    uint32_t colorMemoryTypeIdx;
 
+    VkFormat depthFmt;
     VkImageCreateInfo depthCreationSettings;
-    VkMemoryAllocateInfo depthMemorySettings;
+    VkDeviceSize depthMemorySize;
+    uint32_t depthMemoryTypeIdx;
 };
 
 struct FramebufferState {
@@ -104,6 +99,48 @@ public:
     DeviceState makeDevice(uint32_t gpu_id) const;
 };
 
+class MemoryAllocator;
+
+class StageBuffer {
+public:
+    VkBuffer buffer;
+    void *ptr;
+
+    ~StageBuffer();
+private:
+    StageBuffer(MemoryAllocate &alloc);
+
+    VkDeviceMemory mem_;
+    MemoryAllocator &alloc_;
+
+    friend class MemoryAllocator;
+};
+
+class LocalBuffer {
+public:
+    VkBuffer buffer;
+    ~LocalBuffer();
+
+private:
+    LocalBuffer(MemoryAllocator &alloc);
+
+    VkDeviceMemory mem_;
+    MemoryAllocator &alloc_;
+
+    friend class MemoryAllocator;
+};
+
+class MemoryAllocator {
+public:
+    MemoryAllocator(const DeviceState &dev, const InstanceState &inst);
+private:
+
+    struct {
+        uint32_t stageBuffer;
+        uint32_t localGeometryBuffer;
+    } type_indices_;
+};
+
 struct CommandStreamState {
 public:
     CommandStreamState(const DeviceState &dev,
@@ -133,7 +170,6 @@ public:
     const InstanceState inst;
     const DeviceState dev;
     const FramebufferConfig fbCfg;
-    const SceneLoaderConfig sceneLoaderCfg;
     const PipelineState pipeline;
 };
 

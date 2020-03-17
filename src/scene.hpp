@@ -30,6 +30,7 @@ private:
     SceneID(const std::list<Scene>::iterator &iter)
         : iter_(iter)
     {}
+
     std::list<Scene>::iterator iter_;
 
     friend class SceneManager;

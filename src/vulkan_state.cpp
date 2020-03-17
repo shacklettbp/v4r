@@ -157,15 +157,16 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
                                               const InstanceState &inst,
                                               const RenderConfig &cfg)
 {
-    VkFormat depth_fmt = getDeviceDepthFormat(dev.phy, inst);
-    VkFormat color_fmt = getDeviceColorFormat(dev.phy, inst);
+    const uint32_t num_single_dim = sqrt(VulkanConfig::num_images_per_fb);
+    static_assert(VulkanConfig::num_images_per_fb % num_single_dim == 0);
 
+    VkFormat color_fmt = getDeviceColorFormat(dev.phy, inst);
     VkImageCreateInfo color_img_info {};
     color_img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     color_img_info.imageType = VK_IMAGE_TYPE_2D;
     color_img_info.format = color_fmt;
-    color_img_info.extent.width = cfg.imgWidth;
-    color_img_info.extent.height = cfg.imgHeight;
+    color_img_info.extent.width = cfg.imgWidth * num_single_dim;
+    color_img_info.extent.height = cfg.imgHeight * num_single_dim;
     color_img_info.extent.depth = 1;
     color_img_info.mipLevels = 1;
     color_img_info.arrayLayers = 1;
@@ -187,16 +188,13 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
 
     dev.dt.destroyImage(dev.hdl, color_test, nullptr);
 
-    VkMemoryAllocateInfo color_alloc_info;
-    color_alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    color_alloc_info.pNext = nullptr;
-    color_alloc_info.allocationSize = color_req.size;
-    color_alloc_info.memoryTypeIndex =
-        findMemoryTypeIndex(color_req.memoryTypeBits,
-                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                            dev.phy, inst);
+    uint32_t color_type_idx = findMemoryTypeIndex(color_req.memoryTypeBits,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            dev.phy, inst);
 
     // Set depth specific settings
+    VkFormat depth_fmt = getDeviceDepthFormat(dev.phy, inst);
+
     VkImageCreateInfo depth_img_info = color_img_info;
     depth_img_info.format = depth_fmt;
     depth_img_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
@@ -210,30 +208,26 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
 
     dev.dt.destroyImage(dev.hdl, depth_test, nullptr);
 
-    VkMemoryAllocateInfo depth_alloc_info;
-    depth_alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    depth_alloc_info.pNext = nullptr;
-    depth_alloc_info.allocationSize = depth_req.size;
-    depth_alloc_info.memoryTypeIndex =
-        findMemoryTypeIndex(depth_req.memoryTypeBits,
-                            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                            dev.phy, inst);
+    uint32_t depth_type_idx = findMemoryTypeIndex(depth_req.memoryTypeBits,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            dev.phy, inst);
 
     return FramebufferConfig {
         cfg.imgWidth,
         cfg.imgHeight,
-        depth_fmt,
         color_fmt,
         color_img_info,
-        color_alloc_info,
+        color_req.size,
+        color_type_idx,
+        depth_fmt,
         depth_img_info,
-        depth_alloc_info
+        depth_req.size,
+        depth_type_idx
     };
 }
 
 static VkMemoryRequirements getBufferMemReqs(VkBufferUsageFlags usage_flags,
-                                             const DeviceState &dev,
-                                             const InstanceState &inst)
+                                             const DeviceState &dev)
 {
     VkBufferCreateInfo buffer_info;
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -255,12 +249,12 @@ static VkMemoryRequirements getBufferMemReqs(VkBufferUsageFlags usage_flags,
     return reqs;
 }
 
-static SceneLoaderConfig getSceneLoaderConfig(const DeviceState &dev,
+static void getSceneLoaderConfig(const DeviceState &dev,
                                               const InstanceState &inst)
 {
     VkMemoryRequirements stage_reqs =
         getBufferMemReqs(VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                         dev, inst);
+                         dev);
 
     uint32_t stage_type_idx = findMemoryTypeIndex(stage_reqs.memoryTypeBits,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -271,17 +265,12 @@ static SceneLoaderConfig getSceneLoaderConfig(const DeviceState &dev,
         getBufferMemReqs(VK_BUFFER_USAGE_TRANSFER_DST_BIT |
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
             VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-            dev, inst);
+            dev);
 
     uint32_t scene_type_idx = findMemoryTypeIndex(scene_reqs.memoryTypeBits,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             dev.phy, inst);
-
-    return SceneLoaderConfig {
-        stage_type_idx,
-        scene_type_idx
-    };
 }
 
 DeviceState InstanceState::makeDevice(const uint32_t gpu_id) const
@@ -541,9 +530,19 @@ static FramebufferState makeFramebuffer(const FramebufferConfig &fb_cfg,
     REQ_VK(dev.dt.createImage(dev.hdl, &fb_cfg.colorCreationSettings,
                               nullptr, &color_img));
 
+    VkMemoryDedicatedAllocateInfo color_dedicated;
+    color_dedicated.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
+    color_dedicated.pNext = nullptr;
+    color_dedicated.image = color_img;
+    color_dedicated.buffer = VK_NULL_HANDLE;
+    VkMemoryAllocateInfo color_mem_info;
+    color_mem_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    color_mem_info.pNext = &color_dedicated;
+    color_mem_info.allocationSize = fb_cfg.colorMemorySize;
+    color_mem_info.memoryTypeIndex = fb_cfg.colorMemoryTypeIdx;
+
     VkDeviceMemory color_mem;
-    // FIXME probably want to allocate this somewhere else and use part here
-    REQ_VK(dev.dt.allocateMemory(dev.hdl, &fb_cfg.colorMemorySettings,
+    REQ_VK(dev.dt.allocateMemory(dev.hdl, &color_mem_info,
                                  nullptr, &color_mem));
     REQ_VK(dev.dt.bindImageMemory(dev.hdl, color_img, color_mem, 0));
 
@@ -567,8 +566,19 @@ static FramebufferState makeFramebuffer(const FramebufferConfig &fb_cfg,
     REQ_VK(dev.dt.createImage(dev.hdl, &fb_cfg.depthCreationSettings,
                               nullptr, &depth_img));
 
+    VkMemoryDedicatedAllocateInfo depth_dedicated;
+    depth_dedicated.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
+    depth_dedicated.pNext = nullptr;
+    depth_dedicated.image = depth_img;
+    depth_dedicated.buffer = VK_NULL_HANDLE;
+    VkMemoryAllocateInfo depth_mem_info;
+    depth_mem_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    depth_mem_info.pNext = &depth_dedicated;
+    depth_mem_info.allocationSize = fb_cfg.depthMemorySize;
+    depth_mem_info.memoryTypeIndex = fb_cfg.depthMemoryTypeIdx;
+
     VkDeviceMemory depth_mem;
-    REQ_VK(dev.dt.allocateMemory(dev.hdl, &fb_cfg.depthMemorySettings,
+    REQ_VK(dev.dt.allocateMemory(dev.hdl, &depth_mem_info,
                                  nullptr, &depth_mem));
     REQ_VK(dev.dt.bindImageMemory(dev.hdl, depth_img, depth_mem, 0));
 
@@ -849,9 +859,40 @@ VulkanState::VulkanState(const RenderConfig &config)
       inst(),
       dev(inst.makeDevice(cfg.gpuID)),
       fbCfg(getFramebufferConfig(dev, inst, cfg)),
-      sceneLoaderCfg(getSceneLoaderConfig(dev, inst)),
       pipeline(makePipeline(fbCfg, dev))
 {}
+
+#if 0
+static pair<VkBuffer, void *> createGeometryStagingBuffer(
+        uint32_t num_bytes,
+        const DeviceState &dev)
+{
+    VkBufferCreateInfo buffer_info;
+    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_info.pNext = nullptr;
+    buffer_info.flags = 0;
+    buffer_info.size = num_bytes;
+    buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VkBuffer buffer;
+    REQ_VK(dev.dt.createBuffer(dev.hdl, &buffer_info, nullptr, &buffer));
+
+    VkMemoryRequirements reqs;
+    dev.dt.getBufferMemoryRequirements(dev.hdl, buffer, &reqs);
+
+    VkMemoryAllocateInfo alloc;
+    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc.pNext = nullptr;
+    alloc.allocationSize = reqs.size;
+    alloc.memoryTypeIndex = loader_cfg.stageMemTypeIdx;
+
+    VkDeviceMemory mem;
+    REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &mem));
+
+    v
+}
+#endif
 
 SceneState VulkanState::loadScene(const SceneAssets &assets) const
 {
