@@ -5,6 +5,7 @@ device:
 - vkDestroyImage
 - vkGetImageMemoryRequirements
 - vkAllocateMemory
+- vkFreeMemory
 - vkBindImageMemory
 - vkCreateImageView
 - vkDestroyImageView

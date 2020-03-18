@@ -6,6 +6,52 @@ using namespace std;
 
 namespace v4r {
 
+namespace BufferUsageFlags {
+    static const VkBufferUsageFlags stage =
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+    static const VkBufferUsageFlags geometry =
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+}
+
+template<bool host_mapped>
+void BufferDeleter<host_mapped>::operator()(VkBuffer buffer) const
+{
+    const DeviceState &dev = alloc_.dev;
+
+    if constexpr(host_mapped) {
+        dev.dt.unmapMemory(dev.hdl, mem_);
+    }
+
+    dev.dt.freeMemory(dev.hdl, mem_, nullptr);
+
+    dev.dt.destroyBuffer(dev.hdl, buffer, nullptr);
+}
+
+StageBuffer::StageBuffer(VkBuffer buf, void *p,
+                         BufferDeleter<true> deleter)
+    : buffer(buf), ptr(p),
+      deleter_(deleter)
+{}
+
+StageBuffer::~StageBuffer()
+{
+    deleter_(buffer);
+}
+
+LocalBuffer::LocalBuffer(VkBuffer buf,
+                         BufferDeleter<false> deleter)
+    : buffer(buf),
+      deleter_(deleter)
+{}
+
+LocalBuffer::~LocalBuffer()
+{
+    deleter_(buffer);
+}
+
 static VkMemoryRequirements getBufferMemReqs(VkBufferUsageFlags usage_flags,
                                              const DeviceState &dev)
 {
@@ -38,8 +84,7 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
     inst.dt.getPhysicalDeviceMemoryProperties2(dev.phy, &dev_mem_props);
 
     VkMemoryRequirements stage_reqs =
-        getBufferMemReqs(VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                         dev);
+        getBufferMemReqs(BufferUsageFlags::stage, dev);
 
     uint32_t stage_type_idx = findMemoryTypeIndex(stage_reqs.memoryTypeBits,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
@@ -47,10 +92,7 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
             dev_mem_props);
 
     VkMemoryRequirements geometry_reqs =
-        getBufferMemReqs(VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-            VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-            dev);
+            getBufferMemReqs(BufferUsageFlags::geometry, dev);
 
     uint32_t geometry_type_idx = findMemoryTypeIndex(geometry_reqs.memoryTypeBits,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -75,7 +117,7 @@ StageBuffer MemoryAllocator::makeStagingBuffer(VkDeviceSize num_bytes)
     buffer_info.pNext = nullptr;
     buffer_info.flags = 0;
     buffer_info.size = num_bytes;
-    buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    buffer_info.usage = BufferUsageFlags::stage;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     VkBuffer buffer;
@@ -96,6 +138,9 @@ StageBuffer MemoryAllocator::makeStagingBuffer(VkDeviceSize num_bytes)
 
     void *mapped_ptr;
     REQ_VK(dev.dt.mapMemory(dev.hdl, memory, 0, num_bytes, 0, &mapped_ptr));
+
+    return StageBuffer(buffer, mapped_ptr,
+                       BufferDeleter<true>(memory, *this));
 }
 
 LocalBuffer MemoryAllocator::makeGeometryBuffer(VkDeviceSize num_bytes)
@@ -105,8 +150,26 @@ LocalBuffer MemoryAllocator::makeGeometryBuffer(VkDeviceSize num_bytes)
     buffer_info.pNext = nullptr;
     buffer_info.flags = 0;
     buffer_info.size = num_bytes;
-    buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    buffer_info.usage = BufferUsageFlags::geometry;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VkBuffer buffer;
+    REQ_VK(dev.dt.createBuffer(dev.hdl, &buffer_info, nullptr, &buffer));
+
+    VkMemoryRequirements reqs;
+    dev.dt.getBufferMemoryRequirements(dev.hdl, buffer, &reqs);
+
+    VkMemoryAllocateInfo alloc;
+    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc.pNext = nullptr;
+    alloc.allocationSize = reqs.size;
+    alloc.memoryTypeIndex = type_indices_.localGeometryBuffer;
+
+    VkDeviceMemory memory;
+    REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &memory));
+    REQ_VK(dev.dt.bindBufferMemory(dev.hdl, buffer, memory, 0));
+
+    return LocalBuffer(buffer, BufferDeleter<false>(memory, *this));
 }
 
 }

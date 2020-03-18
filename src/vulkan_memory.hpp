@@ -7,6 +7,21 @@ namespace v4r {
 
 class MemoryAllocator;
 
+template<bool host_mapped>
+class BufferDeleter {
+public:
+    BufferDeleter(VkDeviceMemory mem, MemoryAllocator &alloc)
+        : mem_(mem), alloc_(alloc)
+    {}
+
+    void operator()(VkBuffer buffer) const;
+
+private:
+    VkDeviceMemory mem_;
+
+    MemoryAllocator &alloc_;
+};
+
 class StageBuffer {
 public:
     VkBuffer buffer;
@@ -14,11 +29,10 @@ public:
 
     ~StageBuffer();
 private:
-    StageBuffer(MemoryAllocator &alloc);
+    StageBuffer(VkBuffer buf, void *p,
+                BufferDeleter<true> deleter);
 
-    VkDeviceMemory mem_;
-    MemoryAllocator &alloc_;
-
+    BufferDeleter<true> deleter_;
     friend class MemoryAllocator;
 };
 
@@ -29,10 +43,9 @@ public:
     ~LocalBuffer();
 
 private:
-    LocalBuffer(MemoryAllocator &alloc);
+    LocalBuffer(VkBuffer buf, BufferDeleter<false> deleter);
 
-    MemoryAllocator &alloc_;
-
+    BufferDeleter<false> deleter_;
     friend class MemoryAllocator;
 };
 
@@ -53,6 +66,8 @@ public:
 private:
     const DeviceState &dev;
     MemoryTypeIndices type_indices_;
+
+    template<bool> friend class BufferDeleter;
 };
 
 }
