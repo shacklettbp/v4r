@@ -16,6 +16,8 @@ public:
 
     void operator()(VkBuffer buffer) const;
 
+    void clear();
+
 private:
     VkDeviceMemory mem_;
 
@@ -24,10 +26,12 @@ private:
 
 class StageBuffer {
 public:
+    StageBuffer(const StageBuffer &) = delete;
+    StageBuffer(StageBuffer &&o);
+    ~StageBuffer();
+
     VkBuffer buffer;
     void *ptr;
-
-    ~StageBuffer();
 private:
     StageBuffer(VkBuffer buf, void *p,
                 BufferDeleter<true> deleter);
@@ -38,10 +42,11 @@ private:
 
 class LocalBuffer {
 public:
-    VkBuffer buffer;
-
+    LocalBuffer(const LocalBuffer &) = delete;
+    LocalBuffer(LocalBuffer &&o);
     ~LocalBuffer();
 
+    VkBuffer buffer;
 private:
     LocalBuffer(VkBuffer buf, BufferDeleter<false> deleter);
 

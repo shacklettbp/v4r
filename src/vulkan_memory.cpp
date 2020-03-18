@@ -19,6 +19,8 @@ namespace BufferUsageFlags {
 template<bool host_mapped>
 void BufferDeleter<host_mapped>::operator()(VkBuffer buffer) const
 {
+    if (mem_ == VK_NULL_HANDLE) return;
+
     const DeviceState &dev = alloc_.dev;
 
     if constexpr(host_mapped) {
@@ -30,11 +32,25 @@ void BufferDeleter<host_mapped>::operator()(VkBuffer buffer) const
     dev.dt.destroyBuffer(dev.hdl, buffer, nullptr);
 }
 
+template<bool host_mapped>
+void BufferDeleter<host_mapped>::clear()
+{
+    mem_ = VK_NULL_HANDLE;
+}
+
 StageBuffer::StageBuffer(VkBuffer buf, void *p,
                          BufferDeleter<true> deleter)
     : buffer(buf), ptr(p),
       deleter_(deleter)
 {}
+
+StageBuffer::StageBuffer(StageBuffer &&o)
+    : buffer(o.buffer),
+      ptr(o.ptr),
+      deleter_(o.deleter_)
+{
+    o.deleter_.clear();
+}
 
 StageBuffer::~StageBuffer()
 {
@@ -46,6 +62,13 @@ LocalBuffer::LocalBuffer(VkBuffer buf,
     : buffer(buf),
       deleter_(deleter)
 {}
+
+LocalBuffer::LocalBuffer(LocalBuffer &&o)
+    : buffer(o.buffer),
+      deleter_(o.deleter_)
+{
+    o.deleter_.clear();
+}
 
 LocalBuffer::~LocalBuffer()
 {
