@@ -96,6 +96,8 @@ public:
 
     const VkCommandPool transferPool;
     const VkQueue transferQueue;
+    const VkCommandBuffer transferStageCommand;
+    const VkFence transferStageFence;
 
     MemoryAllocator &alloc;
 

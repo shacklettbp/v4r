@@ -2,6 +2,8 @@
 
 #include "vk_utils.hpp"
 
+#include <iostream>
+
 using namespace std;
 
 namespace v4r {

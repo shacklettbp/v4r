@@ -153,7 +153,7 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
     };
 }
 
-static VkCommandPool createCmdPool(const DeviceState &dev, uint32_t qf_idx)
+static VkCommandPool makeCmdPool(uint32_t qf_idx, const DeviceState &dev)
 {
     VkCommandPoolCreateInfo pool_info = {};
     pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -165,8 +165,25 @@ static VkCommandPool createCmdPool(const DeviceState &dev, uint32_t qf_idx)
     return pool;
 }
 
-static VkQueue createQueue(const DeviceState &dev, uint32_t qf_idx,
-                           uint32_t queue_idx)
+static VkCommandBuffer makeCmdBuffer(VkCommandPool pool,
+        const DeviceState &dev,
+        VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY)
+{
+    VkCommandBufferAllocateInfo info;
+    info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    info.pNext = nullptr;
+    info.commandPool = pool;
+    info.level = level;
+    info.commandBufferCount = 1;
+
+    VkCommandBuffer cmd;
+    REQ_VK(dev.dt.allocateCommandBuffers(dev.hdl, &info, &cmd));
+
+    return cmd;
+}
+
+static VkQueue makeQueue(uint32_t qf_idx, uint32_t queue_idx,
+                         const DeviceState &dev)
 {
     VkDeviceQueueInfo2 queue_info;
     queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2;
@@ -179,6 +196,35 @@ static VkQueue createQueue(const DeviceState &dev, uint32_t qf_idx,
     dev.dt.getDeviceQueue2(dev.hdl, &queue_info, &queue);
 
     return queue;
+}
+
+static VkFence makeFence(const DeviceState &dev, bool pre_signal=false)
+{
+    VkFenceCreateInfo fence_info;
+    fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fence_info.pNext = nullptr;
+    if (pre_signal) {
+        fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    } else {
+        fence_info.flags = 0;
+    }
+    
+    VkFence fence;
+    REQ_VK(dev.dt.createFence(dev.hdl, &fence_info, nullptr, &fence));
+
+    return fence;
+}
+
+static void waitFenceInfinitely(const DeviceState &dev, VkFence fence)
+{
+    VkResult res;
+    while ((res = dev.dt.waitForFences(dev.hdl, 1,
+                                       &fence, VK_TRUE,
+                                       ~0ull)) != VK_SUCCESS) {
+        if (res != VK_TIMEOUT) {
+            REQ_VK(res);
+        }
+    }
 }
 
 static VkRenderPass makeRenderPass(const FramebufferConfig &fb_cfg,
@@ -602,16 +648,17 @@ CommandStreamState::CommandStreamState(const DeviceState &d,
                                        MemoryAllocator &alc)
     : dev(d),
       pipeline(pl),
-      gfxPool(createCmdPool(dev, dev.gfxQF)),
-      gfxQueue(createQueue(dev, dev.gfxQF, 0)),
-      transferPool(createCmdPool(dev, dev.transferQF)),
-      transferQueue(createQueue(dev, dev.transferQF, 0)),
+      gfxPool(makeCmdPool(dev.gfxQF, dev)),
+      gfxQueue(makeQueue(dev.gfxQF, 0, dev)),
+      transferPool(makeCmdPool(dev.transferQF, dev)),
+      transferQueue(makeQueue(dev.transferQF, 0, dev)),
+      transferStageCommand(makeCmdBuffer(transferPool, dev)),
+      transferStageFence(makeFence(dev)),
       alloc(alc),
       fb(makeFramebuffer(fb_cfg, pipeline, dev))
 {}
 
-static StageBuffer loadGeometry(const SceneAssets &assets,
-                                MemoryAllocator &alloc)
+SceneState CommandStreamState::loadScene(SceneAssets &&assets)
 {
     VkDeviceSize vertex_bytes = assets.vertices.size() * sizeof(Vertex);
     VkDeviceSize index_bytes = assets.indices.size() * sizeof(uint32_t);
@@ -624,15 +671,32 @@ static StageBuffer loadGeometry(const SceneAssets &assets,
     memcpy((uint8_t *)staging.ptr + vertex_bytes, assets.indices.data(),
            index_bytes);
 
-    return staging;
-}
+    LocalBuffer geometry = alloc.makeGeometryBuffer(total_bytes);
 
-SceneState CommandStreamState::loadScene(SceneAssets &&assets)
-{
-    StageBuffer geometryStaging = loadGeometry(assets, alloc);
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    REQ_VK(dev.dt.beginCommandBuffer(transferStageCommand, &begin_info));
+
+    VkBufferCopy copy_settings {};
+    copy_settings.size = total_bytes;
+    dev.dt.cmdCopyBuffer(transferStageCommand, staging.buffer,
+                         geometry.buffer, 1, &copy_settings);
+
+    REQ_VK(dev.dt.endCommandBuffer(transferStageCommand));
+
+    VkSubmitInfo submit_info {};
+    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit_info.commandBufferCount = 1;
+    submit_info.pCommandBuffers = &transferStageCommand;
+
+    REQ_VK(dev.dt.queueSubmit(transferQueue, 1, &submit_info,
+                              transferStageFence));
+
+    waitFenceInfinitely(dev, transferStageFence);
+    REQ_VK(dev.dt.resetFences(dev.hdl, 1, &transferStageFence));
 
     return SceneState {
-        alloc.makeGeometryBuffer(5)
+        move(geometry)
     };
 }
 

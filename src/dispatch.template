@@ -29,6 +29,16 @@ device:
 - vkBindBufferMemory
 - vkMapMemory
 - vkUnmapMemory
+- vkAllocateCommandBuffers
+- vkFreeCommandBuffers
+- vkBeginCommandBuffer
+- vkEndCommandBuffer
+- vkCmdCopyBuffer
+- vkQueueSubmit
+- vkCreateFence
+- vkDestroyFence
+- vkWaitForFences
+- vkResetFences
 
 instance:
 - vkEnumeratePhysicalDevices
