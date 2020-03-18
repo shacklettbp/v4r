@@ -598,13 +598,43 @@ static PipelineState makePipeline(const FramebufferConfig &fb_cfg,
 
 CommandStreamState::CommandStreamState(const DeviceState &d,
                                        const FramebufferConfig &fb_cfg,
-                                       const PipelineState &pl)
+                                       const PipelineState &pl,
+                                       MemoryAllocator &alc)
     : dev(d),
       pipeline(pl),
       gfxPool(createCmdPool(dev, dev.gfxQF)),
       gfxQueue(createQueue(dev, dev.gfxQF, 0)),
+      transferPool(createCmdPool(dev, dev.transferQF)),
+      transferQueue(createQueue(dev, dev.transferQF, 0)),
+      alloc(alc),
       fb(makeFramebuffer(fb_cfg, pipeline, dev))
 {}
+
+static StageBuffer loadGeometry(const SceneAssets &assets,
+                                MemoryAllocator &alloc)
+{
+    VkDeviceSize vertex_bytes = assets.vertices.size() * sizeof(Vertex);
+    VkDeviceSize index_bytes = assets.indices.size() * sizeof(uint32_t);
+    VkDeviceSize total_bytes = vertex_bytes + index_bytes;
+
+    StageBuffer staging = alloc.makeStagingBuffer(total_bytes);
+
+    // Store vertex buffer immediately followed by index buffer
+    memcpy(staging.ptr, assets.vertices.data(), vertex_bytes);
+    memcpy((uint8_t *)staging.ptr + vertex_bytes, assets.indices.data(),
+           index_bytes);
+
+    return staging;
+}
+
+SceneState CommandStreamState::loadScene(SceneAssets &&assets)
+{
+    StageBuffer geometryStaging = loadGeometry(assets, alloc);
+
+    return SceneState {
+        alloc.makeGeometryBuffer(5)
+    };
+}
 
 VulkanState::VulkanState(const RenderConfig &config)
     : cfg(config),
@@ -614,11 +644,5 @@ VulkanState::VulkanState(const RenderConfig &config)
       fbCfg(getFramebufferConfig(dev, inst, cfg)),
       pipeline(makePipeline(fbCfg, dev))
 {}
-
-SceneState VulkanState::loadScene(const SceneAssets &assets) const
-{
-    return SceneState {
-    };
-}
 
 }

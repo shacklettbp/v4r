@@ -33,6 +33,7 @@ struct SceneAssets {
 };
 
 struct SceneState {
+    LocalBuffer geometry;
 };
 
 struct FramebufferConfig {
@@ -80,14 +81,23 @@ struct CommandStreamState {
 public:
     CommandStreamState(const DeviceState &dev,
                        const FramebufferConfig &fb_cfg,
-                       const PipelineState &pl);
+                       const PipelineState &pl,
+                       MemoryAllocator &alc);
     CommandStreamState(const CommandStreamState &) = delete;
     CommandStreamState(CommandStreamState &&) = default;
 
+    SceneState loadScene(SceneAssets &&assets);
+
     const DeviceState &dev;
     const PipelineState &pipeline;
+
     const VkCommandPool gfxPool;
     const VkQueue gfxQueue;
+
+    const VkCommandPool transferPool;
+    const VkQueue transferQueue;
+
+    MemoryAllocator &alloc;
 
     const FramebufferState fb;
 };
@@ -97,8 +107,6 @@ public:
     VulkanState(const RenderConfig &cfg);
     VulkanState(const VulkanState &) = delete;
     VulkanState(VulkanState &&) = delete;
-
-    SceneState loadScene(const SceneAssets &assets) const;
 
     const RenderConfig cfg;
 

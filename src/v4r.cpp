@@ -28,8 +28,10 @@ template struct RenderContext::HandleDeleter<CommandStreamState>;
 
 using CommandStream = RenderContext::CommandStream;
 
-CommandStream::CommandStream(CommandStream::StreamStateHandle &&state)
-    : state_(move(state))
+CommandStream::CommandStream(CommandStream::StreamStateHandle &&state,
+                             RenderContext &global)
+    : state_(move(state)),
+      global_(global)
 {}
 
 RenderResult CommandStream::renderCamera(const SceneHandle &scene)
@@ -39,32 +41,33 @@ RenderResult CommandStream::renderCamera(const SceneHandle &scene)
     };
 }
 
+RenderContext::SceneHandle CommandStream::loadScene(const string &file)
+{
+    SceneID id = global_.scene_mgr_->loadScene(file, *state_);
+    return make_handle<SceneID>(id);
+}
+
+void CommandStream::dropScene(RenderContext::SceneHandle &&handle)
+{
+    global_.scene_mgr_->dropScene(move(*handle));
+}
+
+
 RenderContext::RenderContext(const RenderConfig &cfg)
     : state_(make_unique<VulkanState>(cfg)),
-      scene_mgr_(make_unique<SceneManager>(*state_))
+      scene_mgr_(make_unique<SceneManager>())
 {
 }
 
 RenderContext::~RenderContext() = default;
 
-
-RenderContext::SceneHandle RenderContext::loadScene(const string &file)
-{
-    SceneID id = scene_mgr_->loadScene(file);
-    return make_handle<SceneID>(id);
-}
-
-void RenderContext::dropScene(RenderContext::SceneHandle &&handle)
-{
-    scene_mgr_->dropScene(move(*handle));
-}
-
-RenderContext::CommandStream RenderContext::makeCommandStream() const
+RenderContext::CommandStream RenderContext::makeCommandStream()
 {
     auto hdl = make_handle<CommandStreamState>(state_->dev, state_->fbCfg,
-                                               state_->pipeline);
+                                               state_->pipeline,
+                                               state_->alloc);
 
-    return CommandStream(move(hdl));
+    return CommandStream(move(hdl), *this);
 }
 
 }

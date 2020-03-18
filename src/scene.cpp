@@ -75,20 +75,20 @@ static SceneAssets loadAssets(const string &scene_path)
     };
 }
 
-Scene::Scene(const std::string &scene_path, const VulkanState &render_state)
+Scene::Scene(const std::string &scene_path, CommandStreamState &renderer_state)
     : path_(scene_path),
       ref_count_(1),
-      state_(render_state.loadScene(loadAssets(scene_path)))
+      state_(renderer_state.loadScene(loadAssets(scene_path)))
 {}
 
-SceneManager::SceneManager(const VulkanState &renderer_state)
-    : renderer_state_(renderer_state),
-      load_mutex_(),
+SceneManager::SceneManager()
+    : load_mutex_(),
       scenes_(),
       scene_lookup_()
 {}
 
-SceneID SceneManager::loadScene(const std::string &scene_path)
+SceneID SceneManager::loadScene(const std::string &scene_path,
+                                CommandStreamState &renderer_state)
 {
     scoped_lock lock(load_mutex_);
 
@@ -100,7 +100,7 @@ SceneID SceneManager::loadScene(const std::string &scene_path)
         return id;
     } 
 
-    scenes_.emplace_front(scene_path, renderer_state_);
+    scenes_.emplace_front(scene_path, renderer_state);
     auto scene_iter = scenes_.begin();
 
     SceneID id { scene_iter };

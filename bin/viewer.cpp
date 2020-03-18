@@ -11,13 +11,13 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    RenderContext r({0, 128, 128});
+    RenderContext ctx({0, 128, 128});
+    auto cmd_stream = ctx.makeCommandStream();
 
-    auto scene_handle = r.loadScene(argv[1]);
+    auto scene_handle = cmd_stream.loadScene(argv[1]);
 
-    auto cmd_stream = r.makeCommandStream();
     auto frame = cmd_stream.renderCamera(scene_handle);
     (void)frame;
 
-    r.dropScene(move(scene_handle));
+    cmd_stream.dropScene(move(scene_handle));
 }

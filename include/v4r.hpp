@@ -33,11 +33,15 @@ public:
     public:
         RenderResult renderCamera(const SceneHandle &scene);
 
+        SceneHandle loadScene(const std::string &file);
+        void dropScene(SceneHandle &&handle);
+
     private:
         using StreamStateHandle = Handle<CommandStreamState>;
 
-        CommandStream(StreamStateHandle &&state);
+        CommandStream(StreamStateHandle &&state, RenderContext &global);
         StreamStateHandle state_;
+        RenderContext &global_;
 
         friend class RenderContext;
     };
@@ -45,10 +49,7 @@ public:
     RenderContext(const RenderConfig &cfg);
     ~RenderContext();
 
-    SceneHandle loadScene(const std::string &file);
-    void dropScene(SceneHandle &&handle);
-
-    CommandStream makeCommandStream() const;
+    CommandStream makeCommandStream();
 
 private:
     std::unique_ptr<VulkanState> state_;

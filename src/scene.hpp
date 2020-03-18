@@ -11,7 +11,7 @@ namespace v4r {
 
 class Scene {
 public:
-    Scene(const std::string &scene_path, const VulkanState &renderer_state);
+    Scene(const std::string &scene_path, CommandStreamState &renderer_state);
 
     const std::string & getPath() const { return path_; }
     void refIncrement() { ref_count_++; }
@@ -38,13 +38,13 @@ private:
 
 class SceneManager {
 public:
-    SceneManager(const VulkanState &renderer_state);
+    SceneManager();
 
-    SceneID loadScene(const std::string &scene_path);
+    SceneID loadScene(const std::string &scene_path,
+                      CommandStreamState &renderer_state);
     void dropScene(SceneID &&scene_id);
 
 private:
-    const VulkanState &renderer_state_;
     std::mutex load_mutex_;
     std::list<Scene> scenes_;
     std::unordered_map<std::string, SceneID> scene_lookup_;
