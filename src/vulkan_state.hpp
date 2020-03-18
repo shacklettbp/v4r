@@ -6,11 +6,11 @@
 #include <vector>
 
 #include <glm/glm.hpp>
-#include <vulkan/vulkan.h>
 
 #include <v4r/config.hpp>
 
-#include "dispatch.hpp"
+#include "vulkan_handles.hpp"
+#include "vulkan_memory.hpp"
 
 namespace v4r {
 
@@ -74,79 +74,6 @@ struct PipelineState {
     VkPipelineCache pipelineCache;
     VkPipelineLayout gfxLayout;
     VkPipeline gfxPipeline;
-};
-
-struct DeviceState {
-public:
-    uint32_t gfxQF;
-    uint32_t computeQF;
-    uint32_t transferQF;
-
-    const VkPhysicalDevice phy;
-    const VkDevice hdl;
-    const DeviceDispatch dt;
-
-    DeviceState() = delete;
-};
-
-struct InstanceState {
-public:
-    const VkInstance hdl;
-    const InstanceDispatch dt;
-
-    InstanceState();
-
-    DeviceState makeDevice(uint32_t gpu_id) const;
-};
-
-class MemoryAllocator;
-
-class StageBuffer {
-public:
-    VkBuffer buffer;
-    void *ptr;
-
-    ~StageBuffer();
-private:
-    StageBuffer(MemoryAllocator &alloc);
-
-    VkDeviceMemory mem_;
-    MemoryAllocator &alloc_;
-
-    friend class MemoryAllocator;
-};
-
-class LocalBuffer {
-public:
-    VkBuffer buffer;
-
-    ~LocalBuffer();
-
-private:
-    LocalBuffer(MemoryAllocator &alloc);
-
-    MemoryAllocator &alloc_;
-
-    friend class MemoryAllocator;
-};
-
-struct MemoryTypeIndices {
-    uint32_t stageBuffer;
-    uint32_t localGeometryBuffer;
-};
-
-class MemoryAllocator {
-public:
-    MemoryAllocator(const DeviceState &dev, const InstanceState &inst);
-    MemoryAllocator(const MemoryAllocator &) = delete;
-    MemoryAllocator(MemoryAllocator &&) = default;
-
-    StageBuffer makeStagingBuffer(VkDeviceSize num_bytes);
-    LocalBuffer makeGeometryBuffer(VkDeviceSize num_bytes);
-
-private:
-    const DeviceState &dev;
-    MemoryTypeIndices type_indices_;
 };
 
 struct CommandStreamState {
