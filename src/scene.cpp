@@ -7,12 +7,78 @@
 #include <assimp/scene.h>
 #include <glm/gtc/type_ptr.hpp>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb/stb_image.h>
+#undef STB_IMAGE_IMPLEMENTATION
+
 #include <cassert>
 #include <iostream>
+#include <unordered_map>
 
 using namespace std;
 
 namespace v4r {
+
+static const Texture * loadTexture(const aiScene *raw_scene,
+        const aiMaterial *raw_mat,
+        aiTextureType type,
+        list<Texture> &textures,
+        unordered_map<string, const Texture *> &loaded_texture_lookup)
+{
+    aiString tex_path;
+    bool has_texture = raw_mat->Get(AI_MATKEY_TEXTURE(type, 0), tex_path) ==
+        AI_SUCCESS;
+
+    if (!has_texture) return nullptr;
+
+    auto lookup = loaded_texture_lookup.find(tex_path.C_Str());
+
+    if (lookup != loaded_texture_lookup.end()) return lookup->second;
+
+    if (auto texture = raw_scene->GetEmbeddedTexture(tex_path.C_Str())) {
+        if (texture->mHeight > 0) {
+            cerr << "Uncompressed textures not supported" << endl;
+            fatalExit();
+        } else {
+            const uint8_t *raw_input =
+                reinterpret_cast<const uint8_t *>(texture->pcData);
+            if (stbi_is_hdr_from_memory(raw_input, texture->mWidth)) {
+                cerr << "HDR textures not supported" << endl;
+                fatalExit();
+            }
+
+            int width, height, num_channels;
+            uint8_t *texture_data =
+                stbi_load_from_memory(raw_input, texture->mWidth,
+                                      &width, &height, &num_channels, 3);
+
+            if (texture_data == nullptr) {
+                cerr << "Failed to load texture" << endl;
+                fatalExit();
+            }
+
+            if (num_channels != 3) {
+                cerr << "Only RGB888 textures supported" << endl;
+                fatalExit();
+            }
+
+            Texture &new_tex = textures.emplace_back(Texture {
+                static_cast<uint32_t>(width),
+                static_cast<uint32_t>(height),
+                3,
+                ManagedArray<uint8_t>(texture_data, stbi_image_free)
+            });
+
+            loaded_texture_lookup.emplace(tex_path.C_Str(), &new_tex);
+
+            return &new_tex;
+        }
+    } else {
+        // FIXME
+        cerr << "External textures not supported yet" << endl;
+        fatalExit();
+    }
+}
 
 static SceneAssets loadAssets(const string &scene_path)
 {
@@ -25,6 +91,57 @@ static SceneAssets loadAssets(const string &scene_path)
         fatalExit();
     }
 
+    list<Texture> textures;
+    vector<Material> materials;
+    
+    unordered_map<string, const Texture *> loaded_texture_lookup;
+
+    for (uint32_t mat_idx = 0; mat_idx < raw_scene->mNumMaterials; mat_idx++) {
+        const aiMaterial *raw_mat = raw_scene->mMaterials[mat_idx];
+
+        auto ambient_tex = loadTexture(raw_scene, raw_mat,
+                                       aiTextureType_AMBIENT,
+                                       textures,
+                                       loaded_texture_lookup);
+        glm::vec4 ambient_color {};
+        if (!ambient_tex) {
+            aiColor4D color;
+            raw_mat->Get(AI_MATKEY_COLOR_AMBIENT, color);
+            ambient_color = glm::vec4(color.r, color.g, color.b, color.a);
+        }
+
+        auto diffuse_tex = loadTexture(raw_scene, raw_mat,
+                                       aiTextureType_DIFFUSE,
+                                       textures,
+                                       loaded_texture_lookup);
+        glm::vec4 diffuse_color {};
+        if (!diffuse_tex) {
+            aiColor4D color;
+            raw_mat->Get(AI_MATKEY_COLOR_DIFFUSE, color);
+            diffuse_color = glm::vec4(color.r, color.g, color.b, color.a);
+        }
+
+        auto specular_tex = loadTexture(raw_scene, raw_mat,
+                                        aiTextureType_SPECULAR,
+                                        textures,
+                                        loaded_texture_lookup);
+        glm::vec4 specular_color {};
+        if (!specular_tex) {
+            aiColor4D color;
+            raw_mat->Get(AI_MATKEY_COLOR_SPECULAR, color);
+            specular_color = glm::vec4(color.r, color.g, color.b, color.a);
+        }
+
+        materials.emplace_back(Material {
+            ambient_tex,
+            ambient_color,
+            diffuse_tex,
+            diffuse_color,
+            specular_tex,
+            specular_color
+        });
+    }
+
     vector<Vertex> vertices;
     vector<uint32_t> indices;
     vector<SceneMesh> meshes;
@@ -33,6 +150,9 @@ static SceneAssets loadAssets(const string &scene_path)
 
     for (uint32_t mesh_idx = 0; mesh_idx < raw_scene->mNumMeshes; mesh_idx++) {
         aiMesh *raw_mesh = raw_scene->mMeshes[mesh_idx];
+
+        unsigned int mat_idx = raw_mesh->mMaterialIndex;
+        cout << "Material: " << mat_idx << endl;
 
         bool has_uv = raw_mesh->HasTextureCoords(0);
         bool has_color = raw_mesh->HasVertexColors(0);
@@ -69,6 +189,8 @@ static SceneAssets loadAssets(const string &scene_path)
     }
 
     return SceneAssets {
+        move(textures),
+        move(materials),
         move(vertices),
         move(indices),
         move(meshes)

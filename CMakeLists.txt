@@ -53,7 +53,7 @@ ENDIF()
 
 find_package(glm REQUIRED CONFIG)
 
-include_directories(include)
+include_directories(include external)
 
 add_subdirectory(src)
 add_subdirectory(bin)

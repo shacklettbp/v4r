@@ -2,6 +2,7 @@
 #define VULKAN_STATE_HPP_INCLUDED
 
 #include <array>
+#include <list>
 #include <string>
 #include <vector>
 
@@ -9,6 +10,7 @@
 
 #include <v4r/config.hpp>
 
+#include "utils.hpp"
 #include "vulkan_handles.hpp"
 #include "vulkan_memory.hpp"
 
@@ -20,12 +22,34 @@ struct Vertex {
     glm::vec3 color;
 };
 
+struct Texture {
+    uint32_t width;
+    uint32_t height;
+    uint32_t num_channels;
+
+    ManagedArray<uint8_t> raw_image;
+};
+
+struct Material {
+    const Texture *ambient_texture;
+    glm::vec4 ambient_color;
+
+    const Texture *diffuse_texture;
+    glm::vec4 diffuse_color;
+
+    const Texture *specular_texture;
+    glm::vec4 specular_color;
+};
+
 struct SceneMesh {
     uint32_t startIndex;
     uint32_t numIndices;
 };
 
 struct SceneAssets {
+    std::list<Texture> textures;
+    std::vector<Material> materials;
+
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
 
@@ -34,6 +58,8 @@ struct SceneAssets {
 
 struct SceneState {
     LocalBuffer geometry;
+    VkDeviceSize indexOffset;
+    std::vector<SceneMesh> meshes;
 };
 
 struct FramebufferConfig {

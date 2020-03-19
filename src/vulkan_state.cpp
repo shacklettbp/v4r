@@ -215,7 +215,7 @@ static VkFence makeFence(const DeviceState &dev, bool pre_signal=false)
     return fence;
 }
 
-static void waitFenceInfinitely(const DeviceState &dev, VkFence fence)
+static void waitForFenceInfinitely(const DeviceState &dev, VkFence fence)
 {
     VkResult res;
     while ((res = dev.dt.waitForFences(dev.hdl, 1,
@@ -692,11 +692,13 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
     REQ_VK(dev.dt.queueSubmit(transferQueue, 1, &submit_info,
                               transferStageFence));
 
-    waitFenceInfinitely(dev, transferStageFence);
+    waitForFenceInfinitely(dev, transferStageFence);
     REQ_VK(dev.dt.resetFences(dev.hdl, 1, &transferStageFence));
 
     return SceneState {
-        move(geometry)
+        move(geometry),
+        vertex_bytes,
+        move(assets.meshes)
     };
 }
 

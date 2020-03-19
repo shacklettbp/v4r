@@ -9,6 +9,47 @@ namespace v4r {
 [[noreturn]] void fatalExit() noexcept;
 
 template <typename T>
+class ManagedArray {
+public:
+    using DeleterFunc = void(void *);
+    ManagedArray(T *ptr, DeleterFunc *deleter)
+        : ptr_(ptr),
+          deleter_(deleter)
+    {}
+
+    ManagedArray(const ManagedArray &) = delete;
+    ManagedArray(ManagedArray &&o) 
+        : ptr_(o.ptr_),
+          deleter_(o.deleter_)
+    {
+        o.ptr_ = nullptr;
+    }
+
+    ~ManagedArray()
+    {
+        if (!ptr_) return;
+        deleter_(ptr_);
+    }
+
+    constexpr const T& operator[](size_t idx) const noexcept
+    {
+        return ptr_[idx];
+    }
+
+    constexpr T& operator[](size_t idx) noexcept
+    {
+        return ptr_[idx];
+    }
+
+    T *data() { return ptr_; }
+    const T *data() const { return ptr_; }
+
+private:
+    T *ptr_;
+    DeleterFunc *deleter_;
+};
+
+template <typename T>
 class DynArray {
 public:
     DynArray(size_t num_elems)
