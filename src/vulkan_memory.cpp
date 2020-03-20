@@ -8,7 +8,7 @@ using namespace std;
 
 namespace v4r {
 
-namespace BufferUsageFlags {
+namespace MemoryUsageFlags {
     static const VkBufferUsageFlags stage =
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
@@ -16,10 +16,19 @@ namespace BufferUsageFlags {
             VK_BUFFER_USAGE_TRANSFER_DST_BIT |
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
             VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+
+    static const VkImageUsageFlags precomputedMipmapTexture =
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+            VK_IMAGE_USAGE_SAMPLED_BIT;
+
+    static const VkImageUsageFlags runtimeMipmapTexture =
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+            VK_IMAGE_USAGE_SAMPLED_BIT;
 }
 
 template<bool host_mapped>
-void BufferDeleter<host_mapped>::operator()(VkBuffer buffer) const
+void AllocDeleter<host_mapped>::operator()(VkBuffer buffer) const
 {
     if (mem_ == VK_NULL_HANDLE) return;
 
@@ -34,14 +43,25 @@ void BufferDeleter<host_mapped>::operator()(VkBuffer buffer) const
     dev.dt.destroyBuffer(dev.hdl, buffer, nullptr);
 }
 
+template<>
+void AllocDeleter<false>::operator()(VkImage image) const
+{
+    if (mem_ == VK_NULL_HANDLE) return;
+
+    const DeviceState &dev = alloc_.dev;
+
+    dev.dt.freeMemory(dev.hdl, mem_, nullptr);
+    dev.dt.destroyImage(dev.hdl, image, nullptr);
+}
+
 template<bool host_mapped>
-void BufferDeleter<host_mapped>::clear()
+void AllocDeleter<host_mapped>::clear()
 {
     mem_ = VK_NULL_HANDLE;
 }
 
 StageBuffer::StageBuffer(VkBuffer buf, void *p,
-                         BufferDeleter<true> deleter)
+                         AllocDeleter<true> deleter)
     : buffer(buf), ptr(p),
       deleter_(deleter)
 {}
@@ -60,7 +80,7 @@ StageBuffer::~StageBuffer()
 }
 
 LocalBuffer::LocalBuffer(VkBuffer buf,
-                         BufferDeleter<false> deleter)
+                         AllocDeleter<false> deleter)
     : buffer(buf),
       deleter_(deleter)
 {}
@@ -75,6 +95,26 @@ LocalBuffer::LocalBuffer(LocalBuffer &&o)
 LocalBuffer::~LocalBuffer()
 {
     deleter_(buffer);
+}
+
+LocalTexture::LocalTexture(uint32_t w, uint32_t h, uint32_t mip_levels,
+                           VkImage img, AllocDeleter<false> deleter)
+    : width(w), height(h), mipLevels(mip_levels),
+      image(img),
+      deleter_(deleter)
+{}
+
+LocalTexture::LocalTexture(LocalTexture &&o)
+    : width(o.width), height(o.height), mipLevels(o.mipLevels),
+      image(o.image),
+      deleter_(o.deleter_)
+{
+    o.deleter_.clear();
+}
+
+LocalTexture::~LocalTexture()
+{
+    deleter_(image);
 }
 
 static VkMemoryRequirements getBufferMemReqs(VkBufferUsageFlags usage_flags,
@@ -100,6 +140,37 @@ static VkMemoryRequirements getBufferMemReqs(VkBufferUsageFlags usage_flags,
     return reqs;
 }
 
+static VkMemoryRequirements getColorMemReqs(VkImageUsageFlags usage_flags,
+                                            const DeviceState &dev)
+{
+    VkImageCreateInfo img_info;
+    img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    img_info.pNext = nullptr;
+    img_info.flags = 0;
+    img_info.imageType = VK_IMAGE_TYPE_2D;
+    img_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+    img_info.extent = { 1, 1, 1 };
+    img_info.mipLevels = 1;
+    img_info.arrayLayers = 1;
+    img_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    img_info.usage = usage_flags;
+    img_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    img_info.queueFamilyIndexCount = 0;
+    img_info.pQueueFamilyIndices = nullptr;
+    img_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkImage test_image;
+    REQ_VK(dev.dt.createImage(dev.hdl, &img_info, nullptr, &test_image));
+
+    VkMemoryRequirements reqs;
+    dev.dt.getImageMemoryRequirements(dev.hdl, test_image, &reqs);
+
+    dev.dt.destroyImage(dev.hdl, test_image, nullptr);
+
+    return reqs;
+}
+
 static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
                                          const InstanceState &inst)
 {
@@ -109,23 +180,43 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
     inst.dt.getPhysicalDeviceMemoryProperties2(dev.phy, &dev_mem_props);
 
     VkMemoryRequirements stage_reqs =
-        getBufferMemReqs(BufferUsageFlags::stage, dev);
+        getBufferMemReqs(MemoryUsageFlags::stage, dev);
 
-    uint32_t stage_type_idx = findMemoryTypeIndex(stage_reqs.memoryTypeBits,
+    uint32_t stage_type_idx = findMemoryTypeIndex(
+            stage_reqs.memoryTypeBits,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
             dev_mem_props);
 
     VkMemoryRequirements geometry_reqs =
-            getBufferMemReqs(BufferUsageFlags::geometry, dev);
+            getBufferMemReqs(MemoryUsageFlags::geometry, dev);
 
-    uint32_t geometry_type_idx = findMemoryTypeIndex(geometry_reqs.memoryTypeBits,
+    uint32_t geometry_type_idx = findMemoryTypeIndex(
+            geometry_reqs.memoryTypeBits,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            dev_mem_props);
+
+    VkMemoryRequirements texture_precomp_mip_reqs =
+        getColorMemReqs(MemoryUsageFlags::precomputedMipmapTexture, dev);
+
+    uint32_t texture_precomp_idx = findMemoryTypeIndex(
+            texture_precomp_mip_reqs.memoryTypeBits,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            dev_mem_props);
+
+    VkMemoryRequirements texture_runtime_mip_reqs =
+        getColorMemReqs(MemoryUsageFlags::runtimeMipmapTexture, dev);
+
+    uint32_t texture_runtime_idx = findMemoryTypeIndex(
+            texture_runtime_mip_reqs.memoryTypeBits,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             dev_mem_props);
 
     return MemoryTypeIndices {
         stage_type_idx,
-        geometry_type_idx
+        geometry_type_idx,
+        texture_precomp_idx,
+        texture_runtime_idx
     };
 }
 
@@ -142,7 +233,7 @@ StageBuffer MemoryAllocator::makeStagingBuffer(VkDeviceSize num_bytes)
     buffer_info.pNext = nullptr;
     buffer_info.flags = 0;
     buffer_info.size = num_bytes;
-    buffer_info.usage = BufferUsageFlags::stage;
+    buffer_info.usage = MemoryUsageFlags::stage;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     VkBuffer buffer;
@@ -165,7 +256,7 @@ StageBuffer MemoryAllocator::makeStagingBuffer(VkDeviceSize num_bytes)
     REQ_VK(dev.dt.mapMemory(dev.hdl, memory, 0, num_bytes, 0, &mapped_ptr));
 
     return StageBuffer(buffer, mapped_ptr,
-                       BufferDeleter<true>(memory, *this));
+                       AllocDeleter<true>(memory, *this));
 }
 
 LocalBuffer MemoryAllocator::makeGeometryBuffer(VkDeviceSize num_bytes)
@@ -175,7 +266,7 @@ LocalBuffer MemoryAllocator::makeGeometryBuffer(VkDeviceSize num_bytes)
     buffer_info.pNext = nullptr;
     buffer_info.flags = 0;
     buffer_info.size = num_bytes;
-    buffer_info.usage = BufferUsageFlags::geometry;
+    buffer_info.usage = MemoryUsageFlags::geometry;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     VkBuffer buffer;
@@ -194,7 +285,35 @@ LocalBuffer MemoryAllocator::makeGeometryBuffer(VkDeviceSize num_bytes)
     REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &memory));
     REQ_VK(dev.dt.bindBufferMemory(dev.hdl, buffer, memory, 0));
 
-    return LocalBuffer(buffer, BufferDeleter<false>(memory, *this));
+    return LocalBuffer(buffer, AllocDeleter<false>(memory, *this));
+}
+
+LocalTexture MemoryAllocator::makeTexture(const VkImageCreateInfo &img_info,
+                                          bool precomputed_mipmaps)
+{
+    VkImage texture_img;
+    REQ_VK(dev.dt.createImage(dev.hdl, &img_info, nullptr, &texture_img));
+
+    VkMemoryRequirements reqs;
+    dev.dt.getImageMemoryRequirements(dev.hdl, texture_img, &reqs);
+
+    VkMemoryAllocateInfo alloc;
+    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc.pNext = nullptr;
+    alloc.allocationSize = reqs.size;
+    if (precomputed_mipmaps) {
+        alloc.memoryTypeIndex = type_indices_.precomputedMipmapTexture;
+    } else {
+        alloc.memoryTypeIndex = type_indices_.runtimeMipmapTexture;
+    }
+
+    VkDeviceMemory memory;
+    REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &memory));
+    REQ_VK(dev.dt.bindImageMemory(dev.hdl, texture_img, memory, 0));
+
+    return LocalTexture(img_info.extent.width, img_info.extent.height,
+                        img_info.mipLevels, texture_img,
+                        AllocDeleter<false>(memory, *this));
 }
 
 }

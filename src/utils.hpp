@@ -73,6 +73,8 @@ public:
     T *data() { return data_.get(); }
     const T *data() const { return data_.get(); }
 
+    constexpr size_t size() const noexcept { return num_elems_; }
+
     template <typename U>
     class IterBase {
     public:

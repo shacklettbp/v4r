@@ -8,13 +8,14 @@ namespace v4r {
 class MemoryAllocator;
 
 template<bool host_mapped>
-class BufferDeleter {
+class AllocDeleter {
 public:
-    BufferDeleter(VkDeviceMemory mem, MemoryAllocator &alloc)
+    AllocDeleter(VkDeviceMemory mem, MemoryAllocator &alloc)
         : mem_(mem), alloc_(alloc)
     {}
 
     void operator()(VkBuffer buffer) const;
+    void operator()(VkImage image) const;
 
     void clear();
 
@@ -34,9 +35,9 @@ public:
     void *ptr;
 private:
     StageBuffer(VkBuffer buf, void *p,
-                BufferDeleter<true> deleter);
+                AllocDeleter<true> deleter);
 
-    BufferDeleter<true> deleter_;
+    AllocDeleter<true> deleter_;
     friend class MemoryAllocator;
 };
 
@@ -48,15 +49,35 @@ public:
 
     VkBuffer buffer;
 private:
-    LocalBuffer(VkBuffer buf, BufferDeleter<false> deleter);
+    LocalBuffer(VkBuffer buf, AllocDeleter<false> deleter);
 
-    BufferDeleter<false> deleter_;
+    AllocDeleter<false> deleter_;
+    friend class MemoryAllocator;
+};
+
+class LocalTexture {
+public:
+    LocalTexture(const LocalTexture &) = delete;
+    LocalTexture(LocalTexture &&o);
+    ~LocalTexture();
+
+    uint32_t width;
+    uint32_t height;
+    uint32_t mipLevels;
+    VkImage image;
+private:
+    LocalTexture(uint32_t width, uint32_t height, uint32_t mip_levels,
+                 VkImage image, AllocDeleter<false> deleter);
+
+    AllocDeleter<false> deleter_;
     friend class MemoryAllocator;
 };
 
 struct MemoryTypeIndices {
     uint32_t stageBuffer;
     uint32_t localGeometryBuffer;
+    uint32_t precomputedMipmapTexture;
+    uint32_t runtimeMipmapTexture;
 };
 
 class MemoryAllocator {
@@ -68,11 +89,14 @@ public:
     StageBuffer makeStagingBuffer(VkDeviceSize num_bytes);
     LocalBuffer makeGeometryBuffer(VkDeviceSize num_bytes);
 
+    LocalTexture makeTexture(const VkImageCreateInfo &img_info,
+                             bool precomputed_mipmaps=false);
+
 private:
     const DeviceState &dev;
     MemoryTypeIndices type_indices_;
 
-    template<bool> friend class BufferDeleter;
+    template<bool> friend class AllocDeleter;
 };
 
 }

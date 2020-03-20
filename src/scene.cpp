@@ -50,22 +50,17 @@ static const Texture * loadTexture(const aiScene *raw_scene,
             int width, height, num_channels;
             uint8_t *texture_data =
                 stbi_load_from_memory(raw_input, texture->mWidth,
-                                      &width, &height, &num_channels, 3);
+                                      &width, &height, &num_channels, 4);
 
             if (texture_data == nullptr) {
                 cerr << "Failed to load texture" << endl;
                 fatalExit();
             }
 
-            if (num_channels != 3) {
-                cerr << "Only RGB888 textures supported" << endl;
-                fatalExit();
-            }
-
             Texture &new_tex = textures.emplace_back(Texture {
                 static_cast<uint32_t>(width),
                 static_cast<uint32_t>(height),
-                3,
+                4,
                 ManagedArray<uint8_t>(texture_data, stbi_image_free)
             });
 
@@ -132,13 +127,17 @@ static SceneAssets loadAssets(const string &scene_path)
             specular_color = glm::vec4(color.r, color.g, color.b, color.a);
         }
 
+        float shininess = 0.f;
+        raw_mat->Get(AI_MATKEY_SHININESS, shininess);
+
         materials.emplace_back(Material {
             ambient_tex,
             ambient_color,
             diffuse_tex,
             diffuse_color,
             specular_tex,
-            specular_color
+            specular_color,
+            shininess
         });
     }
 

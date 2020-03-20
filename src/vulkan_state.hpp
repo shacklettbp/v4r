@@ -39,6 +39,8 @@ struct Material {
 
     const Texture *specular_texture;
     glm::vec4 specular_color;
+
+    float shininess;
 };
 
 struct SceneMesh {
@@ -60,6 +62,7 @@ struct SceneState {
     LocalBuffer geometry;
     VkDeviceSize indexOffset;
     std::vector<SceneMesh> meshes;
+    std::vector<LocalTexture> textures;
 };
 
 struct FramebufferConfig {
@@ -105,7 +108,8 @@ struct PipelineState {
 
 struct CommandStreamState {
 public:
-    CommandStreamState(const DeviceState &dev,
+    CommandStreamState(const InstanceState &inst,
+                       const DeviceState &dev,
                        const FramebufferConfig &fb_cfg,
                        const PipelineState &pl,
                        MemoryAllocator &alc);
@@ -114,16 +118,19 @@ public:
 
     SceneState loadScene(SceneAssets &&assets);
 
+    const InstanceState &inst;
     const DeviceState &dev;
     const PipelineState &pipeline;
 
     const VkCommandPool gfxPool;
     const VkQueue gfxQueue;
+    const VkCommandBuffer gfxCopyCommand;
 
     const VkCommandPool transferPool;
     const VkQueue transferQueue;
     const VkCommandBuffer transferStageCommand;
-    const VkFence transferStageFence;
+    const VkSemaphore copySemaphore;
+    const VkFence copyFence;
 
     MemoryAllocator &alloc;
 

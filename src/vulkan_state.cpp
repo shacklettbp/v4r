@@ -4,6 +4,7 @@
 #include "vk_utils.hpp"
 #include "vulkan_config.hpp"
 
+#include <cmath>
 #include <iostream>
 #include <fstream>
 #include <optional>
@@ -102,6 +103,8 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
     color_img_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
                            VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     color_img_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    color_img_info.queueFamilyIndexCount = 0;
+    color_img_info.pQueueFamilyIndices = nullptr;
     color_img_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     // Create an image that will have the same settings as the real
@@ -196,6 +199,19 @@ static VkQueue makeQueue(uint32_t qf_idx, uint32_t queue_idx,
     dev.dt.getDeviceQueue2(dev.hdl, &queue_info, &queue);
 
     return queue;
+}
+
+static VkSemaphore makeBinarySemaphore(const DeviceState &dev)
+{
+    VkSemaphoreCreateInfo sema_info;
+    sema_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    sema_info.pNext = nullptr;
+    sema_info.flags = 0;
+
+    VkSemaphore sema;
+    REQ_VK(dev.dt.createSemaphore(dev.hdl, &sema_info, nullptr, &sema));
+
+    return sema;
 }
 
 static VkFence makeFence(const DeviceState &dev, bool pre_signal=false)
@@ -642,63 +658,335 @@ static PipelineState makePipeline(const FramebufferConfig &fb_cfg,
     };
 }
 
-CommandStreamState::CommandStreamState(const DeviceState &d,
+CommandStreamState::CommandStreamState(const InstanceState &i,
+                                       const DeviceState &d,
                                        const FramebufferConfig &fb_cfg,
                                        const PipelineState &pl,
                                        MemoryAllocator &alc)
-    : dev(d),
+    : inst(i),
+      dev(d),
       pipeline(pl),
       gfxPool(makeCmdPool(dev.gfxQF, dev)),
       gfxQueue(makeQueue(dev.gfxQF, 0, dev)),
+      gfxCopyCommand(makeCmdBuffer(gfxPool, dev)),
       transferPool(makeCmdPool(dev.transferQF, dev)),
       transferQueue(makeQueue(dev.transferQF, 0, dev)),
       transferStageCommand(makeCmdBuffer(transferPool, dev)),
-      transferStageFence(makeFence(dev)),
+      copySemaphore(makeBinarySemaphore(dev)),
+      copyFence(makeFence(dev)),
       alloc(alc),
       fb(makeFramebuffer(fb_cfg, pipeline, dev))
 {}
 
+static uint32_t getMipLevels(const Texture &texture)
+{
+    return static_cast<uint32_t>(
+        floor(log2(max(texture.width, texture.height)))) + 1;
+}
+
 SceneState CommandStreamState::loadScene(SceneAssets &&assets)
 {
+    vector<StageBuffer> texture_stagings;
+    vector<LocalTexture> gpu_textures;
+    for (const Texture &texture : assets.textures) {
+        uint64_t texture_bytes = texture.width * texture.height *
+            texture.num_channels * sizeof(uint8_t);
+
+        StageBuffer texture_staging = alloc.makeStagingBuffer(texture_bytes);
+        memcpy(texture_staging.ptr, texture.raw_image.data(), texture_bytes);
+
+        VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
+
+        {
+            VkFormatProperties2 format_props =
+                getFormatProperties(inst, dev.phy, format);
+            
+            if ((format_props.formatProperties.optimalTilingFeatures &
+                    VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0 || 
+                (format_props.formatProperties.optimalTilingFeatures &
+                    VK_FORMAT_FEATURE_BLIT_DST_BIT) == 0 ||
+                (format_props.formatProperties.optimalTilingFeatures &
+                    VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) == 0) {
+                cerr << "Device does not support features for mipmap gen" <<
+                    endl;
+
+                fatalExit();
+            }
+        }
+
+        uint32_t mip_levels = getMipLevels(texture);
+
+        VkImageCreateInfo img_info;
+        img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        img_info.pNext = nullptr;
+        img_info.flags = 0;
+        img_info.imageType = VK_IMAGE_TYPE_2D;
+        img_info.format = format;
+        img_info.extent = { texture.width, texture.height, 1 };
+        img_info.mipLevels = mip_levels;
+        img_info.arrayLayers = 1;
+        img_info.samples = VK_SAMPLE_COUNT_1_BIT;
+        img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        img_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+            VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+            VK_IMAGE_USAGE_SAMPLED_BIT;
+        img_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        img_info.queueFamilyIndexCount = 0;
+        img_info.pQueueFamilyIndices = nullptr;
+        img_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        LocalTexture gpu_texture = alloc.makeTexture(img_info);
+
+        texture_stagings.emplace_back(move(texture_staging));
+        gpu_textures.emplace_back(alloc.makeTexture(img_info));
+    }
+
     VkDeviceSize vertex_bytes = assets.vertices.size() * sizeof(Vertex);
     VkDeviceSize index_bytes = assets.indices.size() * sizeof(uint32_t);
-    VkDeviceSize total_bytes = vertex_bytes + index_bytes;
+    VkDeviceSize geometry_bytes = vertex_bytes + index_bytes;
 
-    StageBuffer staging = alloc.makeStagingBuffer(total_bytes);
+    StageBuffer geo_staging = alloc.makeStagingBuffer(geometry_bytes);
 
     // Store vertex buffer immediately followed by index buffer
-    memcpy(staging.ptr, assets.vertices.data(), vertex_bytes);
-    memcpy((uint8_t *)staging.ptr + vertex_bytes, assets.indices.data(),
+    memcpy(geo_staging.ptr, assets.vertices.data(), vertex_bytes);
+    memcpy((uint8_t *)geo_staging.ptr + vertex_bytes, assets.indices.data(),
            index_bytes);
+    LocalBuffer geometry = alloc.makeGeometryBuffer(geometry_bytes);
 
-    LocalBuffer geometry = alloc.makeGeometryBuffer(total_bytes);
-
+    // Start recording for transfer queue
     VkCommandBufferBeginInfo begin_info {};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     REQ_VK(dev.dt.beginCommandBuffer(transferStageCommand, &begin_info));
 
+    // Copy textures and generate mipmaps
+    DynArray<VkImageMemoryBarrier> barriers(gpu_textures.size());
+    for (size_t i = 0; i < gpu_textures.size(); i++) {
+        const LocalTexture &gpu_texture = gpu_textures[i];
+        VkImageMemoryBarrier &barrier = barriers[i];
+
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.pNext = nullptr;
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = gpu_texture.image;
+        barrier.subresourceRange = {
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            0, 1, 0, 1
+        };
+    }
+    dev.dt.cmdPipelineBarrier(transferStageCommand,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              0, 0, nullptr, 0, nullptr,
+                              barriers.size(), barriers.data());
+
+    for (size_t i = 0; i < gpu_textures.size(); i++) {
+        const StageBuffer &stage_buffer = texture_stagings[i];
+        const LocalTexture &gpu_texture = gpu_textures[i];
+        VkBufferImageCopy copy_spec {};
+        copy_spec.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copy_spec.imageSubresource.mipLevel = 0;
+        copy_spec.imageSubresource.baseArrayLayer = 0;
+        copy_spec.imageSubresource.layerCount = 1;
+        copy_spec.imageExtent = { gpu_texture.width, gpu_texture.height, 1 };
+
+        dev.dt.cmdCopyBufferToImage(transferStageCommand, stage_buffer.buffer,
+                                    gpu_texture.image,
+                                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                    1, &copy_spec);
+    }
+
+    // Prepare mip level 0 to have ownership transferred
+    for (VkImageMemoryBarrier &barrier : barriers) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = 0;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;;
+        barrier.srcQueueFamilyIndex = dev.transferQF;
+        barrier.dstQueueFamilyIndex = dev.gfxQF;
+    }
+
+    dev.dt.cmdPipelineBarrier(transferStageCommand,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              0, 0, nullptr, 0, nullptr,
+                              barriers.size(), barriers.data());
+
+    // Copy vertex/index buffer onto GPU
     VkBufferCopy copy_settings {};
-    copy_settings.size = total_bytes;
-    dev.dt.cmdCopyBuffer(transferStageCommand, staging.buffer,
+    copy_settings.size = geometry_bytes;
+    dev.dt.cmdCopyBuffer(transferStageCommand, geo_staging.buffer,
                          geometry.buffer, 1, &copy_settings);
+
+    VkBufferMemoryBarrier geometry_barrier;
+    geometry_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    geometry_barrier.pNext = nullptr;
+    geometry_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    geometry_barrier.dstAccessMask = 0;
+    geometry_barrier.srcQueueFamilyIndex = dev.transferQF;
+    geometry_barrier.dstQueueFamilyIndex = dev.gfxQF;
+    geometry_barrier.buffer = geometry.buffer;
+    geometry_barrier.offset = 0;
+    geometry_barrier.size = geometry_bytes;
+
+    dev.dt.cmdPipelineBarrier(transferStageCommand,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              0, 0, nullptr,
+                              1, &geometry_barrier,
+                              0, nullptr);
 
     REQ_VK(dev.dt.endCommandBuffer(transferStageCommand));
 
-    VkSubmitInfo submit_info {};
-    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit_info.commandBufferCount = 1;
-    submit_info.pCommandBuffers = &transferStageCommand;
+    VkSubmitInfo copy_submit{};
+    copy_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    copy_submit.commandBufferCount = 1;
+    copy_submit.pCommandBuffers = &transferStageCommand;
+    copy_submit.signalSemaphoreCount = 1;
+    copy_submit.pSignalSemaphores = &copySemaphore;
 
-    REQ_VK(dev.dt.queueSubmit(transferQueue, 1, &submit_info,
-                              transferStageFence));
+    REQ_VK(dev.dt.queueSubmit(transferQueue, 1, &copy_submit,
+                              VK_NULL_HANDLE));
 
-    waitForFenceInfinitely(dev, transferStageFence);
-    REQ_VK(dev.dt.resetFences(dev.hdl, 1, &transferStageFence));
+    // Start recording for graphics queue
+    REQ_VK(dev.dt.beginCommandBuffer(gfxCopyCommand, &begin_info));
+
+    // Finish moving geometry onto graphics queue family
+    // FIXME any advantage for separate barriers with different offsets here for
+    // index vs vertices?
+    geometry_barrier.srcAccessMask = 0;
+    geometry_barrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT |
+                                     VK_ACCESS_INDEX_READ_BIT;
+    dev.dt.cmdPipelineBarrier(gfxCopyCommand,
+                              VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                              VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+                              0, 0, nullptr,
+                              1, &geometry_barrier,
+                              0, nullptr);
+
+    // Finish acquiring mip level 0 on graphics queue and transition layout
+    for (VkImageMemoryBarrier &barrier : barriers) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.srcQueueFamilyIndex = dev.transferQF;
+        barrier.dstQueueFamilyIndex = dev.gfxQF;
+    }
+    dev.dt.cmdPipelineBarrier(gfxCopyCommand,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              0, 0, nullptr, 0, nullptr,
+                              barriers.size(), barriers.data());
+
+    for (size_t texture_idx = 0; texture_idx < gpu_textures.size();
+            texture_idx++) {
+        const LocalTexture &gpu_texture = gpu_textures[texture_idx];
+        VkImageMemoryBarrier &barrier = barriers[texture_idx];
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+
+        for (uint32_t mip_level = 1; mip_level < gpu_texture.mipLevels;
+                mip_level++) {
+            VkImageBlit blit_spec {};
+            
+            // Src
+            blit_spec.srcSubresource =
+                { VK_IMAGE_ASPECT_COLOR_BIT, mip_level - 1, 0, 1 };
+            blit_spec.srcOffsets[1] =
+                { static_cast<int32_t>(gpu_texture.width >> (mip_level - 1)),
+                  static_cast<int32_t>(gpu_texture.height >> (mip_level - 1)),
+                  1 };
+
+            // Dst
+            blit_spec.dstSubresource =
+                { VK_IMAGE_ASPECT_COLOR_BIT, mip_level, 0, 1 };
+            blit_spec.dstOffsets[1] =
+                { static_cast<int32_t>(gpu_texture.width >> mip_level),
+                  static_cast<int32_t>(gpu_texture.height >> mip_level),
+                  1 };
+
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.subresourceRange.baseMipLevel = mip_level;
+
+            dev.dt.cmdPipelineBarrier(gfxCopyCommand,
+                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                      0, 0, nullptr, 0, nullptr,
+                                      1, &barrier);
+
+            dev.dt.cmdBlitImage(gfxCopyCommand,
+                                gpu_texture.image,
+                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                gpu_texture.image,
+                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                1, &blit_spec, VK_FILTER_LINEAR);
+
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+
+            dev.dt.cmdPipelineBarrier(gfxCopyCommand,
+                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                      0, 0, nullptr, 0, nullptr,
+                                      1, &barrier);
+        }
+    }
+
+    for (size_t texture_idx = 0; texture_idx < gpu_textures.size();
+            texture_idx++) {
+        const LocalTexture &gpu_texture = gpu_textures[texture_idx];
+        VkImageMemoryBarrier &barrier = barriers[texture_idx];
+
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.subresourceRange.baseMipLevel = 0;
+        barrier.subresourceRange.levelCount = gpu_texture.mipLevels;
+    }
+
+    dev.dt.cmdPipelineBarrier(gfxCopyCommand,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                              0, 0, nullptr, 0, nullptr,
+                              barriers.size(), barriers.data());
+
+    REQ_VK(dev.dt.endCommandBuffer(gfxCopyCommand));
+
+    VkSubmitInfo gfx_submit{};
+    gfx_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    gfx_submit.waitSemaphoreCount = 1;
+    gfx_submit.pWaitSemaphores = &copySemaphore;
+    // FIXME is this right?
+    VkPipelineStageFlags sema_wait_mask = 
+        VK_PIPELINE_STAGE_TRANSFER_BIT |
+        VK_PIPELINE_STAGE_VERTEX_INPUT_BIT |
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    gfx_submit.pWaitDstStageMask = &sema_wait_mask;
+    gfx_submit.commandBufferCount = 1;
+    gfx_submit.pCommandBuffers = &gfxCopyCommand;
+
+    REQ_VK(dev.dt.queueSubmit(gfxQueue, 1, &gfx_submit,
+                              copyFence));
+
+    waitForFenceInfinitely(dev, copyFence);
+    REQ_VK(dev.dt.resetFences(dev.hdl, 1, &copyFence));
 
     return SceneState {
         move(geometry),
         vertex_bytes,
-        move(assets.meshes)
+        move(assets.meshes),
+        move(gpu_textures)
     };
 }
 
