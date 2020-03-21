@@ -2,7 +2,10 @@
 #define VULKAN_STATE_HPP_INCLUDED
 
 #include <array>
+#include <atomic>
 #include <list>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -31,14 +34,14 @@ struct Texture {
 };
 
 struct Material {
-    const Texture *ambient_texture;
-    glm::vec4 ambient_color;
+    std::optional<uint64_t> ambientTexture;
+    glm::vec4 ambientColor;
 
-    const Texture *diffuse_texture;
-    glm::vec4 diffuse_color;
+    std::optional<uint64_t> diffuseTexture;
+    glm::vec4 diffuseColor;
 
-    const Texture *specular_texture;
-    glm::vec4 specular_color;
+    std::optional<uint64_t> specularTexture;
+    glm::vec4 specularColor;
 
     float shininess;
 };
@@ -46,6 +49,7 @@ struct Material {
 struct SceneMesh {
     uint32_t startIndex;
     uint32_t numIndices;
+    size_t materialIndex;
 };
 
 struct SceneAssets {
@@ -59,10 +63,48 @@ struct SceneAssets {
 };
 
 struct SceneState {
+    std::vector<LocalTexture> textures;
+    std::vector<VkImageView> texture_views;
+    std::vector<Material> materials;
     LocalBuffer geometry;
     VkDeviceSize indexOffset;
     std::vector<SceneMesh> meshes;
-    std::vector<LocalTexture> textures;
+};
+
+struct DescriptorConfig {
+    VkSampler textureSampler;
+    VkDescriptorSetLayout layout;
+};
+
+struct PoolState {
+    PoolState(VkDescriptorPool p)
+        : pool(p), numActive(0)
+    {}
+
+    VkDescriptorPool pool;
+    std::atomic_uint64_t numActive;
+};
+
+struct DescriptorSet {
+    ~DescriptorSet() { pool.numActive--; };
+
+    VkDescriptorSet hdl;
+    PoolState &pool;
+};
+
+class DescriptorTracker {
+public:
+    DescriptorTracker(const DeviceState &dev, const DescriptorConfig &cfg);
+    ~DescriptorTracker();
+
+    DescriptorSet makeDescriptorSet();
+
+private:
+    const DeviceState &dev;
+    const VkDescriptorSetLayout &layout_;
+
+    std::list<PoolState> free_pools_;
+    std::list<PoolState> used_pools_;
 };
 
 struct FramebufferConfig {
@@ -110,7 +152,7 @@ struct CommandStreamState {
 public:
     CommandStreamState(const InstanceState &inst,
                        const DeviceState &dev,
-                       const FramebufferConfig &fb_cfg,
+                       const DescriptorConfig &desc_cfg,
                        const PipelineState &pl,
                        MemoryAllocator &alc);
     CommandStreamState(const CommandStreamState &) = delete;
@@ -133,8 +175,7 @@ public:
     const VkFence copyFence;
 
     MemoryAllocator &alloc;
-
-    const FramebufferState fb;
+    const DescriptorTracker descriptorTracker;
 };
 
 struct VulkanState {
@@ -149,7 +190,9 @@ public:
     const DeviceState dev;
     MemoryAllocator alloc;
     const FramebufferConfig fbCfg;
+    const DescriptorConfig descCfg;
     const PipelineState pipeline;
+    const FramebufferState fb;
 };
 
 }

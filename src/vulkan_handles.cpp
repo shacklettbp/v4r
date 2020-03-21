@@ -168,11 +168,12 @@ DeviceState InstanceState::makeDevice(const uint32_t gpu_id) const
     dev_create_info.queueCreateInfoCount = 3;
     dev_create_info.pQueueCreateInfos = queue_infos.data();
 
-    // Currently ask for no features
+    // Enable sampler anisotropy
     dev_create_info.pEnabledFeatures = nullptr;
     VkPhysicalDeviceFeatures2 requested_features {};
     requested_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     requested_features.pNext = nullptr;
+    requested_features.features.samplerAnisotropy = true;
     dev_create_info.pNext = &requested_features;
 
     VkDevice dev;

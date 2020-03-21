@@ -156,6 +156,66 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
     };
 }
 
+static DescriptorConfig getDescriptorConfig(const DeviceState &dev)
+{
+    VkSamplerCreateInfo sampler_info;
+    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler_info.pNext = nullptr;
+    sampler_info.flags = 0;
+    sampler_info.magFilter = VK_FILTER_LINEAR;
+    sampler_info.minFilter = VK_FILTER_LINEAR;
+    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_info.mipLodBias = 0;
+    sampler_info.anisotropyEnable = VK_TRUE;
+    sampler_info.maxAnisotropy = 16.f;
+    sampler_info.compareEnable = VK_FALSE;
+    sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
+    sampler_info.minLod = 0;
+    sampler_info.maxLod = VK_LOD_CLAMP_NONE;
+    sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    sampler_info.unnormalizedCoordinates = VK_FALSE;
+
+    VkSampler sampler;
+    REQ_VK(dev.dt.createSampler(dev.hdl, &sampler_info, nullptr, &sampler));
+
+    array<VkDescriptorSetLayoutBinding, 2> bindings {{
+        {
+            0,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            1,
+            VK_SHADER_STAGE_FRAGMENT_BIT,
+            nullptr
+        },
+        {
+            1,
+            VK_DESCRIPTOR_TYPE_SAMPLER,
+            1,
+            VK_SHADER_STAGE_FRAGMENT_BIT,
+            &sampler
+        }
+    }};
+
+    VkDescriptorSetLayoutCreateInfo descriptor_info;
+    descriptor_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    descriptor_info.pNext = nullptr;
+    descriptor_info.flags = 0;
+    descriptor_info.bindingCount = static_cast<uint32_t>(bindings.size());
+    descriptor_info.pBindings = bindings.data();
+
+    VkDescriptorSetLayout layout;
+    REQ_VK(dev.dt.createDescriptorSetLayout(dev.hdl, &descriptor_info, nullptr,
+                                            &layout));
+
+
+    return DescriptorConfig {
+        sampler,
+        layout 
+    };
+}
+
 static VkCommandPool makeCmdPool(uint32_t qf_idx, const DeviceState &dev)
 {
     VkCommandPoolCreateInfo pool_info = {};
@@ -463,7 +523,96 @@ static VkShaderModule loadShader(const string &base_name,
     return shader_module;
 }
 
+static VkDescriptorPool makePool(const DeviceState &dev, uint32_t max_sets)
+{
+    array<VkDescriptorPoolSize, 2> pool_sizes {{
+        {
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            1
+        },
+        {
+            VK_DESCRIPTOR_TYPE_SAMPLER,
+            1
+        }
+    }};
+
+    VkDescriptorPoolCreateInfo pool_info;
+    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.pNext = nullptr;
+    pool_info.flags = 0;
+    pool_info.maxSets = max_sets;
+    pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
+    pool_info.pPoolSizes = pool_sizes.data();
+
+    VkDescriptorPool pool;
+    REQ_VK(dev.dt.createDescriptorPool(dev.hdl, &pool_info, nullptr, &pool));
+
+    return pool;
+}
+
+DescriptorTracker::DescriptorTracker(const DeviceState &d, const DescriptorConfig &cfg)
+    : dev(d), layout_(cfg.layout),
+      free_pools_(), used_pools_()
+{}
+
+DescriptorTracker::~DescriptorTracker()
+{
+    for (PoolState &pool_state : free_pools_) {
+        dev.dt.destroyDescriptorPool(dev.hdl, pool_state.pool, nullptr);
+        assert(pool_state.numActive == 0);
+    }
+
+    for (PoolState &pool_state : used_pools_) {
+        dev.dt.destroyDescriptorPool(dev.hdl, pool_state.pool, nullptr);
+        assert(pool_state->numActive == 0);
+    }
+}
+
+DescriptorSet DescriptorTracker::makeDescriptorSet()
+{
+    if (free_pools_.empty()) {
+        auto iter = used_pools_.begin();
+        while (iter != used_pools_.end()) {
+            auto next_iter = next(iter);
+            if (iter->numActive == 0) {
+                REQ_VK(dev.dt.resetDescriptorPool(dev.hdl, iter->pool, 0));
+                free_pools_.splice(free_pools_.end(), used_pools_, iter);
+            }
+            iter = next_iter;
+        }
+        if (free_pools_.empty()) {
+            free_pools_.emplace_back(
+                makePool(dev, VulkanConfig::descriptor_pool_size));
+        }
+    }
+
+    PoolState &cur_pool = free_pools_.front();
+
+    VkDescriptorSetAllocateInfo alloc;
+    alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    alloc.pNext = nullptr;
+    alloc.descriptorPool = cur_pool.pool;
+    alloc.descriptorSetCount = 1;
+    alloc.pSetLayouts = &layout_;
+
+    VkDescriptorSet desc_set;
+    REQ_VK(dev.dt.allocateDescriptorSets(dev.hdl, &alloc, &desc_set));
+
+    cur_pool.numActive++;
+
+    if (cur_pool.numActive.load() == VulkanConfig::descriptor_pool_size) {
+        used_pools_.splice(used_pools_.end(), free_pools_,
+                           free_pools_.begin());
+    }
+
+    return DescriptorSet {
+        desc_set,
+        cur_pool
+    };
+}
+
 static PipelineState makePipeline(const FramebufferConfig &fb_cfg,
+                                  const DescriptorConfig &descriptor_cfg,
                                   const DeviceState &dev)
 {
     // Pipeline cache (FIXME)
@@ -509,9 +658,10 @@ static PipelineState makePipeline(const FramebufferConfig &fb_cfg,
         }
     }};
 
-    array<VkVertexInputAttributeDescription, 2> input_attrs {{
-        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 }, // Position
-        { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(float) * 3}
+    array<VkVertexInputAttributeDescription, 3> input_attrs {{
+        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, position) }, // Position
+        { 1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, uv) }, // UV
+        { 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, color) } // Color
     }};
 
     VkPipelineVertexInputStateCreateInfo vert_info;
@@ -610,8 +760,8 @@ static PipelineState makePipeline(const FramebufferConfig &fb_cfg,
         VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipeline_layout_info.pNext = nullptr;
     pipeline_layout_info.flags = 0;
-    pipeline_layout_info.setLayoutCount = 0;
-    pipeline_layout_info.pSetLayouts = nullptr;
+    pipeline_layout_info.setLayoutCount = 1;
+    pipeline_layout_info.pSetLayouts = &descriptor_cfg.layout;
     pipeline_layout_info.pushConstantRangeCount = 1;
     pipeline_layout_info.pPushConstantRanges = &mvp_consts;
 
@@ -660,7 +810,7 @@ static PipelineState makePipeline(const FramebufferConfig &fb_cfg,
 
 CommandStreamState::CommandStreamState(const InstanceState &i,
                                        const DeviceState &d,
-                                       const FramebufferConfig &fb_cfg,
+                                       const DescriptorConfig &desc_cfg,
                                        const PipelineState &pl,
                                        MemoryAllocator &alc)
     : inst(i),
@@ -675,7 +825,7 @@ CommandStreamState::CommandStreamState(const InstanceState &i,
       copySemaphore(makeBinarySemaphore(dev)),
       copyFence(makeFence(dev)),
       alloc(alc),
-      fb(makeFramebuffer(fb_cfg, pipeline, dev))
+      descriptorTracker(dev, desc_cfg)
 {}
 
 static uint32_t getMipLevels(const Texture &texture)
@@ -822,6 +972,7 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
     dev.dt.cmdCopyBuffer(transferStageCommand, geo_staging.buffer,
                          geometry.buffer, 1, &copy_settings);
 
+    // Barrier to transfer queue family ownership of geometry
     VkBufferMemoryBarrier geometry_barrier;
     geometry_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
     geometry_barrier.pNext = nullptr;
@@ -982,11 +1133,39 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
     waitForFenceInfinitely(dev, copyFence);
     REQ_VK(dev.dt.resetFences(dev.hdl, 1, &copyFence));
 
+    vector<VkImageView> texture_views;
+    texture_views.reserve(gpu_textures.size());
+    for (const LocalTexture &gpu_texture : gpu_textures) {
+        VkImageViewCreateInfo view_info;
+        view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view_info.pNext = nullptr;
+        view_info.flags = 0;
+        view_info.image = gpu_texture.image;
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format = VK_FORMAT_R8G8B8A8_UNORM; // FIXME remove hardcode
+        view_info.components = { 
+            VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
+            VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A
+        };
+        view_info.subresourceRange = {
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            0, gpu_texture.mipLevels,
+            0, 1
+        };
+
+        VkImageView view;
+        REQ_VK(dev.dt.createImageView(dev.hdl, &view_info, nullptr, &view));
+
+        texture_views.push_back(view);
+    }
+
     return SceneState {
+        move(gpu_textures),
+        move(texture_views),
+        move(assets.materials),
         move(geometry),
         vertex_bytes,
         move(assets.meshes),
-        move(gpu_textures)
     };
 }
 
@@ -996,7 +1175,9 @@ VulkanState::VulkanState(const RenderConfig &config)
       dev(inst.makeDevice(cfg.gpuID)),
       alloc(dev, inst),
       fbCfg(getFramebufferConfig(dev, inst, cfg)),
-      pipeline(makePipeline(fbCfg, dev))
+      descCfg(getDescriptorConfig(dev)),
+      pipeline(makePipeline(fbCfg, descCfg, dev)),
+      fb(makeFramebuffer(fbCfg, pipeline, dev))
 {}
 
 }

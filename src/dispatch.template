@@ -13,8 +13,6 @@ device:
 - vkDestroyRenderPass
 - vkCreateFramebuffer
 - vkDestroyFramebuffer
-- vkCreateDescriptorSetLayout
-- vkDestroyDescriptorSetLayout
 - vkCreatePipelineLayout
 - vkDestroyPipelineLayout
 - vkCreatePipelineCache
@@ -45,6 +43,15 @@ device:
 - vkCmdBlitImage
 - vkCreateSemaphore
 - vkDestroySemaphore
+- vkCreateDescriptorSetLayout
+- vkDestroyDescriptorSetLayout
+- vkCreateDescriptorPool
+- vkDestroyDescriptorPool
+- vkResetDescriptorPool
+- vkAllocateDescriptorSets
+- vkFreeDescriptorSets
+- vkCreateSampler
+- vkDestroySampler
 
 instance:
 - vkEnumeratePhysicalDevices

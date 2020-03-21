@@ -65,7 +65,7 @@ RenderContext::CommandStream RenderContext::makeCommandStream()
 {
     auto hdl = make_handle<CommandStreamState>(state_->inst,
                                                state_->dev,
-                                               state_->fbCfg,
+                                               state_->descCfg,
                                                state_->pipeline,
                                                state_->alloc);
 

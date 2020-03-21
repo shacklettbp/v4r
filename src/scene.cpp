@@ -19,21 +19,21 @@ using namespace std;
 
 namespace v4r {
 
-static const Texture * loadTexture(const aiScene *raw_scene,
+static const optional<uint64_t> loadTexture(const aiScene *raw_scene,
         const aiMaterial *raw_mat,
         aiTextureType type,
         list<Texture> &textures,
-        unordered_map<string, const Texture *> &loaded_texture_lookup)
+        unordered_map<string, uint64_t> &loaded_texture_lookup)
 {
     aiString tex_path;
     bool has_texture = raw_mat->Get(AI_MATKEY_TEXTURE(type, 0), tex_path) ==
         AI_SUCCESS;
 
-    if (!has_texture) return nullptr;
+    if (!has_texture) return optional<uint64_t>();
 
     auto lookup = loaded_texture_lookup.find(tex_path.C_Str());
 
-    if (lookup != loaded_texture_lookup.end()) return lookup->second;
+    if (lookup != loaded_texture_lookup.end()) return optional(lookup->second);
 
     if (auto texture = raw_scene->GetEmbeddedTexture(tex_path.C_Str())) {
         if (texture->mHeight > 0) {
@@ -57,16 +57,16 @@ static const Texture * loadTexture(const aiScene *raw_scene,
                 fatalExit();
             }
 
-            Texture &new_tex = textures.emplace_back(Texture {
+            textures.emplace_back(Texture {
                 static_cast<uint32_t>(width),
                 static_cast<uint32_t>(height),
                 4,
                 ManagedArray<uint8_t>(texture_data, stbi_image_free)
             });
 
-            loaded_texture_lookup.emplace(tex_path.C_Str(), &new_tex);
+            loaded_texture_lookup.emplace(tex_path.C_Str(), textures.size() - 1);
 
-            return &new_tex;
+            return optional(textures.size() - 1);
         }
     } else {
         // FIXME
@@ -89,7 +89,7 @@ static SceneAssets loadAssets(const string &scene_path)
     list<Texture> textures;
     vector<Material> materials;
     
-    unordered_map<string, const Texture *> loaded_texture_lookup;
+    unordered_map<string, uint64_t> loaded_texture_lookup;
 
     for (uint32_t mat_idx = 0; mat_idx < raw_scene->mNumMaterials; mat_idx++) {
         const aiMaterial *raw_mat = raw_scene->mMaterials[mat_idx];
@@ -151,7 +151,6 @@ static SceneAssets loadAssets(const string &scene_path)
         aiMesh *raw_mesh = raw_scene->mMeshes[mesh_idx];
 
         unsigned int mat_idx = raw_mesh->mMaterialIndex;
-        cout << "Material: " << mat_idx << endl;
 
         bool has_uv = raw_mesh->HasTextureCoords(0);
         bool has_color = raw_mesh->HasVertexColors(0);
@@ -181,7 +180,8 @@ static SceneAssets loadAssets(const string &scene_path)
 
         meshes.emplace_back(SceneMesh {
             cur_vertex_index,
-            raw_mesh->mNumFaces * 3
+            raw_mesh->mNumFaces * 3,
+            mat_idx,
         });
 
         cur_vertex_index += raw_mesh->mNumFaces * 3;

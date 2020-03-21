@@ -15,7 +15,9 @@ constexpr float gfx_priority = 1.0;
 constexpr float compute_priority = 1.0;
 constexpr float transfer_priority = 1.0;
 
-const uint32_t num_images_per_fb = 64;
+constexpr uint32_t num_images_per_fb = 64;
+
+constexpr uint32_t descriptor_pool_size = 10;
 
 }
 
