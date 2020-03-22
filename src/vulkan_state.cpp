@@ -185,7 +185,7 @@ static DescriptorConfig getDescriptorConfig(const DeviceState &dev)
         {
             0,
             VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            1,
+            VulkanConfig::max_textures,
             VK_SHADER_STAGE_FRAGMENT_BIT,
             nullptr
         },
@@ -528,11 +528,11 @@ static VkDescriptorPool makePool(const DeviceState &dev, uint32_t max_sets)
     array<VkDescriptorPoolSize, 2> pool_sizes {{
         {
             VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            1
+            max_sets * VulkanConfig::max_textures
         },
         {
             VK_DESCRIPTOR_TYPE_SAMPLER,
-            1
+            max_sets
         }
     }};
 
@@ -605,10 +605,10 @@ DescriptorSet DescriptorTracker::makeDescriptorSet()
                            free_pools_.begin());
     }
 
-    return DescriptorSet {
+    return DescriptorSet(
         desc_set,
         cur_pool
-    };
+    );
 }
 
 static PipelineState makePipeline(const FramebufferConfig &fb_cfg,
@@ -1134,7 +1134,9 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
     REQ_VK(dev.dt.resetFences(dev.hdl, 1, &copyFence));
 
     vector<VkImageView> texture_views;
+    vector<VkDescriptorImageInfo> view_infos;
     texture_views.reserve(gpu_textures.size());
+    view_infos.reserve(gpu_textures.size());
     for (const LocalTexture &gpu_texture : gpu_textures) {
         VkImageViewCreateInfo view_info;
         view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -1157,15 +1159,39 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
         REQ_VK(dev.dt.createImageView(dev.hdl, &view_info, nullptr, &view));
 
         texture_views.push_back(view);
+        view_infos.emplace_back(VkDescriptorImageInfo {
+            VK_NULL_HANDLE, // Immutable
+            view,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        });
     }
+
+    // FIXME HACK
+    assert(gpu_textures.size() == VulkanConfig::max_textures);
+
+    DescriptorSet desc_set = descriptorTracker.makeDescriptorSet();
+
+    VkWriteDescriptorSet desc_update;
+    desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    desc_update.pNext = nullptr;
+    desc_update.dstSet = desc_set.hdl;
+    desc_update.dstBinding = 0;
+    desc_update.dstArrayElement = 0;
+    desc_update.descriptorCount = VulkanConfig::max_textures;
+    desc_update.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    desc_update.pImageInfo = view_infos.data();
+    desc_update.pBufferInfo = nullptr;
+    desc_update.pTexelBufferView = nullptr;
+    dev.dt.updateDescriptorSets(dev.hdl, 1, &desc_update, 0, nullptr);
 
     return SceneState {
         move(gpu_textures),
         move(texture_views),
         move(assets.materials),
+        move(desc_set),
         move(geometry),
         vertex_bytes,
-        move(assets.meshes),
+        move(assets.meshes)
     };
 }
 

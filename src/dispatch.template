@@ -50,6 +50,7 @@ device:
 - vkResetDescriptorPool
 - vkAllocateDescriptorSets
 - vkFreeDescriptorSets
+- vkUpdateDescriptorSets
 - vkCreateSampler
 - vkDestroySampler
 

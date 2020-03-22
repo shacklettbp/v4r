@@ -62,20 +62,6 @@ struct SceneAssets {
     std::vector<SceneMesh> meshes;
 };
 
-struct SceneState {
-    std::vector<LocalTexture> textures;
-    std::vector<VkImageView> texture_views;
-    std::vector<Material> materials;
-    LocalBuffer geometry;
-    VkDeviceSize indexOffset;
-    std::vector<SceneMesh> meshes;
-};
-
-struct DescriptorConfig {
-    VkSampler textureSampler;
-    VkDescriptorSetLayout layout;
-};
-
 struct PoolState {
     PoolState(VkDescriptorPool p)
         : pool(p), numActive(0)
@@ -86,10 +72,43 @@ struct PoolState {
 };
 
 struct DescriptorSet {
-    ~DescriptorSet() { pool.numActive--; };
+    DescriptorSet(VkDescriptorSet d, PoolState &p) 
+        : hdl(d), pool(p)
+    {}
+
+    DescriptorSet(const DescriptorSet &) = delete;
+
+    DescriptorSet(DescriptorSet &&o)
+        : hdl(o.hdl),
+          pool(o.pool)
+    {
+        o.hdl = VK_NULL_HANDLE;
+    }
+
+    ~DescriptorSet()
+    {
+        if (hdl == VK_NULL_HANDLE) return;
+        pool.numActive--;
+    };
 
     VkDescriptorSet hdl;
     PoolState &pool;
+};
+
+
+struct SceneState {
+    std::vector<LocalTexture> textures;
+    std::vector<VkImageView> texture_views;
+    std::vector<Material> materials;
+    DescriptorSet descriptors;
+    LocalBuffer geometry;
+    VkDeviceSize indexOffset;
+    std::vector<SceneMesh> meshes;
+};
+
+struct DescriptorConfig {
+    VkSampler textureSampler;
+    VkDescriptorSetLayout layout;
 };
 
 class DescriptorTracker {
@@ -175,7 +194,7 @@ public:
     const VkFence copyFence;
 
     MemoryAllocator &alloc;
-    const DescriptorTracker descriptorTracker;
+    DescriptorTracker descriptorTracker;
 };
 
 struct VulkanState {
