@@ -3,8 +3,10 @@
 
 #include <array>
 #include <atomic>
+#include <deque>
 #include <list>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -120,6 +122,9 @@ struct DescriptorConfig {
 class DescriptorTracker {
 public:
     DescriptorTracker(const DeviceState &dev, const DescriptorConfig &cfg);
+    DescriptorTracker(const DescriptorTracker &) = delete;
+    DescriptorTracker(DescriptorTracker &&) = default;
+
     ~DescriptorTracker();
 
     DescriptorSet makeDescriptorSet();
@@ -173,6 +178,53 @@ struct PipelineState {
     VkPipeline gfxPipeline;
 };
 
+class QueueState {
+public:
+    QueueState(VkQueue queue_hdl);
+
+    void incrUsers() {
+        num_users_++;
+    }
+
+    void submit(const DeviceState &dev, uint32_t submit_count,
+                const VkSubmitInfo *pSubmits, VkFence fence) const;
+
+private:
+    VkQueue queue_hdl_;
+    uint32_t num_users_;
+    mutable std::mutex mutex_;
+};
+
+class QueueManager {
+public:
+    QueueManager(const DeviceState &dev);
+
+    QueueState & allocateGraphicsQueue() {
+        return allocateQueue(dev.gfxQF, gfx_queues_,
+                             cur_gfx_idx_, dev.numGraphicsQueues);
+    }
+
+    QueueState & allocateTransferQueue()
+    { 
+        return allocateQueue(dev.transferQF, transfer_queues_,
+                             cur_transfer_idx_, dev.numTransferQueues);
+    }
+
+private:
+    QueueState & allocateQueue(uint32_t qf_idx,
+                               std::deque<QueueState> &queues,
+                               uint32_t &cur_queue_idx,
+                               uint32_t max_queues);
+
+    const DeviceState &dev;
+    std::deque<QueueState> gfx_queues_;
+    uint32_t cur_gfx_idx_;
+    std::deque<QueueState> transfer_queues_;
+    uint32_t cur_transfer_idx_;
+
+    std::mutex alloc_mutex_;
+};
+
 struct CommandStreamState {
 public:
     CommandStreamState(const InstanceState &inst,
@@ -181,6 +233,7 @@ public:
                        const PipelineState &pl,
                        const FramebufferState &fb,
                        MemoryAllocator &alc,
+                       QueueManager &queue_manager,
                        uint32_t render_width,
                        uint32_t render_height,
                        uint32_t stream_idx);
@@ -196,13 +249,13 @@ public:
     const FramebufferState &fb;
 
     const VkCommandPool gfxPool;
-    const VkQueue gfxQueue;
+    const QueueState &gfxQueue;
     const VkCommandBuffer gfxCopyCommand;
     const VkCommandBuffer gfxRenderCommand;
     const VkFence renderFence;
 
     const VkCommandPool transferPool;
-    const VkQueue transferQueue;
+    const QueueState &transferQueue;
     const VkCommandBuffer transferStageCommand;
     const VkSemaphore copySemaphore;
     const VkFence copyFence;
@@ -223,11 +276,15 @@ public:
     VulkanState(const VulkanState &) = delete;
     VulkanState(VulkanState &&) = delete;
 
+    CommandStreamState makeStreamState();
+
     const RenderConfig cfg;
 
     const InstanceState inst;
     const DeviceState dev;
     MemoryAllocator alloc;
+    QueueManager queueMgr;
+
     const FramebufferConfig fbCfg;
     const DescriptorConfig descCfg;
     const PipelineState pipeline;

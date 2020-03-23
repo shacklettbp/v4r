@@ -210,7 +210,6 @@ static SceneAssets loadAssets(const string &scene_path)
                     endl;
                 fatalExit();
             }
-            cout << "Instance " << cur_node->mMeshes[0] << " " << glm::to_string(cur_txfm ) << endl;
             instances.emplace_back(ObjectInstance {
                 cur_txfm,
                 cur_node->mMeshes[0]

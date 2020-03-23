@@ -85,15 +85,16 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
     dev_mem_props.pNext = nullptr;
     inst.dt.getPhysicalDeviceMemoryProperties2(dev.phy, &dev_mem_props);
 
+    uint32_t fb_width = cfg.imgWidth * VulkanConfig::num_fb_images_wide;
+    uint32_t fb_height = cfg.imgHeight * VulkanConfig::num_fb_images_tall;
+
     VkFormat color_fmt = getDeviceColorFormat(dev.phy, inst);
     VkImageCreateInfo color_img_info {};
     color_img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     color_img_info.imageType = VK_IMAGE_TYPE_2D;
     color_img_info.format = color_fmt;
-    color_img_info.extent.width = cfg.imgWidth *
-        VulkanConfig::num_fb_images_wide;
-    color_img_info.extent.height = cfg.imgHeight *
-        VulkanConfig::num_fb_images_tall;
+    color_img_info.extent.width = fb_width;
+    color_img_info.extent.height = fb_height;
     color_img_info.extent.depth = 1;
     color_img_info.mipLevels = 1;
     color_img_info.arrayLayers = 1;
@@ -142,8 +143,8 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
             dev_mem_props);
 
     return FramebufferConfig {
-        cfg.imgWidth,
-        cfg.imgHeight,
+        fb_width,
+        fb_height,
         color_fmt,
         color_img_info,
         color_req.size,
@@ -811,12 +812,66 @@ static PipelineState makePipeline(const FramebufferConfig &fb_cfg,
     };
 }
 
+QueueState::QueueState(VkQueue queue_hdl)
+    : queue_hdl_(queue_hdl),
+      num_users_(1),
+      mutex_()
+{
+}
+
+void QueueState::submit(const DeviceState &dev, uint32_t submit_count,
+                        const VkSubmitInfo *pSubmits, VkFence fence) const
+{
+    // FIXME there is a race here if more users are added
+    // while threads are already submitting
+    if (num_users_ > 1) {
+        mutex_.lock();
+    }
+
+    REQ_VK(dev.dt.queueSubmit(queue_hdl_, submit_count, pSubmits, fence));
+
+    if (num_users_ > 1) {
+        mutex_.unlock();
+    }
+}
+
+QueueManager::QueueManager(const DeviceState &d)
+    : dev(d),
+      gfx_queues_(),
+      cur_gfx_idx_(0),
+      transfer_queues_(),
+      cur_transfer_idx_(0),
+      alloc_mutex_()
+{}
+
+QueueState & QueueManager::allocateQueue(uint32_t qf_idx,
+                                         deque<QueueState> &queues,
+                                         uint32_t &cur_queue_idx,
+                                         uint32_t max_queues)
+{
+    scoped_lock lock(alloc_mutex_);
+
+    if (queues.size() < max_queues) {
+        queues.emplace_back(makeQueue(qf_idx, queues.size(), dev));
+
+        return gfx_queues_.back();
+    }
+
+    QueueState &cur_queue = queues[cur_queue_idx];
+    cur_queue_idx = (cur_queue_idx + 1) % max_queues;
+
+    cur_queue.incrUsers();
+
+    return cur_queue;
+}
+
 CommandStreamState::CommandStreamState(const InstanceState &i,
                                        const DeviceState &d,
                                        const DescriptorConfig &desc_cfg,
                                        const PipelineState &pl,
                                        const FramebufferState &framebuffer,
                                        MemoryAllocator &alc,
+                                       QueueManager &queue_manager,
                                        uint32_t render_width,
                                        uint32_t render_height,
                                        uint32_t stream_idx)
@@ -825,19 +880,21 @@ CommandStreamState::CommandStreamState(const InstanceState &i,
       pipeline(pl),
       fb(framebuffer),
       gfxPool(makeCmdPool(dev.gfxQF, dev)),
-      gfxQueue(makeQueue(dev.gfxQF, 0, dev)),
+      gfxQueue(queue_manager.allocateGraphicsQueue()),
       gfxCopyCommand(makeCmdBuffer(gfxPool, dev)),
       gfxRenderCommand(makeCmdBuffer(gfxPool, dev)),
       renderFence(makeFence(dev)),
       transferPool(makeCmdPool(dev.transferQF, dev)),
-      transferQueue(makeQueue(dev.transferQF, 0, dev)),
+      transferQueue(queue_manager.allocateTransferQueue()),
       transferStageCommand(makeCmdBuffer(transferPool, dev)),
       copySemaphore(makeBinarySemaphore(dev)),
       copyFence(makeFence(dev)),
       alloc(alc),
       descriptorTracker(dev, desc_cfg),
-      fb_x_pos_(stream_idx % VulkanConfig::num_fb_images_wide),
-      fb_y_pos_(stream_idx / VulkanConfig::num_fb_images_wide),
+      fb_x_pos_(
+        (stream_idx % VulkanConfig::num_fb_images_wide) * render_width),
+      fb_y_pos_(
+        (stream_idx / VulkanConfig::num_fb_images_wide) * render_height),
       render_width_(render_width),
       render_height_(render_height)
 {}
@@ -1014,8 +1071,7 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
     copy_submit.signalSemaphoreCount = 1;
     copy_submit.pSignalSemaphores = &copySemaphore;
 
-    REQ_VK(dev.dt.queueSubmit(transferQueue, 1, &copy_submit,
-                              VK_NULL_HANDLE));
+    transferQueue.submit(dev, 1, &copy_submit, VK_NULL_HANDLE);
 
     // Start recording for graphics queue
     REQ_VK(dev.dt.beginCommandBuffer(gfxCopyCommand, &begin_info));
@@ -1141,8 +1197,7 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
     gfx_submit.commandBufferCount = 1;
     gfx_submit.pCommandBuffers = &gfxCopyCommand;
 
-    REQ_VK(dev.dt.queueSubmit(gfxQueue, 1, &gfx_submit,
-                              copyFence));
+    gfxQueue.submit(dev, 1, &gfx_submit, copyFence);
 
     waitForFenceInfinitely(dev, copyFence);
     REQ_VK(dev.dt.resetFences(dev.hdl, 1, &copyFence));
@@ -1297,8 +1352,7 @@ VkBuffer CommandStreamState::render(const SceneState &scene)
     render_submit.signalSemaphoreCount = 0;
     render_submit.pSignalSemaphores = nullptr;
 
-    REQ_VK(dev.dt.queueSubmit(gfxQueue, 1, &render_submit,
-                              renderFence));
+    gfxQueue.submit(dev, 1, &render_submit, renderFence);
 
     waitForFenceInfinitely(dev, renderFence);
     REQ_VK(dev.dt.resetFences(dev.hdl, 1, &renderFence));
@@ -1311,11 +1365,35 @@ VulkanState::VulkanState(const RenderConfig &config)
       inst(),
       dev(inst.makeDevice(cfg.gpuID)),
       alloc(dev, inst),
+      queueMgr(dev),
       fbCfg(getFramebufferConfig(dev, inst, cfg)),
       descCfg(getDescriptorConfig(dev)),
       pipeline(makePipeline(fbCfg, descCfg, dev)),
       fb(makeFramebuffer(fbCfg, pipeline, dev)),
       numStreams(0)
 {}
+
+CommandStreamState VulkanState::makeStreamState()
+{
+    uint32_t stream_idx = numStreams++;
+
+    if (stream_idx == VulkanConfig::num_images_per_fb) {
+        cerr << "Maxed out current framebuffer and no switching support" <<
+            endl;
+        fatalExit();
+    }
+
+
+    return CommandStreamState(inst,
+                              dev,
+                              descCfg,
+                              pipeline,
+                              fb,
+                              alloc,
+                              queueMgr,
+                              cfg.imgWidth,
+                              cfg.imgHeight,
+                              stream_idx);
+}
 
 }

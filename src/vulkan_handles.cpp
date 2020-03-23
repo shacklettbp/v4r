@@ -183,6 +183,9 @@ DeviceState InstanceState::makeDevice(const uint32_t gpu_id) const
         *gfx_queue_family,
         *compute_queue_family,
         *transfer_queue_family,
+        num_gfx_queues,
+        num_compute_queues,
+        num_transfer_queues,
         phy,
         dev,
         DeviceDispatch(dev)

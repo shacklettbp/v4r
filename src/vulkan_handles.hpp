@@ -13,6 +13,10 @@ public:
     uint32_t computeQF;
     uint32_t transferQF;
 
+    uint32_t numGraphicsQueues;
+    uint32_t numComputeQueues;
+    uint32_t numTransferQueues;
+
     const VkPhysicalDevice phy;
     const VkDevice hdl;
     const DeviceDispatch dt;

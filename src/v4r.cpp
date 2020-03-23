@@ -5,7 +5,6 @@
 #include <v4r.hpp>
 
 #include "dispatch.hpp"
-#include "vulkan_config.hpp" // FIXME shouldn't need this
 #include "vulkan_state.hpp"
 #include "scene.hpp"
 
@@ -65,24 +64,8 @@ RenderContext::~RenderContext() = default;
 
 RenderContext::CommandStream RenderContext::makeCommandStream()
 {
-    // FIXME this should all be handled in VulkanState
-    uint32_t stream_idx = state_->numStreams++;
-    if (stream_idx == VulkanConfig::num_images_per_fb) {
-        cerr << "Maxed out current framebuffer and no switching support" <<
-            endl;
-        fatalExit();
-    }
-    auto hdl = make_handle<CommandStreamState>(state_->inst,
-                                               state_->dev,
-                                               state_->descCfg,
-                                               state_->pipeline,
-                                               state_->fb,
-                                               state_->alloc,
-                                               state_->cfg.imgWidth,
-                                               state_->cfg.imgHeight,
-                                               stream_idx);
-
-    return CommandStream(move(hdl), *this);
+    return CommandStream(make_handle<CommandStreamState>(
+            state_->makeStreamState()), *this);
 }
 
 }
