@@ -854,7 +854,7 @@ QueueState & QueueManager::allocateQueue(uint32_t qf_idx,
     if (queues.size() < max_queues) {
         queues.emplace_back(makeQueue(qf_idx, queues.size(), dev));
 
-        return gfx_queues_.back();
+        return queues.back();
     }
 
     QueueState &cur_queue = queues[cur_queue_idx];
