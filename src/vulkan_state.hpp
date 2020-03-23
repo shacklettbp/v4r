@@ -95,12 +95,11 @@ struct DescriptorSet {
     PoolState &pool;
 };
 
-
 struct SceneState {
     std::vector<LocalTexture> textures;
     std::vector<VkImageView> texture_views;
     std::vector<Material> materials;
-    DescriptorSet descriptors;
+    DescriptorSet textureSet;
     LocalBuffer geometry;
     VkDeviceSize indexOffset;
     std::vector<SceneMesh> meshes;
@@ -173,19 +172,27 @@ public:
                        const DeviceState &dev,
                        const DescriptorConfig &desc_cfg,
                        const PipelineState &pl,
-                       MemoryAllocator &alc);
+                       const FramebufferState &fb,
+                       MemoryAllocator &alc,
+                       uint32_t render_width,
+                       uint32_t render_height,
+                       uint32_t stream_idx);
     CommandStreamState(const CommandStreamState &) = delete;
     CommandStreamState(CommandStreamState &&) = default;
 
     SceneState loadScene(SceneAssets &&assets);
+    VkBuffer render(const SceneState &scene);
 
     const InstanceState &inst;
     const DeviceState &dev;
     const PipelineState &pipeline;
+    const FramebufferState &fb;
 
     const VkCommandPool gfxPool;
     const VkQueue gfxQueue;
     const VkCommandBuffer gfxCopyCommand;
+    const VkCommandBuffer gfxRenderCommand;
+    const VkFence renderFence;
 
     const VkCommandPool transferPool;
     const VkQueue transferQueue;
@@ -195,6 +202,12 @@ public:
 
     MemoryAllocator &alloc;
     DescriptorTracker descriptorTracker;
+
+private:
+    uint32_t fb_x_pos_;
+    uint32_t fb_y_pos_;
+    uint32_t render_width_;
+    uint32_t render_height_;
 };
 
 struct VulkanState {
@@ -212,6 +225,8 @@ public:
     const DescriptorConfig descCfg;
     const PipelineState pipeline;
     const FramebufferState fb;
+
+    uint32_t numStreams;
 };
 
 }

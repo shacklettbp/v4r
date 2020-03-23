@@ -53,6 +53,15 @@ device:
 - vkUpdateDescriptorSets
 - vkCreateSampler
 - vkDestroySampler
+- vkCmdBindDescriptorSets
+- vkCmdBindPipeline
+- vkCmdBindVertexBuffers
+- vkCmdBindIndexBuffer
+- vkCmdDrawIndexed
+- vkCmdBeginRenderPass
+- vkCmdEndRenderPass
+- vkCmdPushConstants
+- vkCmdSetViewport
 
 instance:
 - vkEnumeratePhysicalDevices

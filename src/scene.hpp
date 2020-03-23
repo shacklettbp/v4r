@@ -17,6 +17,8 @@ public:
     void refIncrement() { ref_count_++; }
     bool refDecrement() { return !(--ref_count_); }
 
+    const SceneState &getState() const { return state_; }
+
 private:
     std::string path_;
     uint64_t ref_count_;
@@ -26,6 +28,9 @@ private:
 
 class SceneManager;
 class SceneID {
+public:
+    const SceneState &getState() const { return iter_->getState(); }
+
 private:
     SceneID(const std::list<Scene>::iterator &iter)
         : iter_(iter)

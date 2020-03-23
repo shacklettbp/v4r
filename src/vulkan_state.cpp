@@ -80,9 +80,6 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
                                               const InstanceState &inst,
                                               const RenderConfig &cfg)
 {
-    const uint32_t num_single_dim = sqrt(VulkanConfig::num_images_per_fb);
-    static_assert(VulkanConfig::num_images_per_fb % num_single_dim == 0);
-
     VkPhysicalDeviceMemoryProperties2 dev_mem_props;
     dev_mem_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
     dev_mem_props.pNext = nullptr;
@@ -93,8 +90,10 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
     color_img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     color_img_info.imageType = VK_IMAGE_TYPE_2D;
     color_img_info.format = color_fmt;
-    color_img_info.extent.width = cfg.imgWidth * num_single_dim;
-    color_img_info.extent.height = cfg.imgHeight * num_single_dim;
+    color_img_info.extent.width = cfg.imgWidth *
+        VulkanConfig::num_fb_images_wide;
+    color_img_info.extent.height = cfg.imgHeight *
+        VulkanConfig::num_fb_images_tall;
     color_img_info.extent.depth = 1;
     color_img_info.mipLevels = 1;
     color_img_info.arrayLayers = 1;
@@ -525,6 +524,10 @@ static VkShaderModule loadShader(const string &base_name,
 
 static VkDescriptorPool makePool(const DeviceState &dev, uint32_t max_sets)
 {
+    // Pool sizes describes the max number of descriptors of each type that
+    // can be allocated from the pool. We want max_textures sampled images
+    // and 1 sampler per set so multiply these numbers by max sets to get
+    // pool sizes
     array<VkDescriptorPoolSize, 2> pool_sizes {{
         {
             VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
@@ -686,7 +689,7 @@ static PipelineState makePipeline(const FramebufferConfig &fb_cfg,
     // Viewport
     VkRect2D scissors {
         { 0, 0 },
-        { 1, 1 }
+        { fb_cfg.width, fb_cfg.height }
     };
 
     VkPipelineViewportStateCreateInfo viewport_info {};
@@ -812,20 +815,31 @@ CommandStreamState::CommandStreamState(const InstanceState &i,
                                        const DeviceState &d,
                                        const DescriptorConfig &desc_cfg,
                                        const PipelineState &pl,
-                                       MemoryAllocator &alc)
+                                       const FramebufferState &framebuffer,
+                                       MemoryAllocator &alc,
+                                       uint32_t render_width,
+                                       uint32_t render_height,
+                                       uint32_t stream_idx)
     : inst(i),
       dev(d),
       pipeline(pl),
+      fb(framebuffer),
       gfxPool(makeCmdPool(dev.gfxQF, dev)),
       gfxQueue(makeQueue(dev.gfxQF, 0, dev)),
       gfxCopyCommand(makeCmdBuffer(gfxPool, dev)),
+      gfxRenderCommand(makeCmdBuffer(gfxPool, dev)),
+      renderFence(makeFence(dev)),
       transferPool(makeCmdPool(dev.transferQF, dev)),
       transferQueue(makeQueue(dev.transferQF, 0, dev)),
       transferStageCommand(makeCmdBuffer(transferPool, dev)),
       copySemaphore(makeBinarySemaphore(dev)),
       copyFence(makeFence(dev)),
       alloc(alc),
-      descriptorTracker(dev, desc_cfg)
+      descriptorTracker(dev, desc_cfg),
+      fb_x_pos_(stream_idx % VulkanConfig::num_fb_images_wide),
+      fb_y_pos_(stream_idx / VulkanConfig::num_fb_images_wide),
+      render_width_(render_width),
+      render_height_(render_height)
 {}
 
 static uint32_t getMipLevels(const Texture &texture)
@@ -1169,12 +1183,12 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
     // FIXME HACK
     assert(gpu_textures.size() == VulkanConfig::max_textures);
 
-    DescriptorSet desc_set = descriptorTracker.makeDescriptorSet();
+    DescriptorSet texture_set = descriptorTracker.makeDescriptorSet();
 
     VkWriteDescriptorSet desc_update;
     desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     desc_update.pNext = nullptr;
-    desc_update.dstSet = desc_set.hdl;
+    desc_update.dstSet = texture_set.hdl;
     desc_update.dstBinding = 0;
     desc_update.dstArrayElement = 0;
     desc_update.descriptorCount = VulkanConfig::max_textures;
@@ -1188,11 +1202,104 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
         move(gpu_textures),
         move(texture_views),
         move(assets.materials),
-        move(desc_set),
+        move(texture_set),
         move(geometry),
         vertex_bytes,
         move(assets.meshes)
     };
+}
+
+VkBuffer CommandStreamState::render(const SceneState &scene)
+{
+    // FIXME switch to uniform buffer for view matrix to allow saving command buffer
+    // FIXME each command stream should have a per scene cache of command buffers.
+    // Maybe a better way to do this is to integrate it into loadScene (return a handle
+    // to this thread's context for the scene (saved command buffer etc)).
+
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    REQ_VK(dev.dt.beginCommandBuffer(gfxRenderCommand, &begin_info));
+
+    // FIXME preconstruct (independent for all scenes)
+    array<VkClearValue, 2> clear_vals;
+    clear_vals[0].color = { 0.f, 0.f, 0.f, 1.f };
+    clear_vals[1].depthStencil = { 1.f, 0 };
+
+    VkRenderPassBeginInfo render_begin;
+    render_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    render_begin.pNext = nullptr;
+    render_begin.renderPass = pipeline.renderPass;
+    render_begin.framebuffer = fb.hdl;
+    render_begin.renderArea.offset = {
+        static_cast<int32_t>(fb_x_pos_),
+        static_cast<int32_t>(fb_y_pos_) };
+    render_begin.renderArea.extent = { render_width_, render_height_ };
+    render_begin.clearValueCount = static_cast<uint32_t>(clear_vals.size());
+    render_begin.pClearValues = clear_vals.data();
+
+    dev.dt.cmdBeginRenderPass(gfxRenderCommand, &render_begin,
+                              VK_SUBPASS_CONTENTS_INLINE);
+
+    VkViewport viewport;
+    viewport.x = fb_x_pos_;
+    viewport.y = fb_y_pos_;
+    viewport.width = render_width_;
+    viewport.height = render_height_;
+    viewport.minDepth = 0.f;
+    viewport.maxDepth = 1.f;
+
+    dev.dt.cmdSetViewport(gfxRenderCommand, 0, 1, &viewport);
+
+    dev.dt.cmdBindPipeline(gfxRenderCommand, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                           pipeline.gfxPipeline);
+
+    VkDeviceSize vert_offset = 0;
+    dev.dt.cmdBindVertexBuffers(gfxRenderCommand, 0, 1, &scene.geometry.buffer,
+                                &vert_offset);
+    dev.dt.cmdBindIndexBuffer(gfxRenderCommand, scene.geometry.buffer,
+                              scene.indexOffset, VK_INDEX_TYPE_UINT32);
+
+    dev.dt.cmdBindDescriptorSets(gfxRenderCommand,
+                                 VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                 pipeline.gfxLayout, 0,
+                                 1, &scene.textureSet.hdl,
+                                 0, nullptr);
+
+    for (const SceneMesh &mesh : scene.meshes) {
+        const Material &mat = scene.materials[mesh.materialIndex];
+        (void)mat; // FIXME send texture idx
+
+        glm::mat4 mvp(1.f);
+
+        dev.dt.cmdPushConstants(gfxRenderCommand, pipeline.gfxLayout,
+                                VK_SHADER_STAGE_VERTEX_BIT,
+                                0, sizeof(glm::mat4),
+                                &mvp);
+
+        dev.dt.cmdDrawIndexed(gfxRenderCommand, mesh.numIndices, 1,
+                              mesh.startIndex, 0, 0);
+    }
+
+    dev.dt.cmdEndRenderPass(gfxRenderCommand);
+
+    // Copy to buffer
+
+    REQ_VK(dev.dt.endCommandBuffer(gfxRenderCommand));
+
+    VkSubmitInfo render_submit{};
+    render_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    render_submit.commandBufferCount = 1;
+    render_submit.pCommandBuffers = &gfxRenderCommand;
+    render_submit.signalSemaphoreCount = 0;
+    render_submit.pSignalSemaphores = nullptr;
+
+    REQ_VK(dev.dt.queueSubmit(gfxQueue, 1, &render_submit,
+                              renderFence));
+
+    waitForFenceInfinitely(dev, renderFence);
+    REQ_VK(dev.dt.resetFences(dev.hdl, 1, &renderFence));
+
+    return VK_NULL_HANDLE;
 }
 
 VulkanState::VulkanState(const RenderConfig &config)
@@ -1203,7 +1310,8 @@ VulkanState::VulkanState(const RenderConfig &config)
       fbCfg(getFramebufferConfig(dev, inst, cfg)),
       descCfg(getDescriptorConfig(dev)),
       pipeline(makePipeline(fbCfg, descCfg, dev)),
-      fb(makeFramebuffer(fbCfg, pipeline, dev))
+      fb(makeFramebuffer(fbCfg, pipeline, dev)),
+      numStreams(0)
 {}
 
 }
