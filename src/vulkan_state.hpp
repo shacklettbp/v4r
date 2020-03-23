@@ -52,6 +52,11 @@ struct SceneMesh {
     size_t materialIndex;
 };
 
+struct ObjectInstance {
+    glm::mat4 modelTransform;
+    uint64_t meshIndex;
+};
+
 struct SceneAssets {
     std::list<Texture> textures;
     std::vector<Material> materials;
@@ -60,6 +65,7 @@ struct SceneAssets {
     std::vector<uint32_t> indices;
 
     std::vector<SceneMesh> meshes;
+    std::vector<ObjectInstance> instances;
 };
 
 struct PoolState {
@@ -103,6 +109,7 @@ struct SceneState {
     LocalBuffer geometry;
     VkDeviceSize indexOffset;
     std::vector<SceneMesh> meshes;
+    std::vector<ObjectInstance> instances;
 };
 
 struct DescriptorConfig {

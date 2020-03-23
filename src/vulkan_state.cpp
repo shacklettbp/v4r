@@ -1205,7 +1205,8 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
         move(texture_set),
         move(geometry),
         vertex_bytes,
-        move(assets.meshes)
+        move(assets.meshes),
+        move(assets.instances)
     };
 }
 
@@ -1265,16 +1266,19 @@ VkBuffer CommandStreamState::render(const SceneState &scene)
                                  1, &scene.textureSet.hdl,
                                  0, nullptr);
 
-    for (const SceneMesh &mesh : scene.meshes) {
-        const Material &mat = scene.materials[mesh.materialIndex];
-        (void)mat; // FIXME send texture idx
+    for (const ObjectInstance &instance : scene.instances) {
+        // FIXME select texture id from global array and
+        // change instance system so meshes are grouped together
+        assert(instance.meshIndices.size() == 1);
+        const SceneMesh &mesh = scene.meshes[instance.meshIndex];
 
-        glm::mat4 mvp(1.f);
+        const Material &mat = scene.materials[mesh.materialIndex];
+        (void)mat;
 
         dev.dt.cmdPushConstants(gfxRenderCommand, pipeline.gfxLayout,
                                 VK_SHADER_STAGE_VERTEX_BIT,
                                 0, sizeof(glm::mat4),
-                                &mvp);
+                                &instance.modelTransform);
 
         dev.dt.cmdDrawIndexed(gfxRenderCommand, mesh.numIndices, 1,
                               mesh.startIndex, 0, 0);

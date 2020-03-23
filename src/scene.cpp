@@ -6,6 +6,7 @@
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/string_cast.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb/stb_image.h>
@@ -155,7 +156,8 @@ static SceneAssets loadAssets(const string &scene_path)
         bool has_uv = raw_mesh->HasTextureCoords(0);
         bool has_color = raw_mesh->HasVertexColors(0);
 
-        for (uint32_t vert_idx = 0; vert_idx < raw_mesh->mNumVertices; vert_idx++) {
+        for (uint32_t vert_idx = 0; vert_idx < raw_mesh->mNumVertices;
+                vert_idx++) {
             glm::vec3 pos = glm::make_vec3(&raw_mesh->mVertices[vert_idx].x);
             pos.y = -pos.y;
 
@@ -172,7 +174,8 @@ static SceneAssets loadAssets(const string &scene_path)
             vertices.emplace_back(move(vertex));
         }
 
-        for (uint32_t face_idx = 0; face_idx < raw_mesh->mNumFaces; face_idx++) {
+        for (uint32_t face_idx = 0; face_idx < raw_mesh->mNumFaces;
+                face_idx++) {
             for (uint32_t tri_idx = 0; tri_idx < 3; tri_idx++) {
                 indices.push_back(raw_mesh->mFaces[face_idx].mIndices[tri_idx]);
             }
@@ -187,12 +190,47 @@ static SceneAssets loadAssets(const string &scene_path)
         cur_vertex_index += raw_mesh->mNumFaces * 3;
     }
 
+    vector<ObjectInstance> instances;
+    vector<pair<aiNode *, glm::mat4>> node_stack {
+        { raw_scene->mRootNode, glm::mat4(1.f) }
+    };
+
+    while (!node_stack.empty()) {
+        auto [cur_node, parent_txfm] = node_stack.back();
+        node_stack.pop_back();
+        auto raw_txfm = cur_node->mTransformation;
+        glm::mat4 cur_txfm = parent_txfm *
+            glm::transpose(
+                glm::make_mat4(reinterpret_cast<const float *>(&raw_txfm.a1)));
+
+        if (cur_node->mNumChildren == 0) {
+            if (cur_node->mNumMeshes != 1) {
+                cerr <<
+"Assimp loading: only leaf nodes with a single mesh are supported" <<
+                    endl;
+                fatalExit();
+            }
+            cout << "Instance " << cur_node->mMeshes[0] << " " << glm::to_string(cur_txfm ) << endl;
+            instances.emplace_back(ObjectInstance {
+                cur_txfm,
+                cur_node->mMeshes[0]
+            });
+        } else {
+            for (unsigned child_idx = 0; child_idx < cur_node->mNumChildren;
+                    child_idx++) {
+                node_stack.emplace_back(cur_node->mChildren[child_idx],
+                                        cur_txfm);
+            }
+        }
+    }
+
     return SceneAssets {
         move(textures),
         move(materials),
         move(vertices),
         move(indices),
-        move(meshes)
+        move(meshes),
+        move(instances)
     };
 }
 
