@@ -2,7 +2,6 @@
 #define VULKAN_STATE_HPP_INCLUDED
 
 #include <array>
-#include <atomic>
 #include <deque>
 #include <list>
 #include <memory>
@@ -15,11 +14,20 @@
 
 #include <v4r/config.hpp>
 
+#include "descriptors.hpp"
 #include "utils.hpp"
 #include "vulkan_handles.hpp"
 #include "vulkan_memory.hpp"
 
 namespace v4r {
+
+struct PerViewUBO {
+    glm::mat4 vp;
+};
+
+struct PushConstants {
+    glm::mat4 modelTransform;
+};
 
 struct Vertex {
     glm::vec3 position;
@@ -70,39 +78,6 @@ struct SceneAssets {
     std::vector<ObjectInstance> instances;
 };
 
-struct PoolState {
-    PoolState(VkDescriptorPool p)
-        : pool(p), numActive(0)
-    {}
-
-    VkDescriptorPool pool;
-    std::atomic_uint64_t numActive;
-};
-
-struct DescriptorSet {
-    DescriptorSet(VkDescriptorSet d, PoolState &p) 
-        : hdl(d), pool(p)
-    {}
-
-    DescriptorSet(const DescriptorSet &) = delete;
-
-    DescriptorSet(DescriptorSet &&o)
-        : hdl(o.hdl),
-          pool(o.pool)
-    {
-        o.hdl = VK_NULL_HANDLE;
-    }
-
-    ~DescriptorSet()
-    {
-        if (hdl == VK_NULL_HANDLE) return;
-        pool.numActive--;
-    };
-
-    VkDescriptorSet hdl;
-    PoolState &pool;
-};
-
 struct SceneState {
     std::vector<LocalTexture> textures;
     std::vector<VkImageView> texture_views;
@@ -114,27 +89,13 @@ struct SceneState {
     std::vector<ObjectInstance> instances;
 };
 
-struct DescriptorConfig {
+struct PerSceneDescriptorConfig {
     VkSampler textureSampler;
     VkDescriptorSetLayout layout;
 };
 
-class DescriptorTracker {
-public:
-    DescriptorTracker(const DeviceState &dev, const DescriptorConfig &cfg);
-    DescriptorTracker(const DescriptorTracker &) = delete;
-    DescriptorTracker(DescriptorTracker &&) = default;
-
-    ~DescriptorTracker();
-
-    DescriptorSet makeDescriptorSet();
-
-private:
-    const DeviceState &dev;
-    const VkDescriptorSetLayout &layout_;
-
-    std::list<PoolState> free_pools_;
-    std::list<PoolState> used_pools_;
+struct PerStreamDescriptorConfig {
+    VkDescriptorSetLayout layout;
 };
 
 struct FramebufferConfig {
@@ -229,7 +190,8 @@ struct CommandStreamState {
 public:
     CommandStreamState(const InstanceState &inst,
                        const DeviceState &dev,
-                       const DescriptorConfig &desc_cfg,
+                       const PerStreamDescriptorConfig &stream_desc_cfg,
+                       const PerSceneDescriptorConfig &scene_desc_cfg,
                        const PipelineState &pl,
                        const FramebufferState &fb,
                        MemoryAllocator &alc,
@@ -261,7 +223,7 @@ public:
     const VkFence copyFence;
 
     MemoryAllocator &alloc;
-    DescriptorTracker descriptorTracker;
+    DescriptorManager descriptorManager;
 
 private:
     uint32_t fb_x_pos_;
@@ -286,7 +248,8 @@ public:
     QueueManager queueMgr;
 
     const FramebufferConfig fbCfg;
-    const DescriptorConfig descCfg;
+    const PerStreamDescriptorConfig streamDescCfg;
+    const PerSceneDescriptorConfig sceneDescCfg;
     const PipelineState pipeline;
     const FramebufferState fb;
 

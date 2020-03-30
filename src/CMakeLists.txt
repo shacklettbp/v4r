@@ -42,6 +42,7 @@ add_definitions("-DSHADER_DIR=${SHADER_DIR}")
 # Main library
 
 add_library(v4r SHARED
+    descriptors.hpp descriptors.cpp
     dispatch.hpp dispatch.cpp
     scene.hpp scene.cpp
     utils.hpp utils.cpp

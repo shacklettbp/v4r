@@ -14,6 +14,46 @@ using namespace std;
 
 namespace v4r {
 
+static PerSceneDescriptorConfig getSceneDescriptorConfig(
+        const DeviceState &dev)
+{
+    VkSamplerCreateInfo sampler_info;
+    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler_info.pNext = nullptr;
+    sampler_info.flags = 0;
+    sampler_info.magFilter = VK_FILTER_LINEAR;
+    sampler_info.minFilter = VK_FILTER_LINEAR;
+    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_info.mipLodBias = 0;
+    sampler_info.anisotropyEnable = VK_TRUE;
+    sampler_info.maxAnisotropy = 16.f;
+    sampler_info.compareEnable = VK_FALSE;
+    sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
+    sampler_info.minLod = 0;
+    sampler_info.maxLod = VK_LOD_CLAMP_NONE;
+    sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    sampler_info.unnormalizedCoordinates = VK_FALSE;
+
+    VkSampler sampler;
+    REQ_VK(dev.dt.createSampler(dev.hdl, &sampler_info, nullptr, &sampler));
+
+    return PerSceneDescriptorConfig {
+        sampler,
+        PerSceneDescriptorLayout::makeSetLayout(dev, nullptr, &sampler)
+    };
+}
+
+static PerStreamDescriptorConfig getStreamDescriptorConfig(
+        const DeviceState &dev)
+{
+    return PerStreamDescriptorConfig {
+        PerStreamDescriptorLayout::makeSetLayout(dev, nullptr)
+    };
+}
+
 static VkFormatProperties2 getFormatProperties(const InstanceState &inst,
                                                VkPhysicalDevice phy,
                                                VkFormat fmt)
@@ -153,66 +193,6 @@ static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
         depth_img_info,
         depth_req.size,
         depth_type_idx
-    };
-}
-
-static DescriptorConfig getDescriptorConfig(const DeviceState &dev)
-{
-    VkSamplerCreateInfo sampler_info;
-    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    sampler_info.pNext = nullptr;
-    sampler_info.flags = 0;
-    sampler_info.magFilter = VK_FILTER_LINEAR;
-    sampler_info.minFilter = VK_FILTER_LINEAR;
-    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sampler_info.mipLodBias = 0;
-    sampler_info.anisotropyEnable = VK_TRUE;
-    sampler_info.maxAnisotropy = 16.f;
-    sampler_info.compareEnable = VK_FALSE;
-    sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
-    sampler_info.minLod = 0;
-    sampler_info.maxLod = VK_LOD_CLAMP_NONE;
-    sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
-    sampler_info.unnormalizedCoordinates = VK_FALSE;
-
-    VkSampler sampler;
-    REQ_VK(dev.dt.createSampler(dev.hdl, &sampler_info, nullptr, &sampler));
-
-    array<VkDescriptorSetLayoutBinding, 2> bindings {{
-        {
-            0,
-            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            VulkanConfig::max_textures,
-            VK_SHADER_STAGE_FRAGMENT_BIT,
-            nullptr
-        },
-        {
-            1,
-            VK_DESCRIPTOR_TYPE_SAMPLER,
-            1,
-            VK_SHADER_STAGE_FRAGMENT_BIT,
-            &sampler
-        }
-    }};
-
-    VkDescriptorSetLayoutCreateInfo descriptor_info;
-    descriptor_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    descriptor_info.pNext = nullptr;
-    descriptor_info.flags = 0;
-    descriptor_info.bindingCount = static_cast<uint32_t>(bindings.size());
-    descriptor_info.pBindings = bindings.data();
-
-    VkDescriptorSetLayout layout;
-    REQ_VK(dev.dt.createDescriptorSetLayout(dev.hdl, &descriptor_info, nullptr,
-                                            &layout));
-
-
-    return DescriptorConfig {
-        sampler,
-        layout 
     };
 }
 
@@ -396,9 +376,9 @@ static VkRenderPass makeRenderPass(const FramebufferConfig &fb_cfg,
     return render_pass;
 }
 
-static FramebufferState makeFramebuffer(const FramebufferConfig &fb_cfg,
-                                        const PipelineState &pipeline,
-                                        const DeviceState &dev)
+static FramebufferState makeFramebuffer(const DeviceState &dev,
+                                        const FramebufferConfig &fb_cfg,
+                                        const PipelineState &pipeline)
 {
     VkImage color_img;
     REQ_VK(dev.dt.createImage(dev.hdl, &fb_cfg.colorCreationSettings,
@@ -523,101 +503,11 @@ static VkShaderModule loadShader(const string &base_name,
     return shader_module;
 }
 
-static VkDescriptorPool makePool(const DeviceState &dev, uint32_t max_sets)
-{
-    // Pool sizes describes the max number of descriptors of each type that
-    // can be allocated from the pool. We want max_textures sampled images
-    // and 1 sampler per set so multiply these numbers by max sets to get
-    // pool sizes
-    array<VkDescriptorPoolSize, 2> pool_sizes {{
-        {
-            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-            max_sets * VulkanConfig::max_textures
-        },
-        {
-            VK_DESCRIPTOR_TYPE_SAMPLER,
-            max_sets
-        }
-    }};
-
-    VkDescriptorPoolCreateInfo pool_info;
-    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pool_info.pNext = nullptr;
-    pool_info.flags = 0;
-    pool_info.maxSets = max_sets;
-    pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
-    pool_info.pPoolSizes = pool_sizes.data();
-
-    VkDescriptorPool pool;
-    REQ_VK(dev.dt.createDescriptorPool(dev.hdl, &pool_info, nullptr, &pool));
-
-    return pool;
-}
-
-DescriptorTracker::DescriptorTracker(const DeviceState &d, const DescriptorConfig &cfg)
-    : dev(d), layout_(cfg.layout),
-      free_pools_(), used_pools_()
-{}
-
-DescriptorTracker::~DescriptorTracker()
-{
-    for (PoolState &pool_state : free_pools_) {
-        dev.dt.destroyDescriptorPool(dev.hdl, pool_state.pool, nullptr);
-        assert(pool_state.numActive == 0);
-    }
-
-    for (PoolState &pool_state : used_pools_) {
-        dev.dt.destroyDescriptorPool(dev.hdl, pool_state.pool, nullptr);
-        assert(pool_state->numActive == 0);
-    }
-}
-
-DescriptorSet DescriptorTracker::makeDescriptorSet()
-{
-    if (free_pools_.empty()) {
-        auto iter = used_pools_.begin();
-        while (iter != used_pools_.end()) {
-            auto next_iter = next(iter);
-            if (iter->numActive == 0) {
-                REQ_VK(dev.dt.resetDescriptorPool(dev.hdl, iter->pool, 0));
-                free_pools_.splice(free_pools_.end(), used_pools_, iter);
-            }
-            iter = next_iter;
-        }
-        if (free_pools_.empty()) {
-            free_pools_.emplace_back(
-                makePool(dev, VulkanConfig::descriptor_pool_size));
-        }
-    }
-
-    PoolState &cur_pool = free_pools_.front();
-
-    VkDescriptorSetAllocateInfo alloc;
-    alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    alloc.pNext = nullptr;
-    alloc.descriptorPool = cur_pool.pool;
-    alloc.descriptorSetCount = 1;
-    alloc.pSetLayouts = &layout_;
-
-    VkDescriptorSet desc_set;
-    REQ_VK(dev.dt.allocateDescriptorSets(dev.hdl, &alloc, &desc_set));
-
-    cur_pool.numActive++;
-
-    if (cur_pool.numActive.load() == VulkanConfig::descriptor_pool_size) {
-        used_pools_.splice(used_pools_.end(), free_pools_,
-                           free_pools_.begin());
-    }
-
-    return DescriptorSet(
-        desc_set,
-        cur_pool
-    );
-}
-
-static PipelineState makePipeline(const FramebufferConfig &fb_cfg,
-                                  const DescriptorConfig &descriptor_cfg,
-                                  const DeviceState &dev)
+template<typename... LayoutType>
+static PipelineState makePipeline(const DeviceState &dev,
+                                  const FramebufferConfig &fb_cfg,
+                                  LayoutType... layout)
+                                  
 {
     // Pipeline cache (FIXME)
     VkPipelineCacheCreateInfo pcache_info {};
@@ -759,13 +649,19 @@ static PipelineState makePipeline(const FramebufferConfig &fb_cfg,
     mvp_consts.offset = 0;
     mvp_consts.size = sizeof(glm::mat4);
 
+    array layouts {
+        layout
+        ...
+    };
+
     VkPipelineLayoutCreateInfo pipeline_layout_info;
     pipeline_layout_info.sType =
         VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipeline_layout_info.pNext = nullptr;
     pipeline_layout_info.flags = 0;
-    pipeline_layout_info.setLayoutCount = 1;
-    pipeline_layout_info.pSetLayouts = &descriptor_cfg.layout;
+    pipeline_layout_info.setLayoutCount =
+        static_cast<uint32_t>(layouts.size());
+    pipeline_layout_info.pSetLayouts = layouts.data();
     pipeline_layout_info.pushConstantRangeCount = 1;
     pipeline_layout_info.pPushConstantRanges = &mvp_consts;
 
@@ -866,15 +762,16 @@ QueueState & QueueManager::allocateQueue(uint32_t qf_idx,
 }
 
 CommandStreamState::CommandStreamState(const InstanceState &i,
-                                       const DeviceState &d,
-                                       const DescriptorConfig &desc_cfg,
-                                       const PipelineState &pl,
-                                       const FramebufferState &framebuffer,
-                                       MemoryAllocator &alc,
-                                       QueueManager &queue_manager,
-                                       uint32_t render_width,
-                                       uint32_t render_height,
-                                       uint32_t stream_idx)
+        const DeviceState &d,
+        const PerStreamDescriptorConfig &stream_desc_cfg,
+        const PerSceneDescriptorConfig &scene_desc_cfg,
+        const PipelineState &pl,
+        const FramebufferState &framebuffer,
+        MemoryAllocator &alc,
+        QueueManager &queue_manager,
+        uint32_t render_width,
+        uint32_t render_height,
+        uint32_t stream_idx)
     : inst(i),
       dev(d),
       pipeline(pl),
@@ -890,7 +787,7 @@ CommandStreamState::CommandStreamState(const InstanceState &i,
       copySemaphore(makeBinarySemaphore(dev)),
       copyFence(makeFence(dev)),
       alloc(alc),
-      descriptorTracker(dev, desc_cfg),
+      descriptorManager(dev, scene_desc_cfg.layout),
       fb_x_pos_(
         (stream_idx % VulkanConfig::num_fb_images_wide) * render_width),
       fb_y_pos_(
@@ -899,7 +796,7 @@ CommandStreamState::CommandStreamState(const InstanceState &i,
       render_height_(render_height)
 {}
 
-static uint32_t getMipLevels(const Texture &texture)
+static constexpr uint32_t getMipLevels(const Texture &texture)
 {
     return static_cast<uint32_t>(
         floor(log2(max(texture.width, texture.height)))) + 1;
@@ -1238,7 +1135,7 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
     // FIXME HACK
     assert(gpu_textures.size() == VulkanConfig::max_textures);
 
-    DescriptorSet texture_set = descriptorTracker.makeDescriptorSet();
+    DescriptorSet texture_set = descriptorManager.makeDescriptorSet();
 
     VkWriteDescriptorSet desc_update;
     desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1330,10 +1227,14 @@ VkBuffer CommandStreamState::render(const SceneState &scene)
         const Material &mat = scene.materials[mesh.materialIndex];
         (void)mat;
 
+        PushConstants consts {
+            instance.modelTransform
+        };
+
         dev.dt.cmdPushConstants(gfxRenderCommand, pipeline.gfxLayout,
                                 VK_SHADER_STAGE_VERTEX_BIT,
-                                0, sizeof(glm::mat4),
-                                &instance.modelTransform);
+                                0, sizeof(PushConstants),
+                                &consts);
 
         dev.dt.cmdDrawIndexed(gfxRenderCommand, mesh.numIndices, 1,
                               mesh.startIndex, 0, 0);
@@ -1367,9 +1268,10 @@ VulkanState::VulkanState(const RenderConfig &config)
       alloc(dev, inst),
       queueMgr(dev),
       fbCfg(getFramebufferConfig(dev, inst, cfg)),
-      descCfg(getDescriptorConfig(dev)),
-      pipeline(makePipeline(fbCfg, descCfg, dev)),
-      fb(makeFramebuffer(fbCfg, pipeline, dev)),
+      streamDescCfg(getStreamDescriptorConfig(dev)),
+      sceneDescCfg(getSceneDescriptorConfig(dev)),
+      pipeline(makePipeline(dev, fbCfg, streamDescCfg.layout, sceneDescCfg.layout)),
+      fb(makeFramebuffer(dev, fbCfg, pipeline)),
       numStreams(0)
 {}
 
@@ -1386,7 +1288,8 @@ CommandStreamState VulkanState::makeStreamState()
 
     return CommandStreamState(inst,
                               dev,
-                              descCfg,
+                              streamDescCfg,
+                              sceneDescCfg,
                               pipeline,
                               fb,
                               alloc,
