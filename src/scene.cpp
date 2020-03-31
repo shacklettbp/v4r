@@ -248,39 +248,43 @@ SceneManager::SceneManager()
 SceneID SceneManager::loadScene(const std::string &scene_path,
                                 CommandStreamState &renderer_state)
 {
-    scoped_lock lock(load_mutex_);
+    std::list<Scene>::iterator scene;
+    {
+        scoped_lock lock(load_mutex_);
 
-    auto lookup_iter = scene_lookup_.find(scene_path);
-    if (lookup_iter != scene_lookup_.end()) {
-        SceneID id = lookup_iter->second;
-        id.iter_->refIncrement();
+        auto lookup_iter = scene_lookup_.find(scene_path);
+        if (lookup_iter != scene_lookup_.end()) {
+            scene = lookup_iter->second;
+            scene->refIncrement();
+        } else {
+            scenes_.emplace_front(scene_path, renderer_state);
+            scene = scenes_.begin();
+            scene_lookup_.emplace(scene_path, scene);
+        }
+    }
 
-        return id;
-    } 
-
-    scenes_.emplace_front(scene_path, renderer_state);
-    auto scene_iter = scenes_.begin();
-
-    SceneID id { scene_iter };
-
-    scene_lookup_.emplace(scene_path, id);
+    SceneID id(scene, renderer_state.initStreamSceneState(scene->getState()));
 
     return id;
 }
 
-void SceneManager::dropScene(SceneID &&scene_id)
+void SceneManager::dropScene(SceneID &&scene_id,
+                             CommandStreamState &renderer_state)
 {
-    scoped_lock lock(load_mutex_);
-    
-    bool should_free = scene_id.iter_->refDecrement();
-    if (!should_free) return;
+    renderer_state.cleanupStreamSceneState(scene_id.getStreamState());
+    {
+        scoped_lock lock(load_mutex_);
+        
+        bool should_free = scene_id.scene_->refDecrement();
+        if (!should_free) return;
 
-    [[maybe_unused]] size_t num_erased =
-        scene_lookup_.erase(scene_id.iter_->getPath());
+        [[maybe_unused]] size_t num_erased =
+            scene_lookup_.erase(scene_id.scene_->getPath());
 
-    assert(num_erased == 1);
+        assert(num_erased == 1);
 
-    scenes_.erase(scene_id.iter_);
+        scenes_.erase(scene_id.scene_);
+    }
 }
 
 }

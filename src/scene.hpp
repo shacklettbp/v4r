@@ -29,14 +29,17 @@ private:
 class SceneManager;
 class SceneID {
 public:
-    const SceneState &getState() const { return iter_->getState(); }
+    const SceneState &getState() const { return scene_->getState(); }
+    const StreamSceneState &getStreamState() const { return stream_state_; }
 
 private:
-    SceneID(const std::list<Scene>::iterator &iter)
-        : iter_(iter)
+    SceneID(std::list<Scene>::iterator scene, StreamSceneState &&stream_state)
+        : scene_(scene),
+          stream_state_(std::move(stream_state))
     {}
 
-    std::list<Scene>::iterator iter_;
+    std::list<Scene>::iterator scene_;
+    StreamSceneState stream_state_;
 
     friend class SceneManager;
 };
@@ -47,12 +50,13 @@ public:
 
     SceneID loadScene(const std::string &scene_path,
                       CommandStreamState &renderer_state);
-    void dropScene(SceneID &&scene_id);
+    void dropScene(SceneID &&scene_id,
+                   CommandStreamState &renderer_state);
 
 private:
     std::mutex load_mutex_;
     std::list<Scene> scenes_;
-    std::unordered_map<std::string, SceneID> scene_lookup_;
+    std::unordered_map<std::string, std::list<Scene>::iterator> scene_lookup_;
 };
 
 }

@@ -825,7 +825,6 @@ CommandStreamState::CommandStreamState(
       gfxPool(makeCmdPool(dev.gfxQF, dev)),
       gfxQueue(queue_manager.allocateGraphicsQueue()),
       gfxCopyCommand(makeCmdBuffer(gfxPool, dev)),
-      gfxRenderCommand(makeCmdBuffer(gfxPool, dev)),
       renderFence(makeFence(dev)),
       transferPool(makeCmdPool(dev.transferQF, dev)),
       transferQueue(queue_manager.allocateTransferQueue()),
@@ -1212,20 +1211,23 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
     };
 }
 
-VkBuffer CommandStreamState::render(const SceneState &scene)
+StreamSceneState CommandStreamState::initStreamSceneState(
+        const SceneState &scene)
 {
-    // FIXME switch to uniform buffer for view matrix to allow saving command buffer
-    // FIXME each command stream should have a per scene cache of command buffers.
-    // Maybe a better way to do this is to integrate it into loadScene (return a handle
-    // to this thread's context for the scene (saved command buffer etc)).
+    VkCommandBuffer render_command = makeCmdBuffer(gfxPool, dev);
 
     VkCommandBufferBeginInfo begin_info {};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    REQ_VK(dev.dt.beginCommandBuffer(gfxRenderCommand, &begin_info));
+    REQ_VK(dev.dt.beginCommandBuffer(render_command, &begin_info));
 
-    streamDescState.bind(dev, gfxRenderCommand, pipeline.gfxLayout);
+    streamDescState.bind(dev, render_command, pipeline.gfxLayout);
 
-    // FIXME preconstruct (independent for all scenes)
+    dev.dt.cmdBindDescriptorSets(render_command,
+                                 VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                 pipeline.gfxLayout, 1,
+                                 1, &scene.textureSet.hdl,
+                                 0, nullptr);
+
     array<VkClearValue, 2> clear_vals;
     clear_vals[0].color = { 0.f, 0.f, 0.f, 1.f };
     clear_vals[1].depthStencil = { 1.f, 0 };
@@ -1242,7 +1244,7 @@ VkBuffer CommandStreamState::render(const SceneState &scene)
     render_begin.clearValueCount = static_cast<uint32_t>(clear_vals.size());
     render_begin.pClearValues = clear_vals.data();
 
-    dev.dt.cmdBeginRenderPass(gfxRenderCommand, &render_begin,
+    dev.dt.cmdBeginRenderPass(render_command, &render_begin,
                               VK_SUBPASS_CONTENTS_INLINE);
 
     VkViewport viewport;
@@ -1253,22 +1255,16 @@ VkBuffer CommandStreamState::render(const SceneState &scene)
     viewport.minDepth = 0.f;
     viewport.maxDepth = 1.f;
 
-    dev.dt.cmdSetViewport(gfxRenderCommand, 0, 1, &viewport);
+    dev.dt.cmdSetViewport(render_command, 0, 1, &viewport);
 
-    dev.dt.cmdBindPipeline(gfxRenderCommand, VK_PIPELINE_BIND_POINT_GRAPHICS,
+    dev.dt.cmdBindPipeline(render_command, VK_PIPELINE_BIND_POINT_GRAPHICS,
                            pipeline.gfxPipeline);
 
     VkDeviceSize vert_offset = 0;
-    dev.dt.cmdBindVertexBuffers(gfxRenderCommand, 0, 1, &scene.geometry.buffer,
+    dev.dt.cmdBindVertexBuffers(render_command, 0, 1, &scene.geometry.buffer,
                                 &vert_offset);
-    dev.dt.cmdBindIndexBuffer(gfxRenderCommand, scene.geometry.buffer,
+    dev.dt.cmdBindIndexBuffer(render_command, scene.geometry.buffer,
                               scene.indexOffset, VK_INDEX_TYPE_UINT32);
-
-    dev.dt.cmdBindDescriptorSets(gfxRenderCommand,
-                                 VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                 pipeline.gfxLayout, 1,
-                                 1, &scene.textureSet.hdl,
-                                 0, nullptr);
 
     for (const ObjectInstance &instance : scene.instances) {
         // FIXME select texture id from global array and
@@ -1283,25 +1279,36 @@ VkBuffer CommandStreamState::render(const SceneState &scene)
             instance.modelTransform
         };
 
-        dev.dt.cmdPushConstants(gfxRenderCommand, pipeline.gfxLayout,
+        dev.dt.cmdPushConstants(render_command, pipeline.gfxLayout,
                                 VK_SHADER_STAGE_VERTEX_BIT,
                                 0, sizeof(PushConstants),
                                 &consts);
 
-        dev.dt.cmdDrawIndexed(gfxRenderCommand, mesh.numIndices, 1,
+        dev.dt.cmdDrawIndexed(render_command, mesh.numIndices, 1,
                               mesh.startIndex, 0, 0);
     }
 
-    dev.dt.cmdEndRenderPass(gfxRenderCommand);
+    dev.dt.cmdEndRenderPass(render_command);
 
     // Copy to buffer
 
-    REQ_VK(dev.dt.endCommandBuffer(gfxRenderCommand));
+    REQ_VK(dev.dt.endCommandBuffer(render_command));
+    return StreamSceneState {
+        render_command
+    };
+}
 
+void CommandStreamState::cleanupStreamSceneState(const StreamSceneState &scene)
+{
+    dev.dt.freeCommandBuffers(dev.hdl, gfxPool, 1, &scene.renderCommand);
+}
+
+VkBuffer CommandStreamState::render(const StreamSceneState &scene)
+{
     VkSubmitInfo render_submit{};
     render_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     render_submit.commandBufferCount = 1;
-    render_submit.pCommandBuffers = &gfxRenderCommand;
+    render_submit.pCommandBuffers = &scene.renderCommand;
     render_submit.signalSemaphoreCount = 0;
     render_submit.pSignalSemaphores = nullptr;
 

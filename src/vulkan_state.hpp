@@ -89,6 +89,10 @@ struct SceneState {
     std::vector<ObjectInstance> instances;
 };
 
+struct StreamSceneState {
+    const VkCommandBuffer renderCommand;
+};
+
 struct PerSceneDescriptorConfig {
     VkSampler textureSampler;
     VkDescriptorSetLayout layout;
@@ -221,7 +225,9 @@ public:
     CommandStreamState(CommandStreamState &&) = default;
 
     SceneState loadScene(SceneAssets &&assets);
-    VkBuffer render(const SceneState &scene);
+    StreamSceneState initStreamSceneState(const SceneState &scene);
+    void cleanupStreamSceneState(const StreamSceneState &scene);
+    VkBuffer render(const StreamSceneState &scene);
 
     const InstanceState &inst;
     const DeviceState &dev;
@@ -231,7 +237,6 @@ public:
     const VkCommandPool gfxPool;
     const QueueState &gfxQueue;
     const VkCommandBuffer gfxCopyCommand;
-    const VkCommandBuffer gfxRenderCommand;
     const VkFence renderFence;
 
     const VkCommandPool transferPool;

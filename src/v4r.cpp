@@ -36,7 +36,7 @@ CommandStream::CommandStream(CommandStream::StreamStateHandle &&state,
 
 RenderResult CommandStream::renderCamera(const SceneHandle &scene)
 {
-    VkBuffer buf = state_->render(scene->getState());
+    VkBuffer buf = state_->render(scene->getStreamState());
     return RenderResult {
         nullptr
     };
@@ -50,7 +50,7 @@ RenderContext::SceneHandle CommandStream::loadScene(const string &file)
 
 void CommandStream::dropScene(RenderContext::SceneHandle &&handle)
 {
-    global_.scene_mgr_->dropScene(move(*handle));
+    global_.scene_mgr_->dropScene(move(*handle), *state_);
 }
 
 
