@@ -16,7 +16,12 @@ int main(int argc, char *argv[]) {
 
     auto scene_handle = cmd_stream.loadScene(argv[1]);
 
-    auto frame = cmd_stream.renderCamera(scene_handle);
+    Camera cam(60, 1, 0.001, 1000,
+               glm::vec3(1.f, 1.f, 0.f),
+               glm::vec3(0.f, 0.f, 0.f),
+               glm::vec3(0.f, 1.f, 0.f));
+
+    auto frame = cmd_stream.render(scene_handle, cam);
     (void)frame;
 
     cmd_stream.dropScene(move(scene_handle));

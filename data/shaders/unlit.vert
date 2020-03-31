@@ -7,7 +7,7 @@ layout (location = 2) in vec3 inColor;
 layout (location = 0) out vec3 outColor;
 layout (location = 1) out vec2 outUV;
 
-layout(set = 0, binding = 0) uniform PerStreamUBO
+layout(set = 0, binding = 0) uniform PerViewUBO
 {
     mat4 vp;
 } per_view;

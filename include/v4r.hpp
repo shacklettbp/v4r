@@ -3,18 +3,39 @@
 
 #include <memory>
 
+#include <glm/glm.hpp>
+
 #include <v4r/config.hpp>
 
 namespace v4r {
 
 struct VulkanState;
 struct CommandStreamState;
+struct CameraState;
 class SceneID;
 class SceneManager;
 
 struct RenderResult {
 public:
     void *cudaDevicePtr;
+};
+
+class Camera {
+public:
+    Camera(float fov, float aspect, float near, float far,
+           const glm::vec3 &eye_pos, const glm::vec3 &look_pos,
+           const glm::vec3 &up);
+    Camera(const Camera &) = delete;
+    Camera(Camera &&o);
+    ~Camera();
+
+    void rotate(float angle, const glm::vec3 &axis);
+    void translate(const glm::vec3 &v);
+
+    const CameraState & getState() const;
+
+private:
+    std::unique_ptr<CameraState> state_;
 };
 
 class RenderContext {
@@ -31,7 +52,7 @@ public:
 
     class CommandStream {
     public:
-        RenderResult renderCamera(const SceneHandle &scene);
+        RenderResult render(const SceneHandle &scene, const Camera &camera);
 
         SceneHandle loadScene(const std::string &file);
         void dropScene(SceneHandle &&handle);

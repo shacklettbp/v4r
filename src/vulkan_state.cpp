@@ -767,12 +767,12 @@ StreamDescriptorState::StreamDescriptorState(
         MemoryAllocator &alloc)
     : pool_(PerStreamDescriptorLayout::makePool(dev, 1)),
       desc_set_(makeDescriptorSet(dev, pool_, cfg.layout)),
-      ubo_(alloc.makeUniformBuffer(sizeof(PerStreamUBO)))
+      ubo_(alloc.makeUniformBuffer(sizeof(PerViewUBO)))
 {
     VkDescriptorBufferInfo buffer_info;
     buffer_info.buffer = ubo_.buffer;
     buffer_info.offset = 0;
-    buffer_info.range = sizeof(PerStreamUBO);
+    buffer_info.range = sizeof(PerViewUBO);
 
     VkWriteDescriptorSet desc_update;
     desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -800,9 +800,9 @@ void StreamDescriptorState::bind(const DeviceState &dev,
 }
 
 void StreamDescriptorState::update(const DeviceState &dev,
-                                   const PerStreamUBO &data)
+                                   const PerViewUBO &data)
 {
-    memcpy(ubo_.ptr, &data, sizeof(PerStreamUBO));
+    memcpy(ubo_.ptr, &data, sizeof(PerViewUBO));
     ubo_.flush(dev);
 }
 
@@ -1303,8 +1303,13 @@ void CommandStreamState::cleanupStreamSceneState(const StreamSceneState &scene)
     dev.dt.freeCommandBuffers(dev.hdl, gfxPool, 1, &scene.renderCommand);
 }
 
-VkBuffer CommandStreamState::render(const StreamSceneState &scene)
+VkBuffer CommandStreamState::render(const StreamSceneState &scene,
+                                    const CameraState &camera)
 {
+    streamDescState.update(dev, PerViewUBO {
+        camera.projection * camera.view
+    });
+
     VkSubmitInfo render_submit{};
     render_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     render_submit.commandBufferCount = 1;

@@ -21,7 +21,7 @@
 
 namespace v4r {
 
-struct PerStreamUBO {
+struct PerViewUBO {
     glm::mat4 vp;
 };
 
@@ -199,13 +199,18 @@ public:
     void bind(const DeviceState &dev, VkCommandBuffer cmd_buf,
               VkPipelineLayout pipe_layout);
 
-    void update(const DeviceState &dev, const PerStreamUBO &data);
+    void update(const DeviceState &dev, const PerViewUBO &data);
 
 
 private:
     VkDescriptorPool pool_;
     VkDescriptorSet desc_set_;
     HostBuffer ubo_;
+};
+
+struct CameraState {
+    glm::mat4 projection;
+    glm::mat4 view;
 };
 
 struct CommandStreamState {
@@ -227,7 +232,7 @@ public:
     SceneState loadScene(SceneAssets &&assets);
     StreamSceneState initStreamSceneState(const SceneState &scene);
     void cleanupStreamSceneState(const StreamSceneState &scene);
-    VkBuffer render(const StreamSceneState &scene);
+    VkBuffer render(const StreamSceneState &scene, const CameraState &camera);
 
     const InstanceState &inst;
     const DeviceState &dev;
