@@ -21,7 +21,7 @@
 
 namespace v4r {
 
-struct PerViewUBO {
+struct PerStreamUBO {
     glm::mat4 vp;
 };
 
@@ -186,6 +186,24 @@ private:
     std::mutex alloc_mutex_;
 };
 
+class StreamDescriptorState {
+public:
+    StreamDescriptorState(const DeviceState &dev,
+                          const PerStreamDescriptorConfig &cfg,
+                          MemoryAllocator &alloc);
+
+    void bind(const DeviceState &dev, VkCommandBuffer cmd_buf,
+              VkPipelineLayout pipe_layout);
+
+    void update(const DeviceState &dev, const PerStreamUBO &data);
+
+
+private:
+    VkDescriptorPool pool_;
+    VkDescriptorSet desc_set_;
+    HostBuffer ubo_;
+};
+
 struct CommandStreamState {
 public:
     CommandStreamState(const InstanceState &inst,
@@ -224,6 +242,7 @@ public:
 
     MemoryAllocator &alloc;
     DescriptorManager descriptorManager;
+    StreamDescriptorState streamDescState;
 
 private:
     uint32_t fb_x_pos_;

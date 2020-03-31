@@ -27,7 +27,8 @@ struct DescriptorLayout {
     {
         static_assert(sizeof...(Binding) == sizeof...(SamplerType));
 
-        std::array<VkDescriptorSetLayoutBinding, sizeof...(Binding)> bindings {{
+        std::array<VkDescriptorSetLayoutBinding, sizeof...(Binding)> bindings
+        {{
             {
                 Binding::Num::value,
                 Binding::Type::value,
@@ -45,7 +46,8 @@ struct DescriptorLayout {
         info.pBindings = bindings.data();
 
         VkDescriptorSetLayout layout;
-        REQ_VK(dev.dt.createDescriptorSetLayout(dev.hdl, &info, nullptr, &layout));
+        REQ_VK(dev.dt.createDescriptorSetLayout(dev.hdl, &info,
+                                                nullptr, &layout));
 
         return layout;
     }
@@ -72,7 +74,8 @@ struct DescriptorLayout {
         pool_info.pPoolSizes = pool_sizes.data();
 
         VkDescriptorPool pool;
-        REQ_VK(dev.dt.createDescriptorPool(dev.hdl, &pool_info, nullptr, &pool));
+        REQ_VK(dev.dt.createDescriptorPool(dev.hdl, &pool_info,
+                                           nullptr, &pool));
 
         return pool;
     }
@@ -123,6 +126,30 @@ struct DescriptorSet {
     PoolState &pool;
 };
 
+template<typename... LayoutType>
+VkDescriptorSet makeDescriptorSet(const DeviceState &dev,
+                                  VkDescriptorPool pool,
+                                  LayoutType... layout)
+{
+    std::array layouts {
+        layout
+        ...
+    };
+
+    VkDescriptorSetAllocateInfo alloc;
+    alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    alloc.pNext = nullptr;
+    alloc.descriptorPool = pool;
+    alloc.descriptorSetCount = 
+        static_cast<uint32_t>(layouts.size());
+    alloc.pSetLayouts = layouts.data();
+
+    VkDescriptorSet desc_set;
+    REQ_VK(dev.dt.allocateDescriptorSets(dev.hdl, &alloc, &desc_set));
+
+    return desc_set;
+}
+
 class DescriptorManager {
 public:
     DescriptorManager(const DeviceState &dev,
@@ -132,7 +159,7 @@ public:
 
     ~DescriptorManager();
 
-    DescriptorSet makeDescriptorSet();
+    DescriptorSet makeSet();
 
 private:
     const DeviceState &dev;

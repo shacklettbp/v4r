@@ -28,7 +28,7 @@ DescriptorManager::~DescriptorManager()
     }
 }
 
-DescriptorSet DescriptorManager::makeDescriptorSet()
+DescriptorSet DescriptorManager::makeSet()
 {
     if (free_pools_.empty()) {
         auto iter = used_pools_.begin();
@@ -49,15 +49,7 @@ DescriptorSet DescriptorManager::makeDescriptorSet()
 
     PoolState &cur_pool = free_pools_.front();
 
-    VkDescriptorSetAllocateInfo alloc;
-    alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    alloc.pNext = nullptr;
-    alloc.descriptorPool = cur_pool.pool;
-    alloc.descriptorSetCount = 1;
-    alloc.pSetLayouts = &layout_;
-
-    VkDescriptorSet desc_set;
-    REQ_VK(dev.dt.allocateDescriptorSets(dev.hdl, &alloc, &desc_set));
+    VkDescriptorSet desc_set = makeDescriptorSet(dev, cur_pool.pool, layout_);
 
     cur_pool.numActive++;
 

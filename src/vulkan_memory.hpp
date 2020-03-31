@@ -25,17 +25,22 @@ private:
     MemoryAllocator &alloc_;
 };
 
-class StageBuffer {
+class HostBuffer {
 public:
-    StageBuffer(const StageBuffer &) = delete;
-    StageBuffer(StageBuffer &&o);
-    ~StageBuffer();
+    HostBuffer(const HostBuffer &) = delete;
+    HostBuffer(HostBuffer &&o);
+    ~HostBuffer();
+
+    void flush(const DeviceState &dev);
 
     VkBuffer buffer;
     void *ptr;
 private:
-    StageBuffer(VkBuffer buf, void *p,
-                AllocDeleter<true> deleter);
+    HostBuffer(VkBuffer buf, void *p,
+               VkMappedMemoryRange mem_range,
+               AllocDeleter<true> deleter);
+
+    const VkMappedMemoryRange mem_range_;
 
     AllocDeleter<true> deleter_;
     friend class MemoryAllocator;
@@ -75,6 +80,7 @@ private:
 
 struct MemoryTypeIndices {
     uint32_t stageBuffer;
+    uint32_t uniformBuffer;
     uint32_t localGeometryBuffer;
     uint32_t precomputedMipmapTexture;
     uint32_t runtimeMipmapTexture;
@@ -86,7 +92,9 @@ public:
     MemoryAllocator(const MemoryAllocator &) = delete;
     MemoryAllocator(MemoryAllocator &&) = default;
 
-    StageBuffer makeStagingBuffer(VkDeviceSize num_bytes);
+    HostBuffer makeStagingBuffer(VkDeviceSize num_bytes);
+    HostBuffer makeUniformBuffer(VkDeviceSize num_bytes);
+
     LocalBuffer makeGeometryBuffer(VkDeviceSize num_bytes);
 
     LocalTexture makeTexture(const VkImageCreateInfo &img_info,

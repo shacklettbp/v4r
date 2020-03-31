@@ -761,7 +761,53 @@ QueueState & QueueManager::allocateQueue(uint32_t qf_idx,
     return cur_queue;
 }
 
-CommandStreamState::CommandStreamState(const InstanceState &i,
+StreamDescriptorState::StreamDescriptorState(
+        const DeviceState &dev,
+        const PerStreamDescriptorConfig &cfg,
+        MemoryAllocator &alloc)
+    : pool_(PerStreamDescriptorLayout::makePool(dev, 1)),
+      desc_set_(makeDescriptorSet(dev, pool_, cfg.layout)),
+      ubo_(alloc.makeUniformBuffer(sizeof(PerStreamUBO)))
+{
+    VkDescriptorBufferInfo buffer_info;
+    buffer_info.buffer = ubo_.buffer;
+    buffer_info.offset = 0;
+    buffer_info.range = sizeof(PerStreamUBO);
+
+    VkWriteDescriptorSet desc_update;
+    desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    desc_update.pNext = nullptr;
+    desc_update.dstSet = desc_set_;
+    desc_update.dstBinding = 0;
+    desc_update.dstArrayElement = 0;
+    desc_update.descriptorCount = 1;
+    desc_update.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    desc_update.pImageInfo = nullptr;
+    desc_update.pBufferInfo = &buffer_info;
+    desc_update.pTexelBufferView = nullptr;
+    dev.dt.updateDescriptorSets(dev.hdl, 1, &desc_update, 0, nullptr);
+}
+
+void StreamDescriptorState::bind(const DeviceState &dev,
+                                 VkCommandBuffer cmd_buf,
+                                 VkPipelineLayout pipeline_layout)
+{
+    dev.dt.cmdBindDescriptorSets(cmd_buf,
+                                 VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                 pipeline_layout, 0,
+                                 1, &desc_set_,
+                                 0, nullptr);
+}
+
+void StreamDescriptorState::update(const DeviceState &dev,
+                                   const PerStreamUBO &data)
+{
+    memcpy(ubo_.ptr, &data, sizeof(PerStreamUBO));
+    ubo_.flush(dev);
+}
+
+CommandStreamState::CommandStreamState(
+        const InstanceState &i,
         const DeviceState &d,
         const PerStreamDescriptorConfig &stream_desc_cfg,
         const PerSceneDescriptorConfig &scene_desc_cfg,
@@ -788,6 +834,7 @@ CommandStreamState::CommandStreamState(const InstanceState &i,
       copyFence(makeFence(dev)),
       alloc(alc),
       descriptorManager(dev, scene_desc_cfg.layout),
+      streamDescState(dev, stream_desc_cfg, alloc),
       fb_x_pos_(
         (stream_idx % VulkanConfig::num_fb_images_wide) * render_width),
       fb_y_pos_(
@@ -804,14 +851,15 @@ static constexpr uint32_t getMipLevels(const Texture &texture)
 
 SceneState CommandStreamState::loadScene(SceneAssets &&assets)
 {
-    vector<StageBuffer> texture_stagings;
+    vector<HostBuffer> texture_stagings;
     vector<LocalTexture> gpu_textures;
     for (const Texture &texture : assets.textures) {
         uint64_t texture_bytes = texture.width * texture.height *
             texture.num_channels * sizeof(uint8_t);
 
-        StageBuffer texture_staging = alloc.makeStagingBuffer(texture_bytes);
+        HostBuffer texture_staging = alloc.makeStagingBuffer(texture_bytes);
         memcpy(texture_staging.ptr, texture.raw_image.data(), texture_bytes);
+        texture_staging.flush(dev);
 
         VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
 
@@ -863,12 +911,14 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
     VkDeviceSize index_bytes = assets.indices.size() * sizeof(uint32_t);
     VkDeviceSize geometry_bytes = vertex_bytes + index_bytes;
 
-    StageBuffer geo_staging = alloc.makeStagingBuffer(geometry_bytes);
+    HostBuffer geo_staging = alloc.makeStagingBuffer(geometry_bytes);
 
     // Store vertex buffer immediately followed by index buffer
     memcpy(geo_staging.ptr, assets.vertices.data(), vertex_bytes);
     memcpy((uint8_t *)geo_staging.ptr + vertex_bytes, assets.indices.data(),
            index_bytes);
+    geo_staging.flush(dev);
+
     LocalBuffer geometry = alloc.makeGeometryBuffer(geometry_bytes);
 
     // Start recording for transfer queue
@@ -903,7 +953,7 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
                               barriers.size(), barriers.data());
 
     for (size_t i = 0; i < gpu_textures.size(); i++) {
-        const StageBuffer &stage_buffer = texture_stagings[i];
+        const HostBuffer &stage_buffer = texture_stagings[i];
         const LocalTexture &gpu_texture = gpu_textures[i];
         VkBufferImageCopy copy_spec {};
         copy_spec.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -1135,7 +1185,7 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
     // FIXME HACK
     assert(gpu_textures.size() == VulkanConfig::max_textures);
 
-    DescriptorSet texture_set = descriptorManager.makeDescriptorSet();
+    DescriptorSet texture_set = descriptorManager.makeSet();
 
     VkWriteDescriptorSet desc_update;
     desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1172,6 +1222,8 @@ VkBuffer CommandStreamState::render(const SceneState &scene)
     VkCommandBufferBeginInfo begin_info {};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     REQ_VK(dev.dt.beginCommandBuffer(gfxRenderCommand, &begin_info));
+
+    streamDescState.bind(dev, gfxRenderCommand, pipeline.gfxLayout);
 
     // FIXME preconstruct (independent for all scenes)
     array<VkClearValue, 2> clear_vals;
@@ -1214,7 +1266,7 @@ VkBuffer CommandStreamState::render(const SceneState &scene)
 
     dev.dt.cmdBindDescriptorSets(gfxRenderCommand,
                                  VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                 pipeline.gfxLayout, 0,
+                                 pipeline.gfxLayout, 1,
                                  1, &scene.textureSet.hdl,
                                  0, nullptr);
 

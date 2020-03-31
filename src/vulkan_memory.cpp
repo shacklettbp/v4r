@@ -2,6 +2,7 @@
 
 #include "vk_utils.hpp"
 
+#include <cstring>
 #include <iostream>
 
 using namespace std;
@@ -11,6 +12,9 @@ namespace v4r {
 namespace MemoryUsageFlags {
     static const VkBufferUsageFlags stage =
             VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+    static const VkBufferUsageFlags uniform =
+            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 
     static const VkBufferUsageFlags geometry =
             VK_BUFFER_USAGE_TRANSFER_DST_BIT |
@@ -60,23 +64,31 @@ void AllocDeleter<host_mapped>::clear()
     mem_ = VK_NULL_HANDLE;
 }
 
-StageBuffer::StageBuffer(VkBuffer buf, void *p,
-                         AllocDeleter<true> deleter)
+HostBuffer::HostBuffer(VkBuffer buf, void *p,
+                       VkMappedMemoryRange mem_range,
+                       AllocDeleter<true> deleter)
     : buffer(buf), ptr(p),
+      mem_range_(mem_range),
       deleter_(deleter)
 {}
 
-StageBuffer::StageBuffer(StageBuffer &&o)
+HostBuffer::HostBuffer(HostBuffer &&o)
     : buffer(o.buffer),
       ptr(o.ptr),
+      mem_range_(o.mem_range_),
       deleter_(o.deleter_)
 {
     o.deleter_.clear();
 }
 
-StageBuffer::~StageBuffer()
+HostBuffer::~HostBuffer()
 {
     deleter_(buffer);
+}
+
+void HostBuffer::flush(const DeviceState &dev)
+{
+    dev.dt.flushMappedMemoryRanges(dev.hdl, 1, &mem_range_);
 }
 
 LocalBuffer::LocalBuffer(VkBuffer buf,
@@ -184,8 +196,15 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
 
     uint32_t stage_type_idx = findMemoryTypeIndex(
             stage_reqs.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+            dev_mem_props);
+
+    VkMemoryRequirements uniform_reqs =
+        getBufferMemReqs(MemoryUsageFlags::uniform, dev);
+
+    uint32_t uniform_type_idx = findMemoryTypeIndex(
+            uniform_reqs.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
             dev_mem_props);
 
     VkMemoryRequirements geometry_reqs =
@@ -214,6 +233,7 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
 
     return MemoryTypeIndices {
         stage_type_idx,
+        uniform_type_idx,
         geometry_type_idx,
         texture_precomp_idx,
         texture_runtime_idx
@@ -226,7 +246,7 @@ MemoryAllocator::MemoryAllocator(const DeviceState &d,
       type_indices_(findTypeIndices(dev, inst))
 {}
 
-StageBuffer MemoryAllocator::makeStagingBuffer(VkDeviceSize num_bytes)
+HostBuffer MemoryAllocator::makeStagingBuffer(VkDeviceSize num_bytes)
 {
     VkBufferCreateInfo buffer_info;
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -255,8 +275,55 @@ StageBuffer MemoryAllocator::makeStagingBuffer(VkDeviceSize num_bytes)
     void *mapped_ptr;
     REQ_VK(dev.dt.mapMemory(dev.hdl, memory, 0, num_bytes, 0, &mapped_ptr));
 
-    return StageBuffer(buffer, mapped_ptr,
-                       AllocDeleter<true>(memory, *this));
+    VkMappedMemoryRange range;
+    range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+    range.pNext = nullptr;
+    range.memory = memory,
+    range.offset = 0;
+    range.size = VK_WHOLE_SIZE;
+
+    return HostBuffer(buffer, mapped_ptr, range,
+                      AllocDeleter<true>(memory, *this));
+}
+
+HostBuffer MemoryAllocator::makeUniformBuffer(VkDeviceSize num_bytes)
+{
+    VkBufferCreateInfo buffer_info;
+    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_info.pNext = nullptr;
+    buffer_info.flags = 0;
+    buffer_info.size = num_bytes;
+    buffer_info.usage = MemoryUsageFlags::uniform;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VkBuffer buffer;
+    REQ_VK(dev.dt.createBuffer(dev.hdl, &buffer_info, nullptr, &buffer));
+
+    VkMemoryRequirements reqs;
+    dev.dt.getBufferMemoryRequirements(dev.hdl, buffer, &reqs);
+
+    VkMemoryAllocateInfo alloc;
+    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc.pNext = nullptr;
+    alloc.allocationSize = reqs.size;
+    alloc.memoryTypeIndex = type_indices_.uniformBuffer;
+
+    VkDeviceMemory memory;
+    REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &memory));
+    REQ_VK(dev.dt.bindBufferMemory(dev.hdl, buffer, memory, 0));
+
+    void *mapped_ptr;
+    REQ_VK(dev.dt.mapMemory(dev.hdl, memory, 0, num_bytes, 0, &mapped_ptr));
+
+    VkMappedMemoryRange range;
+    range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+    range.pNext = nullptr;
+    range.memory = memory,
+    range.offset = 0;
+    range.size = VK_WHOLE_SIZE;
+
+    return HostBuffer(buffer, mapped_ptr, range,
+                      AllocDeleter<true>(memory, *this));
 }
 
 LocalBuffer MemoryAllocator::makeGeometryBuffer(VkDeviceSize num_bytes)
