@@ -4,6 +4,7 @@
 #include <atomic>
 #include <list>
 
+#include "vulkan_config.hpp"
 #include "vulkan_handles.hpp"
 #include "vk_utils.hpp"
 
@@ -82,7 +83,7 @@ struct DescriptorLayout {
 };
 
 using PerSceneDescriptorLayout = DescriptorLayout<
-    BindingConfig<0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 2,
+    BindingConfig<0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VulkanConfig::max_textures,
                   VK_SHADER_STAGE_FRAGMENT_BIT>,
     BindingConfig<1, VK_DESCRIPTOR_TYPE_SAMPLER, 1,
                   VK_SHADER_STAGE_FRAGMENT_BIT>

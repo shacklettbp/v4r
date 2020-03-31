@@ -3,8 +3,6 @@
 #include <cassert>
 #include <iostream>
 
-#include "vulkan_config.hpp"
-
 using namespace std;
 
 namespace v4r {
