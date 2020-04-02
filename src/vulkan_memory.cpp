@@ -9,27 +9,54 @@ using namespace std;
 
 namespace v4r {
 
-namespace MemoryUsageFlags {
-    static const VkBufferUsageFlags stage =
-            VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+namespace BufferFlags {
+    static constexpr VkBufferUsageFlags stageUsage =
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
-    static const VkBufferUsageFlags uniform =
-            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    static constexpr VkBufferUsageFlags uniformUsage =
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
 
-    static const VkBufferUsageFlags geometry =
-            VK_BUFFER_USAGE_TRANSFER_DST_BIT |
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-            VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    static constexpr VkBufferUsageFlags geometryUsage =
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
 
-    static const VkImageUsageFlags precomputedMipmapTexture =
-            VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-            VK_IMAGE_USAGE_SAMPLED_BIT;
+    static constexpr VkBufferUsageFlags dedicatedUsage =
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+};
 
-    static const VkImageUsageFlags runtimeMipmapTexture =
-            VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-            VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-            VK_IMAGE_USAGE_SAMPLED_BIT;
-}
+namespace ImageFlags {
+    static constexpr VkImageUsageFlags precomputedMipmapTextureUsage =
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+        VK_IMAGE_USAGE_SAMPLED_BIT;
+
+    static constexpr VkImageUsageFlags runtimeMipmapTextureUsage =
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+        VK_IMAGE_USAGE_SAMPLED_BIT;
+
+    static constexpr VkFormatFeatureFlags runtimeMipmapTextureReqs =
+        VK_FORMAT_FEATURE_BLIT_SRC_BIT |
+        VK_FORMAT_FEATURE_BLIT_DST_BIT |
+        VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+
+    static constexpr VkImageUsageFlags colorAttachmentUsage = 
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
+    static constexpr VkFormatFeatureFlags colorAttachmentReqs =
+        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
+        VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
+
+    static constexpr VkImageUsageFlags depthAttachmentUsage = 
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
+    static constexpr VkFormatFeatureFlags depthAttachmentReqs =
+        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
+        VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
+};
 
 template<bool host_mapped>
 void AllocDeleter<host_mapped>::operator()(VkBuffer buffer) const
@@ -109,14 +136,14 @@ LocalBuffer::~LocalBuffer()
     deleter_(buffer);
 }
 
-LocalTexture::LocalTexture(uint32_t w, uint32_t h, uint32_t mip_levels,
+LocalImage::LocalImage(uint32_t w, uint32_t h, uint32_t mip_levels,
                            VkImage img, AllocDeleter<false> deleter)
     : width(w), height(h), mipLevels(mip_levels),
       image(img),
       deleter_(deleter)
 {}
 
-LocalTexture::LocalTexture(LocalTexture &&o)
+LocalImage::LocalImage(LocalImage &&o)
     : width(o.width), height(o.height), mipLevels(o.mipLevels),
       image(o.image),
       deleter_(o.deleter_)
@@ -124,59 +151,129 @@ LocalTexture::LocalTexture(LocalTexture &&o)
     o.deleter_.clear();
 }
 
-LocalTexture::~LocalTexture()
+LocalImage::~LocalImage()
 {
     deleter_(image);
 }
 
-static VkMemoryRequirements getBufferMemReqs(VkBufferUsageFlags usage_flags,
-                                             const DeviceState &dev)
+static VkFormatProperties2 getFormatProperties(const InstanceState &inst,
+                                               VkPhysicalDevice phy,
+                                               VkFormat fmt)
+{
+    VkFormatProperties2 props;
+    props.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
+    props.pNext = nullptr;
+
+    inst.dt.getPhysicalDeviceFormatProperties2(phy, fmt, &props);
+    return props;
+}
+
+template<size_t N>
+static VkFormat chooseFormat(VkPhysicalDevice phy, const InstanceState &inst,
+                             VkFormatFeatureFlags required_features,
+                             const array<VkFormat, N> &desired_formats)
+{
+    for (auto fmt : desired_formats) {
+        VkFormatProperties2 props = getFormatProperties(inst, phy, fmt);
+        if ((props.formatProperties.optimalTilingFeatures &
+                    required_features) == required_features) {
+            return fmt;
+        }
+    }
+
+    cerr << "Unable to find required features in given formats" << endl;
+    fatalExit();
+}
+
+pair<VkBuffer, VkMemoryRequirements> makeUnboundBuffer(const DeviceState &dev,
+        VkDeviceSize num_bytes, VkBufferUsageFlags usage)
 {
     VkBufferCreateInfo buffer_info;
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     buffer_info.pNext = nullptr;
     buffer_info.flags = 0;
-    buffer_info.size = 1;
-    buffer_info.usage = usage_flags;
+    buffer_info.size = num_bytes;
+    buffer_info.usage = usage;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    VkBuffer test_buffer;
-    REQ_VK(dev.dt.createBuffer(dev.hdl, &buffer_info, nullptr,
-                               &test_buffer));
+    VkBuffer buffer;
+    REQ_VK(dev.dt.createBuffer(dev.hdl, &buffer_info, nullptr, &buffer));
 
     VkMemoryRequirements reqs;
-    dev.dt.getBufferMemoryRequirements(dev.hdl, test_buffer, &reqs);
+    dev.dt.getBufferMemoryRequirements(dev.hdl, buffer, &reqs);
 
-    dev.dt.destroyBuffer(dev.hdl, test_buffer, nullptr);
-
-    return reqs;
+    return pair(buffer, reqs);
 }
 
-static VkMemoryRequirements getColorMemReqs(VkImageUsageFlags usage_flags,
-                                            const DeviceState &dev)
+pair<VkImage, VkMemoryRequirements> makeUnboundImage(const DeviceState &dev,
+        uint32_t width, uint32_t height, uint32_t mip_levels,
+        VkFormat format, VkImageUsageFlags usage)
 {
     VkImageCreateInfo img_info;
     img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     img_info.pNext = nullptr;
     img_info.flags = 0;
     img_info.imageType = VK_IMAGE_TYPE_2D;
-    img_info.format = VK_FORMAT_R8G8B8A8_UNORM;
-    img_info.extent = { 1, 1, 1 };
-    img_info.mipLevels = 1;
+    img_info.format = format;
+    img_info.extent = { width, height, 1 };
+    img_info.mipLevels = mip_levels;
     img_info.arrayLayers = 1;
     img_info.samples = VK_SAMPLE_COUNT_1_BIT;
     img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    img_info.usage = usage_flags;
+    img_info.usage = usage;
     img_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     img_info.queueFamilyIndexCount = 0;
     img_info.pQueueFamilyIndices = nullptr;
     img_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-    VkImage test_image;
-    REQ_VK(dev.dt.createImage(dev.hdl, &img_info, nullptr, &test_image));
+    VkImage img;
+    REQ_VK(dev.dt.createImage(dev.hdl, &img_info, nullptr, &img));
 
     VkMemoryRequirements reqs;
-    dev.dt.getImageMemoryRequirements(dev.hdl, test_image, &reqs);
+    dev.dt.getImageMemoryRequirements(dev.hdl, img, &reqs);
+
+    return pair(img, reqs);
+}
+
+
+uint32_t findMemoryTypeIndex(uint32_t allowed_type_bits,
+        VkMemoryPropertyFlags required_props,
+        VkPhysicalDeviceMemoryProperties2 &mem_props)
+{
+    uint32_t num_mems = mem_props.memoryProperties.memoryTypeCount;
+
+    for (uint32_t idx = 0; idx < num_mems; idx++) {
+        uint32_t mem_type_bits = (1 << idx);
+        if (!(allowed_type_bits & mem_type_bits)) continue;
+
+        VkMemoryPropertyFlags supported_props =
+            mem_props.memoryProperties.memoryTypes[idx].propertyFlags;
+
+        if ((required_props & supported_props) == required_props) {
+            return idx;
+        }
+    }
+
+    cerr << "Failed to find desired memory type" << endl;
+    fatalExit();
+}
+
+static VkMemoryRequirements getBufferMemReqs(const DeviceState &dev,
+                                             VkBufferUsageFlags usage_flags)
+{
+    auto [test_buffer, reqs] = makeUnboundBuffer(dev, 1, usage_flags);
+
+    dev.dt.destroyBuffer(dev.hdl, test_buffer, nullptr);
+
+    return reqs;
+}
+
+static VkMemoryRequirements getImageMemReqs(const DeviceState &dev,
+                                            VkFormat format,
+                                            VkImageUsageFlags usage_flags)
+{
+    auto [test_image, reqs] = makeUnboundImage(dev, 1, 1, 1, format,
+                                               usage_flags);
 
     dev.dt.destroyImage(dev.hdl, test_image, nullptr);
 
@@ -184,15 +281,16 @@ static VkMemoryRequirements getColorMemReqs(VkImageUsageFlags usage_flags,
 }
 
 static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
-                                         const InstanceState &inst)
+                                         const InstanceState &inst,
+                                         const ResourceFormats &formats)
 {
     VkPhysicalDeviceMemoryProperties2 dev_mem_props;
     dev_mem_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
     dev_mem_props.pNext = nullptr;
     inst.dt.getPhysicalDeviceMemoryProperties2(dev.phy, &dev_mem_props);
 
-    VkMemoryRequirements stage_reqs =
-        getBufferMemReqs(MemoryUsageFlags::stage, dev);
+    VkMemoryRequirements stage_reqs = 
+        getBufferMemReqs(dev, BufferFlags::stageUsage);
 
     uint32_t stage_type_idx = findMemoryTypeIndex(
             stage_reqs.memoryTypeBits,
@@ -200,7 +298,7 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
             dev_mem_props);
 
     VkMemoryRequirements uniform_reqs =
-        getBufferMemReqs(MemoryUsageFlags::uniform, dev);
+        getBufferMemReqs(dev, BufferFlags::uniformUsage);
 
     uint32_t uniform_type_idx = findMemoryTypeIndex(
             uniform_reqs.memoryTypeBits,
@@ -208,15 +306,24 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
             dev_mem_props);
 
     VkMemoryRequirements geometry_reqs =
-            getBufferMemReqs(MemoryUsageFlags::geometry, dev);
+        getBufferMemReqs(dev, BufferFlags::geometryUsage);
 
     uint32_t geometry_type_idx = findMemoryTypeIndex(
             geometry_reqs.memoryTypeBits,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             dev_mem_props);
 
+    VkMemoryRequirements dedicated_reqs =
+        getBufferMemReqs(dev, BufferFlags::dedicatedUsage);
+
+    uint32_t dedicated_type_idx = findMemoryTypeIndex(
+            dedicated_reqs.memoryTypeBits,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            dev_mem_props);
+
     VkMemoryRequirements texture_precomp_mip_reqs =
-        getColorMemReqs(MemoryUsageFlags::precomputedMipmapTexture, dev);
+        getImageMemReqs(dev, formats.hdrTexture,
+                        ImageFlags::precomputedMipmapTextureUsage);
 
     uint32_t texture_precomp_idx = findMemoryTypeIndex(
             texture_precomp_mip_reqs.memoryTypeBits,
@@ -224,10 +331,29 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
             dev_mem_props);
 
     VkMemoryRequirements texture_runtime_mip_reqs =
-        getColorMemReqs(MemoryUsageFlags::runtimeMipmapTexture, dev);
+        getImageMemReqs(dev, formats.sdrTexture,
+                        ImageFlags::runtimeMipmapTextureUsage);
 
     uint32_t texture_runtime_idx = findMemoryTypeIndex(
             texture_runtime_mip_reqs.memoryTypeBits,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            dev_mem_props);
+
+    VkMemoryRequirements color_attachment_reqs =
+        getImageMemReqs(dev, formats.colorAttachment,
+                        ImageFlags::colorAttachmentUsage);
+
+    uint32_t color_attachment_idx = findMemoryTypeIndex(
+            color_attachment_reqs.memoryTypeBits,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            dev_mem_props);
+
+    VkMemoryRequirements depth_attachment_reqs =
+        getImageMemReqs(dev, formats.depthAttachment,
+                        ImageFlags::depthAttachmentUsage);
+
+    uint32_t depth_attachment_idx = findMemoryTypeIndex(
+            depth_attachment_reqs.memoryTypeBits,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             dev_mem_props);
 
@@ -235,38 +361,46 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
         stage_type_idx,
         uniform_type_idx,
         geometry_type_idx,
+        dedicated_type_idx,
         texture_precomp_idx,
-        texture_runtime_idx
+        texture_runtime_idx,
+        color_attachment_idx,
+        depth_attachment_idx
     };
 }
 
 MemoryAllocator::MemoryAllocator(const DeviceState &d,
                                  const InstanceState &inst)
     : dev(d),
-      type_indices_(findTypeIndices(dev, inst))
+      formats_ {
+          chooseFormat(dev.phy, inst,
+                       ImageFlags::runtimeMipmapTextureReqs,
+                       array { VK_FORMAT_R8G8B8A8_UNORM }),
+          chooseFormat(dev.phy, inst,
+                       ImageFlags::runtimeMipmapTextureReqs,
+                       array { VK_FORMAT_R16G16B16A16_SFLOAT }),
+          chooseFormat(dev.phy, inst,
+                       ImageFlags::colorAttachmentReqs,
+                       array { VK_FORMAT_R32G32B32A32_SFLOAT}),
+          chooseFormat(dev.phy, inst,
+                       ImageFlags::depthAttachmentReqs,
+                       array { VK_FORMAT_D32_SFLOAT,
+                               VK_FORMAT_D32_SFLOAT_S8_UINT })
+      },
+      type_indices_(findTypeIndices(dev, inst, formats_))
 {}
 
-HostBuffer MemoryAllocator::makeStagingBuffer(VkDeviceSize num_bytes)
+HostBuffer MemoryAllocator::makeHostBuffer(VkDeviceSize num_bytes,
+                                           VkBufferUsageFlags usage,
+                                           uint32_t mem_idx)
 {
-    VkBufferCreateInfo buffer_info;
-    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    buffer_info.pNext = nullptr;
-    buffer_info.flags = 0;
-    buffer_info.size = num_bytes;
-    buffer_info.usage = MemoryUsageFlags::stage;
-    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    VkBuffer buffer;
-    REQ_VK(dev.dt.createBuffer(dev.hdl, &buffer_info, nullptr, &buffer));
-
-    VkMemoryRequirements reqs;
-    dev.dt.getBufferMemoryRequirements(dev.hdl, buffer, &reqs);
+    auto [buffer, reqs] = makeUnboundBuffer(dev, num_bytes, usage);
 
     VkMemoryAllocateInfo alloc;
     alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     alloc.pNext = nullptr;
     alloc.allocationSize = reqs.size;
-    alloc.memoryTypeIndex = type_indices_.stageBuffer;
+    alloc.memoryTypeIndex = mem_idx;
 
     VkDeviceMemory memory;
     REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &memory));
@@ -284,63 +418,25 @@ HostBuffer MemoryAllocator::makeStagingBuffer(VkDeviceSize num_bytes)
 
     return HostBuffer(buffer, mapped_ptr, range,
                       AllocDeleter<true>(memory, *this));
+}
+
+
+HostBuffer MemoryAllocator::makeStagingBuffer(VkDeviceSize num_bytes)
+{
+    return makeHostBuffer(num_bytes, BufferFlags::stageUsage,
+                          type_indices_.stageBuffer);
 }
 
 HostBuffer MemoryAllocator::makeUniformBuffer(VkDeviceSize num_bytes)
 {
-    VkBufferCreateInfo buffer_info;
-    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    buffer_info.pNext = nullptr;
-    buffer_info.flags = 0;
-    buffer_info.size = num_bytes;
-    buffer_info.usage = MemoryUsageFlags::uniform;
-    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    VkBuffer buffer;
-    REQ_VK(dev.dt.createBuffer(dev.hdl, &buffer_info, nullptr, &buffer));
-
-    VkMemoryRequirements reqs;
-    dev.dt.getBufferMemoryRequirements(dev.hdl, buffer, &reqs);
-
-    VkMemoryAllocateInfo alloc;
-    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    alloc.pNext = nullptr;
-    alloc.allocationSize = reqs.size;
-    alloc.memoryTypeIndex = type_indices_.uniformBuffer;
-
-    VkDeviceMemory memory;
-    REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &memory));
-    REQ_VK(dev.dt.bindBufferMemory(dev.hdl, buffer, memory, 0));
-
-    void *mapped_ptr;
-    REQ_VK(dev.dt.mapMemory(dev.hdl, memory, 0, num_bytes, 0, &mapped_ptr));
-
-    VkMappedMemoryRange range;
-    range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
-    range.pNext = nullptr;
-    range.memory = memory,
-    range.offset = 0;
-    range.size = VK_WHOLE_SIZE;
-
-    return HostBuffer(buffer, mapped_ptr, range,
-                      AllocDeleter<true>(memory, *this));
+    return makeHostBuffer(num_bytes, BufferFlags::uniformUsage, 
+                          type_indices_.uniformBuffer);
 }
 
 LocalBuffer MemoryAllocator::makeGeometryBuffer(VkDeviceSize num_bytes)
 {
-    VkBufferCreateInfo buffer_info;
-    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    buffer_info.pNext = nullptr;
-    buffer_info.flags = 0;
-    buffer_info.size = num_bytes;
-    buffer_info.usage = MemoryUsageFlags::geometry;
-    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-
-    VkBuffer buffer;
-    REQ_VK(dev.dt.createBuffer(dev.hdl, &buffer_info, nullptr, &buffer));
-
-    VkMemoryRequirements reqs;
-    dev.dt.getBufferMemoryRequirements(dev.hdl, buffer, &reqs);
+    auto [buffer, reqs] = makeUnboundBuffer(dev, num_bytes,
+                                            BufferFlags::geometryUsage);
 
     VkMemoryAllocateInfo alloc;
     alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -355,14 +451,37 @@ LocalBuffer MemoryAllocator::makeGeometryBuffer(VkDeviceSize num_bytes)
     return LocalBuffer(buffer, AllocDeleter<false>(memory, *this));
 }
 
-LocalTexture MemoryAllocator::makeTexture(const VkImageCreateInfo &img_info,
-                                          bool precomputed_mipmaps)
+LocalBuffer MemoryAllocator::makeDedicatedBuffer(VkDeviceSize num_bytes)
 {
-    VkImage texture_img;
-    REQ_VK(dev.dt.createImage(dev.hdl, &img_info, nullptr, &texture_img));
+    auto [buffer, reqs] = makeUnboundBuffer(dev, num_bytes,
+                                            BufferFlags::dedicatedUsage);
 
-    VkMemoryRequirements reqs;
-    dev.dt.getImageMemoryRequirements(dev.hdl, texture_img, &reqs);
+    VkMemoryDedicatedAllocateInfo dedicated;
+    dedicated.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
+    dedicated.pNext = nullptr;
+    dedicated.image = VK_NULL_HANDLE;
+    dedicated.buffer = buffer;
+    VkMemoryAllocateInfo alloc;
+    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc.pNext = &dedicated;
+    alloc.allocationSize = reqs.size;
+    alloc.memoryTypeIndex = type_indices_.dedicatedBuffer;
+
+    VkDeviceMemory memory;
+    REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &memory));
+    REQ_VK(dev.dt.bindBufferMemory(dev.hdl, buffer, memory, 0));
+
+    return LocalBuffer(buffer, AllocDeleter<false>(memory, *this));
+}
+
+LocalImage MemoryAllocator::makeTexture(uint32_t width, uint32_t height,
+                                        uint32_t mip_levels,
+                                        bool precomputed_mipmaps)
+{
+    auto [texture_img, reqs] = makeUnboundImage(dev, width, height, mip_levels,
+            formats_.sdrTexture,
+            precomputed_mipmaps ? ImageFlags::precomputedMipmapTextureUsage :
+                ImageFlags::runtimeMipmapTextureUsage);
 
     VkMemoryAllocateInfo alloc;
     alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -378,9 +497,53 @@ LocalTexture MemoryAllocator::makeTexture(const VkImageCreateInfo &img_info,
     REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &memory));
     REQ_VK(dev.dt.bindImageMemory(dev.hdl, texture_img, memory, 0));
 
-    return LocalTexture(img_info.extent.width, img_info.extent.height,
-                        img_info.mipLevels, texture_img,
-                        AllocDeleter<false>(memory, *this));
+    return LocalImage(width, height,
+                      mip_levels, texture_img,
+                      AllocDeleter<false>(memory, *this));
+}
+
+LocalImage MemoryAllocator::makeDedicatedImage(uint32_t width, uint32_t height,
+                                               uint32_t mip_levels,
+                                               VkFormat format,
+                                               VkImageUsageFlags usage,
+                                               uint32_t type_idx)
+{
+    auto [img, reqs] = makeUnboundImage(dev, width, height, mip_levels,
+                                        format, usage);
+    
+    VkMemoryDedicatedAllocateInfo dedicated;
+    dedicated.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
+    dedicated.pNext = nullptr;
+    dedicated.image = img;
+    dedicated.buffer = VK_NULL_HANDLE;
+    VkMemoryAllocateInfo alloc;
+    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc.pNext = &dedicated;
+    alloc.allocationSize = reqs.size;
+    alloc.memoryTypeIndex = type_idx;
+
+    VkDeviceMemory memory;
+    REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &memory));
+    REQ_VK(dev.dt.bindImageMemory(dev.hdl, img, memory, 0));
+
+    return LocalImage(width, height, mip_levels, img,
+                      AllocDeleter<false>(memory, *this));
+}
+
+LocalImage MemoryAllocator::makeColorAttachment(uint32_t width,
+                                                uint32_t height)
+{
+    return makeDedicatedImage(width, height, 1, formats_.colorAttachment,
+                              ImageFlags::colorAttachmentUsage,
+                              type_indices_.colorAttachment);
+}
+
+LocalImage MemoryAllocator::makeDepthAttachment(uint32_t width,
+                                                uint32_t height)
+{
+    return makeDedicatedImage(width, height, 1, formats_.depthAttachment,
+                              ImageFlags::depthAttachmentUsage,
+                              type_indices_.depthAttachment);
 }
 
 }

@@ -54,145 +54,14 @@ static PerStreamDescriptorConfig getStreamDescriptorConfig(
     };
 }
 
-static VkFormatProperties2 getFormatProperties(const InstanceState &inst,
-                                               VkPhysicalDevice phy,
-                                               VkFormat fmt)
+static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
 {
-    VkFormatProperties2 props;
-    props.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
-    props.pNext = nullptr;
-
-    inst.dt.getPhysicalDeviceFormatProperties2(phy, fmt, &props);
-    return props;
-}
-
-static VkFormat getDeviceDepthFormat(VkPhysicalDevice phy,
-                                     const InstanceState &inst)
-{
-    static const array desired_formats {
-        VK_FORMAT_D32_SFLOAT_S8_UINT,
-        VK_FORMAT_D32_SFLOAT,
-        VK_FORMAT_D24_UNORM_S8_UINT
-    };
-
-    const VkFormatFeatureFlags desired_features =
-        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
-        VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
-
-    for (auto fmt : desired_formats) {
-        VkFormatProperties2 props = getFormatProperties(inst, phy, fmt);
-        if ((props.formatProperties.optimalTilingFeatures &
-                    desired_features) == desired_features) {
-            return fmt;
-        }
-    }
-
-    cerr << "Unable to find required depth format" << endl;
-    fatalExit();
-}
-
-static VkFormat getDeviceColorFormat(VkPhysicalDevice phy,
-                                     const InstanceState &inst)
-{
-    static const array desired_formats {
-        VK_FORMAT_R16G16B16A16_UNORM,
-        VK_FORMAT_R16G16B16A16_SNORM,
-        VK_FORMAT_R16G16B16A16_SFLOAT
-    };
-
-    const VkFormatFeatureFlags desired_features =
-        VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
-        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
-
-    for (auto fmt : desired_formats) {
-        VkFormatProperties2 props = getFormatProperties(inst, phy, fmt);
-        if ((props.formatProperties.optimalTilingFeatures &
-                    desired_features) == desired_features) {
-            return fmt;
-        }
-    }
-
-    cerr << "Unable to find required color format" << endl;
-    fatalExit();
-}
-
-static FramebufferConfig getFramebufferConfig(const DeviceState &dev,
-                                              const InstanceState &inst,
-                                              const RenderConfig &cfg)
-{
-    VkPhysicalDeviceMemoryProperties2 dev_mem_props;
-    dev_mem_props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
-    dev_mem_props.pNext = nullptr;
-    inst.dt.getPhysicalDeviceMemoryProperties2(dev.phy, &dev_mem_props);
-
     uint32_t fb_width = cfg.imgWidth * VulkanConfig::num_fb_images_wide;
     uint32_t fb_height = cfg.imgHeight * VulkanConfig::num_fb_images_tall;
 
-    VkFormat color_fmt = getDeviceColorFormat(dev.phy, inst);
-    VkImageCreateInfo color_img_info {};
-    color_img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    color_img_info.imageType = VK_IMAGE_TYPE_2D;
-    color_img_info.format = color_fmt;
-    color_img_info.extent.width = fb_width;
-    color_img_info.extent.height = fb_height;
-    color_img_info.extent.depth = 1;
-    color_img_info.mipLevels = 1;
-    color_img_info.arrayLayers = 1;
-    color_img_info.samples = VK_SAMPLE_COUNT_1_BIT;
-    color_img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    color_img_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                           VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    color_img_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    color_img_info.queueFamilyIndexCount = 0;
-    color_img_info.pQueueFamilyIndices = nullptr;
-    color_img_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-    // Create an image that will have the same settings as the real
-    // framebuffer images later. This is necessary to cache the
-    // memory requirements of the image.
-    VkImage color_test;
-    REQ_VK(dev.dt.createImage(dev.hdl, &color_img_info, nullptr, &color_test));
-
-    VkMemoryRequirements color_req;
-    dev.dt.getImageMemoryRequirements(dev.hdl, color_test, &color_req);
-
-    dev.dt.destroyImage(dev.hdl, color_test, nullptr);
-
-    uint32_t color_type_idx = findMemoryTypeIndex(color_req.memoryTypeBits,
-            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-            dev_mem_props);
-
-    // Set depth specific settings
-    VkFormat depth_fmt = getDeviceDepthFormat(dev.phy, inst);
-
-    VkImageCreateInfo depth_img_info = color_img_info;
-    depth_img_info.format = depth_fmt;
-    depth_img_info.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                           VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-
-    VkImage depth_test;
-    REQ_VK(dev.dt.createImage(dev.hdl, &depth_img_info, nullptr, &depth_test));
-
-    VkMemoryRequirements depth_req;
-    dev.dt.getImageMemoryRequirements(dev.hdl, depth_test, &depth_req);
-
-    dev.dt.destroyImage(dev.hdl, depth_test, nullptr);
-
-    uint32_t depth_type_idx = findMemoryTypeIndex(depth_req.memoryTypeBits,
-            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-            dev_mem_props);
-
     return FramebufferConfig {
         fb_width,
-        fb_height,
-        color_fmt,
-        color_img_info,
-        color_req.size,
-        color_type_idx,
-        depth_fmt,
-        depth_img_info,
-        depth_req.size,
-        depth_type_idx
+        fb_height
     };
 }
 
@@ -283,13 +152,13 @@ static void waitForFenceInfinitely(const DeviceState &dev, VkFence fence)
     }
 }
 
-static VkRenderPass makeRenderPass(const FramebufferConfig &fb_cfg,
-                                   const DeviceState &dev)
+static VkRenderPass makeRenderPass(const DeviceState &dev,
+                                   VkFormat color_fmt, VkFormat depth_fmt)
 {
     array<VkAttachmentDescription, 2> attachment_descs {{
         {
             0,
-            fb_cfg.colorFmt,
+            color_fmt,
             VK_SAMPLE_COUNT_1_BIT,
             VK_ATTACHMENT_LOAD_OP_CLEAR,
             VK_ATTACHMENT_STORE_OP_STORE,
@@ -300,7 +169,7 @@ static VkRenderPass makeRenderPass(const FramebufferConfig &fb_cfg,
         },
         {
             0,
-            fb_cfg.depthFmt,
+            depth_fmt,
             VK_SAMPLE_COUNT_1_BIT,
             VK_ATTACHMENT_LOAD_OP_CLEAR,
             VK_ATTACHMENT_STORE_OP_STORE,
@@ -377,34 +246,18 @@ static VkRenderPass makeRenderPass(const FramebufferConfig &fb_cfg,
 }
 
 static FramebufferState makeFramebuffer(const DeviceState &dev,
+                                        MemoryAllocator &alloc,
                                         const FramebufferConfig &fb_cfg,
                                         const PipelineState &pipeline)
 {
-    VkImage color_img;
-    REQ_VK(dev.dt.createImage(dev.hdl, &fb_cfg.colorCreationSettings,
-                              nullptr, &color_img));
-
-    VkMemoryDedicatedAllocateInfo color_dedicated;
-    color_dedicated.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
-    color_dedicated.pNext = nullptr;
-    color_dedicated.image = color_img;
-    color_dedicated.buffer = VK_NULL_HANDLE;
-    VkMemoryAllocateInfo color_mem_info;
-    color_mem_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    color_mem_info.pNext = &color_dedicated;
-    color_mem_info.allocationSize = fb_cfg.colorMemorySize;
-    color_mem_info.memoryTypeIndex = fb_cfg.colorMemoryTypeIdx;
-
-    VkDeviceMemory color_mem;
-    REQ_VK(dev.dt.allocateMemory(dev.hdl, &color_mem_info,
-                                 nullptr, &color_mem));
-    REQ_VK(dev.dt.bindImageMemory(dev.hdl, color_img, color_mem, 0));
+    LocalImage color = alloc.makeColorAttachment(fb_cfg.width, fb_cfg.height);
+    LocalImage depth = alloc.makeDepthAttachment(fb_cfg.width, fb_cfg.height);
 
     VkImageViewCreateInfo view_info {};
     view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    view_info.image = color_img;
+    view_info.image = color.image;
     view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    view_info.format = fb_cfg.colorFmt;
+    view_info.format = alloc.getColorAttachmentFormat();
     VkImageSubresourceRange &view_info_sr = view_info.subresourceRange;
     view_info_sr.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     view_info_sr.baseMipLevel = 0;
@@ -416,30 +269,9 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
                                   nullptr, &views[0]));
 
-    VkImage depth_img;
-    REQ_VK(dev.dt.createImage(dev.hdl, &fb_cfg.depthCreationSettings,
-                              nullptr, &depth_img));
-
-    VkMemoryDedicatedAllocateInfo depth_dedicated;
-    depth_dedicated.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
-    depth_dedicated.pNext = nullptr;
-    depth_dedicated.image = depth_img;
-    depth_dedicated.buffer = VK_NULL_HANDLE;
-    VkMemoryAllocateInfo depth_mem_info;
-    depth_mem_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    depth_mem_info.pNext = &depth_dedicated;
-    depth_mem_info.allocationSize = fb_cfg.depthMemorySize;
-    depth_mem_info.memoryTypeIndex = fb_cfg.depthMemoryTypeIdx;
-
-    VkDeviceMemory depth_mem;
-    REQ_VK(dev.dt.allocateMemory(dev.hdl, &depth_mem_info,
-                                 nullptr, &depth_mem));
-    REQ_VK(dev.dt.bindImageMemory(dev.hdl, depth_img, depth_mem, 0));
-
-    view_info.image = depth_img;
-    view_info.format = fb_cfg.depthFmt;
-    view_info_sr.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT |
-                              VK_IMAGE_ASPECT_STENCIL_BIT;
+    view_info.image = depth.image;
+    view_info.format = alloc.getDepthAttachmentFormat();
+    view_info_sr.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
 
     REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
                                   nullptr, &views[1]));
@@ -458,13 +290,18 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     VkFramebuffer fb_handle;
     REQ_VK(dev.dt.createFramebuffer(dev.hdl, &fb_info, nullptr, &fb_handle));
 
+    // RGBA color attachment + single channel depth = 5 channels
+    VkDeviceSize result_bytes = 
+        sizeof(float) * fb_cfg.width * fb_cfg.height * 5;
+
+    LocalBuffer resultBuffer = alloc.makeDedicatedBuffer(result_bytes);
+
     return FramebufferState {
-        color_img,
-        color_mem,
-        depth_img,
-        depth_mem,
+        move(color),
+        move(depth),
         views,
-        fb_handle
+        fb_handle,
+        move(resultBuffer)
     };
 }
 
@@ -505,6 +342,7 @@ static VkShaderModule loadShader(const string &base_name,
 
 template<typename... LayoutType>
 static PipelineState makePipeline(const DeviceState &dev,
+                                  VkFormat color_fmt, VkFormat depth_fmt,
                                   const FramebufferConfig &fb_cfg,
                                   LayoutType... layout)
                                   
@@ -671,7 +509,7 @@ static PipelineState makePipeline(const DeviceState &dev,
 
 
     // Make pipeline
-    VkRenderPass render_pass = makeRenderPass(fb_cfg, dev);
+    VkRenderPass render_pass = makeRenderPass(dev, color_fmt, depth_fmt);
 
     VkGraphicsPipelineCreateInfo pipeline_info;
     pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -851,7 +689,7 @@ static constexpr uint32_t getMipLevels(const Texture &texture)
 SceneState CommandStreamState::loadScene(SceneAssets &&assets)
 {
     vector<HostBuffer> texture_stagings;
-    vector<LocalTexture> gpu_textures;
+    vector<LocalImage> gpu_textures;
     for (const Texture &texture : assets.textures) {
         uint64_t texture_bytes = texture.width * texture.height *
             texture.num_channels * sizeof(uint8_t);
@@ -860,50 +698,12 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
         memcpy(texture_staging.ptr, texture.raw_image.data(), texture_bytes);
         texture_staging.flush(dev);
 
-        VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
-
-        {
-            VkFormatProperties2 format_props =
-                getFormatProperties(inst, dev.phy, format);
-            
-            if ((format_props.formatProperties.optimalTilingFeatures &
-                    VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0 || 
-                (format_props.formatProperties.optimalTilingFeatures &
-                    VK_FORMAT_FEATURE_BLIT_DST_BIT) == 0 ||
-                (format_props.formatProperties.optimalTilingFeatures &
-                    VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) == 0) {
-                cerr << "Device does not support features for mipmap gen" <<
-                    endl;
-
-                fatalExit();
-            }
-        }
+        texture_stagings.emplace_back(move(texture_staging));
 
         uint32_t mip_levels = getMipLevels(texture);
-
-        VkImageCreateInfo img_info;
-        img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        img_info.pNext = nullptr;
-        img_info.flags = 0;
-        img_info.imageType = VK_IMAGE_TYPE_2D;
-        img_info.format = format;
-        img_info.extent = { texture.width, texture.height, 1 };
-        img_info.mipLevels = mip_levels;
-        img_info.arrayLayers = 1;
-        img_info.samples = VK_SAMPLE_COUNT_1_BIT;
-        img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-        img_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-            VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-            VK_IMAGE_USAGE_SAMPLED_BIT;
-        img_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        img_info.queueFamilyIndexCount = 0;
-        img_info.pQueueFamilyIndices = nullptr;
-        img_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-        LocalTexture gpu_texture = alloc.makeTexture(img_info);
-
-        texture_stagings.emplace_back(move(texture_staging));
-        gpu_textures.emplace_back(alloc.makeTexture(img_info));
+        gpu_textures.emplace_back(alloc.makeTexture(texture.width,
+                                                    texture.height,
+                                                    mip_levels));
     }
 
     VkDeviceSize vertex_bytes = assets.vertices.size() * sizeof(Vertex);
@@ -928,7 +728,7 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
     // Copy textures and generate mipmaps
     DynArray<VkImageMemoryBarrier> barriers(gpu_textures.size());
     for (size_t i = 0; i < gpu_textures.size(); i++) {
-        const LocalTexture &gpu_texture = gpu_textures[i];
+        const LocalImage &gpu_texture = gpu_textures[i];
         VkImageMemoryBarrier &barrier = barriers[i];
 
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -953,7 +753,7 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
 
     for (size_t i = 0; i < gpu_textures.size(); i++) {
         const HostBuffer &stage_buffer = texture_stagings[i];
-        const LocalTexture &gpu_texture = gpu_textures[i];
+        const LocalImage &gpu_texture = gpu_textures[i];
         VkBufferImageCopy copy_spec {};
         copy_spec.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         copy_spec.imageSubresource.mipLevel = 0;
@@ -1052,7 +852,7 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
 
     for (size_t texture_idx = 0; texture_idx < gpu_textures.size();
             texture_idx++) {
-        const LocalTexture &gpu_texture = gpu_textures[texture_idx];
+        const LocalImage &gpu_texture = gpu_textures[texture_idx];
         VkImageMemoryBarrier &barrier = barriers[texture_idx];
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -1111,7 +911,7 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
 
     for (size_t texture_idx = 0; texture_idx < gpu_textures.size();
             texture_idx++) {
-        const LocalTexture &gpu_texture = gpu_textures[texture_idx];
+        const LocalImage &gpu_texture = gpu_textures[texture_idx];
         VkImageMemoryBarrier &barrier = barriers[texture_idx];
 
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
@@ -1152,14 +952,14 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
     vector<VkDescriptorImageInfo> view_infos;
     texture_views.reserve(gpu_textures.size());
     view_infos.reserve(gpu_textures.size());
-    for (const LocalTexture &gpu_texture : gpu_textures) {
+    for (const LocalImage &gpu_texture : gpu_textures) {
         VkImageViewCreateInfo view_info;
         view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         view_info.pNext = nullptr;
         view_info.flags = 0;
         view_info.image = gpu_texture.image;
         view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_info.format = VK_FORMAT_R8G8B8A8_UNORM; // FIXME remove hardcode
+        view_info.format = alloc.getSDRTextureFormat();
         view_info.components = { 
             VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
             VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A
@@ -1329,13 +1129,17 @@ VulkanState::VulkanState(const RenderConfig &config)
     : cfg(config),
       inst(),
       dev(inst.makeDevice(cfg.gpuID)),
-      alloc(dev, inst),
+      fbCfg(getFramebufferConfig(cfg)),
       queueMgr(dev),
-      fbCfg(getFramebufferConfig(dev, inst, cfg)),
+      alloc(dev, inst),
       streamDescCfg(getStreamDescriptorConfig(dev)),
       sceneDescCfg(getSceneDescriptorConfig(dev)),
-      pipeline(makePipeline(dev, fbCfg, streamDescCfg.layout, sceneDescCfg.layout)),
-      fb(makeFramebuffer(dev, fbCfg, pipeline)),
+      pipeline(makePipeline(dev,
+                            alloc.getColorAttachmentFormat(),
+                            alloc.getDepthAttachmentFormat(),
+                            fbCfg, streamDescCfg.layout,
+                            sceneDescCfg.layout)),
+      fb(makeFramebuffer(dev, alloc, fbCfg, pipeline)),
       numStreams(0)
 {}
 

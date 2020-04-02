@@ -60,19 +60,19 @@ private:
     friend class MemoryAllocator;
 };
 
-class LocalTexture {
+class LocalImage {
 public:
-    LocalTexture(const LocalTexture &) = delete;
-    LocalTexture(LocalTexture &&o);
-    ~LocalTexture();
+    LocalImage(const LocalImage &) = delete;
+    LocalImage(LocalImage &&o);
+    ~LocalImage();
 
     uint32_t width;
     uint32_t height;
     uint32_t mipLevels;
     VkImage image;
 private:
-    LocalTexture(uint32_t width, uint32_t height, uint32_t mip_levels,
-                 VkImage image, AllocDeleter<false> deleter);
+    LocalImage(uint32_t width, uint32_t height, uint32_t mip_levels,
+               VkImage image, AllocDeleter<false> deleter);
 
     AllocDeleter<false> deleter_;
     friend class MemoryAllocator;
@@ -82,8 +82,18 @@ struct MemoryTypeIndices {
     uint32_t stageBuffer;
     uint32_t uniformBuffer;
     uint32_t localGeometryBuffer;
+    uint32_t dedicatedBuffer;
     uint32_t precomputedMipmapTexture;
     uint32_t runtimeMipmapTexture;
+    uint32_t colorAttachment;
+    uint32_t depthAttachment;
+};
+
+struct ResourceFormats {
+    VkFormat sdrTexture;
+    VkFormat hdrTexture;
+    VkFormat colorAttachment;
+    VkFormat depthAttachment;
 };
 
 class MemoryAllocator {
@@ -96,12 +106,46 @@ public:
     HostBuffer makeUniformBuffer(VkDeviceSize num_bytes);
 
     LocalBuffer makeGeometryBuffer(VkDeviceSize num_bytes);
+    LocalBuffer makeDedicatedBuffer(VkDeviceSize num_bytes);
 
-    LocalTexture makeTexture(const VkImageCreateInfo &img_info,
-                             bool precomputed_mipmaps=false);
+    LocalImage makeTexture(uint32_t width, uint32_t height,
+                           uint32_t mip_levels,
+                           bool precomputed_mipmaps=false);
+
+    LocalImage makeColorAttachment(uint32_t width, uint32_t height);
+    LocalImage makeDepthAttachment(uint32_t width, uint32_t height);
+
+    VkFormat getSDRTextureFormat() const
+    {
+        return formats_.sdrTexture;
+    }
+
+    VkFormat getHDRTextureFormat() const
+    {
+        return formats_.hdrTexture;
+    }
+
+    VkFormat getColorAttachmentFormat() const
+    {
+        return formats_.colorAttachment;
+    }
+
+    VkFormat getDepthAttachmentFormat() const
+    {
+        return formats_.depthAttachment;
+    }
 
 private:
+    HostBuffer makeHostBuffer(VkDeviceSize num_bytes,
+                              VkBufferUsageFlags usage,
+                              uint32_t mem_idx);
+
+    LocalImage makeDedicatedImage(uint32_t width, uint32_t height,
+                                  uint32_t mip_levels, VkFormat format,
+                                  VkImageUsageFlags usage, uint32_t type_idx);
+
     const DeviceState &dev;
+    ResourceFormats formats_;
     MemoryTypeIndices type_indices_;
 
     template<bool> friend class AllocDeleter;

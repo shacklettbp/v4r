@@ -9,10 +9,6 @@
 
 namespace v4r {
 
-uint32_t findMemoryTypeIndex(uint32_t allowed_type_bits,
-        VkMemoryPropertyFlags required_props,
-        VkPhysicalDeviceMemoryProperties2 &mem_props);
-
 void printVkError(VkResult res, const char *msg);
 
 static inline VkResult checkVk(VkResult res, const char *msg,

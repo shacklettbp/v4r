@@ -7,28 +7,6 @@ using namespace std;
 
 namespace v4r {
 
-uint32_t findMemoryTypeIndex(uint32_t allowed_type_bits,
-        VkMemoryPropertyFlags required_props,
-        VkPhysicalDeviceMemoryProperties2 &mem_props)
-{
-    uint32_t num_mems = mem_props.memoryProperties.memoryTypeCount;
-
-    for (uint32_t idx = 0; idx < num_mems; idx++) {
-        uint32_t mem_type_bits = (1 << idx);
-        if (!(allowed_type_bits & mem_type_bits)) continue;
-
-        VkMemoryPropertyFlags supported_props =
-            mem_props.memoryProperties.memoryTypes[idx].propertyFlags;
-
-        if ((required_props & supported_props) == required_props) {
-            return idx;
-        }
-    }
-
-    cerr << "Failed to find desired memory type" << endl;
-    fatalExit();
-}
-
 void printVkError(VkResult res, const char *msg)
 {
 #define ERR_CASE(val) case VK_##val: cerr << #val; break

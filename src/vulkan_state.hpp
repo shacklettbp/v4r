@@ -79,7 +79,7 @@ struct SceneAssets {
 };
 
 struct SceneState {
-    std::vector<LocalTexture> textures;
+    std::vector<LocalImage> textures;
     std::vector<VkImageView> texture_views;
     std::vector<Material> materials;
     DescriptorSet textureSet;
@@ -106,29 +106,18 @@ struct FramebufferConfig {
 public:
     uint32_t width;
     uint32_t height;
-
-    VkFormat colorFmt;
-    VkImageCreateInfo colorCreationSettings;
-    VkDeviceSize colorMemorySize;
-    uint32_t colorMemoryTypeIdx;
-
-    VkFormat depthFmt;
-    VkImageCreateInfo depthCreationSettings;
-    VkDeviceSize depthMemorySize;
-    uint32_t depthMemoryTypeIdx;
 };
 
 struct FramebufferState {
 public:
-    VkImage colorImg;
-    VkDeviceMemory colorMem;
-
-    VkImage depthImg;
-    VkDeviceMemory depthMem;
+    LocalImage colorImg;
+    LocalImage depthImg;
 
     std::array<VkImageView, 2> attachmentViews; 
 
     VkFramebuffer hdl;
+
+    LocalBuffer resultBuffer;
 };
 
 // FIXME separate out things like the layout, cache (maybe renderpass)
@@ -270,13 +259,14 @@ public:
     CommandStreamState makeStreamState();
 
     const RenderConfig cfg;
+    const FramebufferConfig fbCfg;
 
     const InstanceState inst;
     const DeviceState dev;
-    MemoryAllocator alloc;
-    QueueManager queueMgr;
 
-    const FramebufferConfig fbCfg;
+    QueueManager queueMgr;
+    MemoryAllocator alloc;
+
     const PerStreamDescriptorConfig streamDescCfg;
     const PerSceneDescriptorConfig sceneDescCfg;
     const PipelineState pipeline;
