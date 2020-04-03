@@ -14,10 +14,12 @@ struct CommandStreamState;
 struct CameraState;
 class SceneID;
 class SceneManager;
+class CudaState;
 
 struct RenderResult {
 public:
-    void *cudaDevicePtr;
+    void *colorPtr;
+    void *depthPtr;
 };
 
 class Camera {
@@ -75,6 +77,7 @@ public:
 private:
     std::unique_ptr<VulkanState> state_;
     std::unique_ptr<SceneManager> scene_mgr_;
+    std::unique_ptr<CudaState> cuda_;
 };
 
 }

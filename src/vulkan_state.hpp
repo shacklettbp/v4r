@@ -107,6 +107,8 @@ struct FramebufferConfig {
 public:
     uint32_t width;
     uint32_t height;
+
+    uint64_t linearBytes;
 };
 
 struct FramebufferState {
@@ -119,6 +121,7 @@ public:
     VkFramebuffer hdl;
 
     LocalBuffer resultBuffer;
+    VkDeviceMemory resultMem;
 };
 
 // FIXME separate out things like the layout, cache (maybe renderpass)
@@ -222,7 +225,8 @@ public:
     SceneState loadScene(SceneAssets &&assets);
     StreamSceneState initStreamSceneState(const SceneState &scene);
     void cleanupStreamSceneState(const StreamSceneState &scene);
-    VkBuffer render(const StreamSceneState &scene, const CameraState &camera);
+    std::pair<VkDeviceSize, VkDeviceSize> render(
+            const StreamSceneState &scene, const CameraState &camera);
 
     const InstanceState &inst;
     const DeviceState &dev;
@@ -249,8 +253,8 @@ private:
     uint32_t fb_y_pos_;
     uint32_t render_width_;
     uint32_t render_height_;
-    uint32_t color_buffer_offset_;
-    uint32_t depth_buffer_offset_;
+    VkDeviceSize color_buffer_offset_;
+    VkDeviceSize depth_buffer_offset_;
 };
 
 struct VulkanState {
@@ -260,6 +264,8 @@ public:
     VulkanState(VulkanState &&) = delete;
 
     CommandStreamState makeStreamState();
+    int getFramebufferFD() const;
+    uint64_t getFramebufferBytes() const;
 
     const RenderConfig cfg;
 

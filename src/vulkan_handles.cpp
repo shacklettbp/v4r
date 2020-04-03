@@ -18,11 +18,17 @@ extern "C" {
 namespace v4r {
 
 static const char *instance_extensions[] = {
-    //VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME
+};
+
+static const char *device_extensions[] = {
+    VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME
 };
 
 static constexpr uint32_t num_instance_extensions =
     sizeof(instance_extensions) / sizeof(const char *);
+
+static constexpr uint32_t num_device_extensions =
+    sizeof(device_extensions) / sizeof(const char *);
 
 static VkInstance createInstance()
 {
@@ -167,6 +173,8 @@ DeviceState InstanceState::makeDevice(const uint32_t gpu_id) const
     dev_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     dev_create_info.queueCreateInfoCount = 3;
     dev_create_info.pQueueCreateInfos = queue_infos.data();
+    dev_create_info.enabledExtensionCount = num_device_extensions;
+    dev_create_info.ppEnabledExtensionNames = device_extensions;
 
     // Enable sampler anisotropy
     dev_create_info.pEnabledFeatures = nullptr;

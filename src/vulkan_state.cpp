@@ -61,7 +61,9 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
 
     return FramebufferConfig {
         fb_width,
-        fb_height
+        fb_height,
+        // RGBA color attachment + single channel depth = 5 channels
+        sizeof(float) * fb_width * fb_height * 5
     };
 }
 
@@ -255,18 +257,16 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     VkFramebuffer fb_handle;
     REQ_VK(dev.dt.createFramebuffer(dev.hdl, &fb_info, nullptr, &fb_handle));
 
-    // RGBA color attachment + single channel depth = 5 channels
-    VkDeviceSize result_bytes = 
-        sizeof(float) * fb_cfg.width * fb_cfg.height * 5;
-
-    LocalBuffer resultBuffer = alloc.makeDedicatedBuffer(result_bytes);
+    auto [result_buffer, result_mem] =
+        alloc.makeDedicatedBuffer(fb_cfg.linearBytes);
 
     return FramebufferState {
         move(color),
         move(depth),
         views,
         fb_handle,
-        move(resultBuffer)
+        move(result_buffer),
+        result_mem
     };
 }
 
@@ -355,10 +355,9 @@ static PipelineState makePipeline(const DeviceState &dev,
         }
     }};
 
-    array<VkVertexInputAttributeDescription, 3> input_attrs {{
+    array<VkVertexInputAttributeDescription, 2> input_attrs {{
         { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, position) }, // Position
-        { 1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, uv) }, // UV
-        { 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, color) } // Color
+        { 1, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, uv) } // UV
     }};
 
     VkPipelineVertexInputStateCreateInfo vert_info;
@@ -429,6 +428,11 @@ static PipelineState makePipeline(const DeviceState &dev,
     // Blend
     VkPipelineColorBlendAttachmentState blend_attach_state {};
     blend_attach_state.blendEnable = VK_FALSE;
+    blend_attach_state.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT |
+        VK_COLOR_COMPONENT_G_BIT |
+        VK_COLOR_COMPONENT_B_BIT |
+        VK_COLOR_COMPONENT_A_BIT;
 
     VkPipelineColorBlendStateCreateInfo blend_info {};
     blend_info.sType =
@@ -1176,8 +1180,8 @@ void CommandStreamState::cleanupStreamSceneState(const StreamSceneState &scene)
                               1, &scene.copyCommand);
 }
 
-VkBuffer CommandStreamState::render(const StreamSceneState &scene,
-                                    const CameraState &camera)
+pair<VkDeviceSize, VkDeviceSize> CommandStreamState::render(
+        const StreamSceneState &scene, const CameraState &camera)
 {
     streamDescState.update(dev, PerViewUBO {
         camera.projection * camera.view
@@ -1206,7 +1210,7 @@ VkBuffer CommandStreamState::render(const StreamSceneState &scene,
     waitForFenceInfinitely(dev, fence);
     REQ_VK(dev.dt.resetFences(dev.hdl, 1, &fence));
 
-    return VK_NULL_HANDLE;
+    return pair(color_buffer_offset_, depth_buffer_offset_);
 }
 
 VulkanState::VulkanState(const RenderConfig &config)
@@ -1249,6 +1253,25 @@ CommandStreamState VulkanState::makeStreamState()
                               cfg.imgWidth,
                               cfg.imgHeight,
                               stream_idx);
+}
+
+int VulkanState::getFramebufferFD() const
+{
+    VkMemoryGetFdInfoKHR fd_info;
+    fd_info.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
+    fd_info.pNext = nullptr;
+    fd_info.memory = fb.resultMem;
+    fd_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+
+    int fd;
+    REQ_VK(dev.dt.getMemoryFdKHR(dev.hdl, &fd_info, &fd));
+
+    return fd;
+}
+
+uint64_t VulkanState::getFramebufferBytes() const
+{
+    return fbCfg.linearBytes;
 }
 
 }

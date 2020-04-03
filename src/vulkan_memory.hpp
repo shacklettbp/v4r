@@ -1,6 +1,8 @@
 #ifndef VULKAN_MEMORY_HPP_INCLUDED
 #define VULKAN_MEMORY_HPP_INCLUDED
 
+#include <utility>
+
 #include "vulkan_handles.hpp"
 
 namespace v4r {
@@ -106,7 +108,8 @@ public:
     HostBuffer makeUniformBuffer(VkDeviceSize num_bytes);
 
     LocalBuffer makeGeometryBuffer(VkDeviceSize num_bytes);
-    LocalBuffer makeDedicatedBuffer(VkDeviceSize num_bytes);
+    std::pair<LocalBuffer, VkDeviceMemory> makeDedicatedBuffer(
+            VkDeviceSize num_bytes);
 
     LocalImage makeTexture(uint32_t width, uint32_t height,
                            uint32_t mip_levels,

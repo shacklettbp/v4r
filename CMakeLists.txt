@@ -14,7 +14,7 @@ ENDIF()
 
 set(HEADLESS "On" CACHE STRING "Headless rendering")
 
-project(${NAME} LANGUAGES CXX)
+project(${NAME} LANGUAGES CXX CUDA)
 
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 17)

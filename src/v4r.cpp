@@ -6,6 +6,7 @@
 
 #include <v4r.hpp>
 
+#include "cuda_state.hpp"
 #include "dispatch.hpp"
 #include "vulkan_state.hpp"
 #include "scene.hpp"
@@ -68,9 +69,12 @@ CommandStream::CommandStream(CommandStream::StreamStateHandle &&state,
 
 RenderResult CommandStream::render(const SceneHandle &scene, const Camera &camera)
 {
-    VkBuffer buf = state_->render(scene->getStreamState(), camera.getState());
+    auto [color_off, depth_off] = state_->render(scene->getStreamState(),
+                                                 camera.getState());
+
     return RenderResult {
-        nullptr
+        global_.cuda_->getPointer(color_off),
+        global_.cuda_->getPointer(depth_off)
     };
 }
 
@@ -88,9 +92,10 @@ void CommandStream::dropScene(RenderContext::SceneHandle &&handle)
 
 RenderContext::RenderContext(const RenderConfig &cfg)
     : state_(make_unique<VulkanState>(cfg)),
-      scene_mgr_(make_unique<SceneManager>())
-{
-}
+      scene_mgr_(make_unique<SceneManager>()),
+      cuda_(make_unique<CudaState>(state_->getFramebufferFD(),
+                                   state_->getFramebufferBytes()))
+{}
 
 RenderContext::~RenderContext() = default;
 

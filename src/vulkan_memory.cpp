@@ -451,7 +451,8 @@ LocalBuffer MemoryAllocator::makeGeometryBuffer(VkDeviceSize num_bytes)
     return LocalBuffer(buffer, AllocDeleter<false>(memory, *this));
 }
 
-LocalBuffer MemoryAllocator::makeDedicatedBuffer(VkDeviceSize num_bytes)
+pair<LocalBuffer, VkDeviceMemory> MemoryAllocator::makeDedicatedBuffer(
+        VkDeviceSize num_bytes)
 {
     auto [buffer, reqs] = makeUnboundBuffer(dev, num_bytes,
                                             BufferFlags::dedicatedUsage);
@@ -471,7 +472,8 @@ LocalBuffer MemoryAllocator::makeDedicatedBuffer(VkDeviceSize num_bytes)
     REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &memory));
     REQ_VK(dev.dt.bindBufferMemory(dev.hdl, buffer, memory, 0));
 
-    return LocalBuffer(buffer, AllocDeleter<false>(memory, *this));
+    return pair(LocalBuffer(buffer, AllocDeleter<false>(memory, *this)),
+                memory);
 }
 
 LocalImage MemoryAllocator::makeTexture(uint32_t width, uint32_t height,
