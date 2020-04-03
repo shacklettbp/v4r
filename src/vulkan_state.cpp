@@ -191,40 +191,6 @@ static VkRenderPass makeRenderPass(const DeviceState &dev,
     subpass_desc.pColorAttachments = &attachment_refs[0];
     subpass_desc.pDepthStencilAttachment = &attachment_refs[1];
 
-    const VkPipelineStageFlags write_stages =
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-
-    // FIXME is the incoming memory dependency necessary here
-    // to prevent overwriting with a new draw call before the transfer
-    // out is finished
-
-    array<VkSubpassDependency, 2> subpass_deps {{
-        {
-            VK_SUBPASS_EXTERNAL,
-            0,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
-            write_stages,
-            VK_ACCESS_TRANSFER_READ_BIT,
-            VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
-                VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
-                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-           0
-        },
-        {
-            0,
-            VK_SUBPASS_EXTERNAL,
-            write_stages,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            VK_ACCESS_TRANSFER_READ_BIT,
-            0
-        }
-    }};
-
     VkRenderPassCreateInfo render_pass_info;
     render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     render_pass_info.pNext = nullptr;
@@ -234,9 +200,8 @@ static VkRenderPass makeRenderPass(const DeviceState &dev,
     render_pass_info.pAttachments = attachment_descs.data();
     render_pass_info.subpassCount = 1;
     render_pass_info.pSubpasses = &subpass_desc;
-    render_pass_info.dependencyCount =
-        static_cast<uint32_t>(subpass_deps.size());
-    render_pass_info.pDependencies = subpass_deps.data();
+    render_pass_info.dependencyCount = 0;
+    render_pass_info.pDependencies = nullptr;
 
     VkRenderPass render_pass;
     REQ_VK(dev.dt.createRenderPass(dev.hdl, &render_pass_info,
@@ -663,12 +628,11 @@ CommandStreamState::CommandStreamState(
       gfxPool(makeCmdPool(dev.gfxQF, dev)),
       gfxQueue(queue_manager.allocateGraphicsQueue()),
       gfxCopyCommand(makeCmdBuffer(gfxPool, dev)),
-      renderFence(makeFence(dev)),
       transferPool(makeCmdPool(dev.transferQF, dev)),
       transferQueue(queue_manager.allocateTransferQueue()),
       transferStageCommand(makeCmdBuffer(transferPool, dev)),
-      copySemaphore(makeBinarySemaphore(dev)),
-      copyFence(makeFence(dev)),
+      semaphore(makeBinarySemaphore(dev)),
+      fence(makeFence(dev)),
       alloc(alc),
       descriptorManager(dev, scene_desc_cfg.layout),
       streamDescState(dev, stream_desc_cfg, alloc),
@@ -677,7 +641,15 @@ CommandStreamState::CommandStreamState(
       fb_y_pos_(
         (stream_idx / VulkanConfig::num_fb_images_wide) * render_height),
       render_width_(render_width),
-      render_height_(render_height)
+      render_height_(render_height),
+      color_buffer_offset_((fb_y_pos_ * VulkanConfig::num_fb_images_wide *
+                           render_width_ + fb_x_pos_) * sizeof(float) * 4),
+      depth_buffer_offset_(VulkanConfig::num_fb_images_wide * render_width_ *
+                           VulkanConfig::num_fb_images_tall * render_height_ *
+                           sizeof(float) * 4 + 
+                           (fb_y_pos_ * VulkanConfig::num_fb_images_wide *
+                            render_width_ + fb_x_pos_) * sizeof(float))
+
 {}
 
 static constexpr uint32_t getMipLevels(const Texture &texture)
@@ -815,7 +787,7 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
     copy_submit.commandBufferCount = 1;
     copy_submit.pCommandBuffers = &transferStageCommand;
     copy_submit.signalSemaphoreCount = 1;
-    copy_submit.pSignalSemaphores = &copySemaphore;
+    copy_submit.pSignalSemaphores = &semaphore;
 
     transferQueue.submit(dev, 1, &copy_submit, VK_NULL_HANDLE);
 
@@ -933,20 +905,17 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
     VkSubmitInfo gfx_submit{};
     gfx_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     gfx_submit.waitSemaphoreCount = 1;
-    gfx_submit.pWaitSemaphores = &copySemaphore;
-    // FIXME is this right?
+    gfx_submit.pWaitSemaphores = &semaphore;
     VkPipelineStageFlags sema_wait_mask = 
-        VK_PIPELINE_STAGE_TRANSFER_BIT |
-        VK_PIPELINE_STAGE_VERTEX_INPUT_BIT |
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     gfx_submit.pWaitDstStageMask = &sema_wait_mask;
     gfx_submit.commandBufferCount = 1;
     gfx_submit.pCommandBuffers = &gfxCopyCommand;
 
-    gfxQueue.submit(dev, 1, &gfx_submit, copyFence);
+    gfxQueue.submit(dev, 1, &gfx_submit, fence);
 
-    waitForFenceInfinitely(dev, copyFence);
-    REQ_VK(dev.dt.resetFences(dev.hdl, 1, &copyFence));
+    waitForFenceInfinitely(dev, fence);
+    REQ_VK(dev.dt.resetFences(dev.hdl, 1, &fence));
 
     vector<VkImageView> texture_views;
     vector<VkDescriptorImageInfo> view_infos;
@@ -1090,17 +1059,121 @@ StreamSceneState CommandStreamState::initStreamSceneState(
 
     dev.dt.cmdEndRenderPass(render_command);
 
-    // Copy to buffer
+    const VkPipelineStageFlags write_stages =
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+
+    array<VkImageMemoryBarrier, 2> barriers {{
+        {
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            nullptr,
+            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            0,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            dev.gfxQF,
+            dev.transferQF,
+            fb.color.image,
+            {
+                VK_IMAGE_ASPECT_COLOR_BIT,
+                0, 1, 0, 1
+            }
+        },
+        {
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            nullptr,
+            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            0,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            dev.gfxQF,
+            dev.transferQF,
+            fb.depth.image,
+            {
+                VK_IMAGE_ASPECT_DEPTH_BIT,
+                0, 1, 0, 1
+            }
+        }
+    }};
+
+    dev.dt.cmdPipelineBarrier(render_command,
+                              write_stages,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              VK_DEPENDENCY_BY_REGION_BIT,
+                              0, nullptr, 0, nullptr,
+                              static_cast<uint32_t>(barriers.size()),
+                              barriers.data());
 
     REQ_VK(dev.dt.endCommandBuffer(render_command));
+
+    VkCommandBuffer copy_command = makeCmdBuffer(transferPool, dev);
+    REQ_VK(dev.dt.beginCommandBuffer(copy_command, &begin_info));
+
+    barriers[0].srcAccessMask = 0;
+    barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    barriers[1].srcAccessMask = 0;
+    barriers[1].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+    dev.dt.cmdPipelineBarrier(copy_command,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              VK_DEPENDENCY_BY_REGION_BIT,
+                              0, nullptr, 0, nullptr,
+                              static_cast<uint32_t>(barriers.size()),
+                              barriers.data());
+
+    VkBufferImageCopy copy_info;
+    copy_info.bufferOffset = color_buffer_offset_;
+    copy_info.bufferRowLength = 0;
+    copy_info.bufferImageHeight = 0;
+    copy_info.imageSubresource = {
+        VK_IMAGE_ASPECT_COLOR_BIT,
+        0, 0, 1
+    };
+    copy_info.imageOffset = {
+        static_cast<int32_t>(fb_x_pos_),
+        static_cast<int32_t>(fb_y_pos_),
+        0
+    };
+    copy_info.imageExtent = {
+        render_width_,
+        render_height_,
+        1
+    };
+
+    dev.dt.cmdCopyImageToBuffer(copy_command,
+                                fb.color.image,
+                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                fb.resultBuffer.buffer,
+                                1,
+                                &copy_info);
+
+    copy_info.bufferOffset = depth_buffer_offset_;
+    copy_info.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+
+    dev.dt.cmdCopyImageToBuffer(copy_command,
+                                fb.depth.image,
+                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                fb.resultBuffer.buffer,
+                                1,
+                                &copy_info);
+
+    REQ_VK(dev.dt.endCommandBuffer(copy_command));
+
     return StreamSceneState {
-        render_command
+        render_command,
+        copy_command
     };
 }
 
 void CommandStreamState::cleanupStreamSceneState(const StreamSceneState &scene)
-{
-    dev.dt.freeCommandBuffers(dev.hdl, gfxPool, 1, &scene.renderCommand);
+{   
+    dev.dt.freeCommandBuffers(dev.hdl, gfxPool,
+                              1, &scene.renderCommand);
+
+    dev.dt.freeCommandBuffers(dev.hdl, transferPool,
+                              1, &scene.copyCommand);
 }
 
 VkBuffer CommandStreamState::render(const StreamSceneState &scene,
@@ -1110,17 +1183,28 @@ VkBuffer CommandStreamState::render(const StreamSceneState &scene,
         camera.projection * camera.view
     });
 
-    VkSubmitInfo render_submit{};
-    render_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    render_submit.commandBufferCount = 1;
-    render_submit.pCommandBuffers = &scene.renderCommand;
-    render_submit.signalSemaphoreCount = 0;
-    render_submit.pSignalSemaphores = nullptr;
+    VkSubmitInfo gfx_submit {
+        VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        nullptr,
+        0, nullptr, nullptr,
+        1, &scene.renderCommand,
+        1, &semaphore
+    };
 
-    gfxQueue.submit(dev, 1, &render_submit, renderFence);
+    gfxQueue.submit(dev, 1, &gfx_submit, VK_NULL_HANDLE);
 
-    waitForFenceInfinitely(dev, renderFence);
-    REQ_VK(dev.dt.resetFences(dev.hdl, 1, &renderFence));
+    VkPipelineStageFlags sema_wait_mask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    VkSubmitInfo transfer_submit {
+        VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        nullptr,
+        1, &semaphore, &sema_wait_mask,
+        1, &scene.copyCommand,
+        0, nullptr
+    };
+
+    transferQueue.submit(dev, 1, &transfer_submit, fence);
+    waitForFenceInfinitely(dev, fence);
+    REQ_VK(dev.dt.resetFences(dev.hdl, 1, &fence));
 
     return VK_NULL_HANDLE;
 }
@@ -1129,9 +1213,9 @@ VulkanState::VulkanState(const RenderConfig &config)
     : cfg(config),
       inst(),
       dev(inst.makeDevice(cfg.gpuID)),
-      fbCfg(getFramebufferConfig(cfg)),
       queueMgr(dev),
       alloc(dev, inst),
+      fbCfg(getFramebufferConfig(cfg)),
       streamDescCfg(getStreamDescriptorConfig(dev)),
       sceneDescCfg(getSceneDescriptorConfig(dev)),
       pipeline(makePipeline(dev,

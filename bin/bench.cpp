@@ -10,7 +10,7 @@ using namespace std;
 using namespace v4r;
 
 constexpr int num_frames = 10000;
-constexpr int num_threads = 1;
+constexpr int num_threads = 16;
 constexpr int frames_per_thread = num_frames / num_threads;
 
 int main(int argc, char *argv[]) {

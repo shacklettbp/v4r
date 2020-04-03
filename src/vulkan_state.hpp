@@ -91,6 +91,7 @@ struct SceneState {
 
 struct StreamSceneState {
     const VkCommandBuffer renderCommand;
+    const VkCommandBuffer copyCommand;
 };
 
 struct PerSceneDescriptorConfig {
@@ -110,8 +111,8 @@ public:
 
 struct FramebufferState {
 public:
-    LocalImage colorImg;
-    LocalImage depthImg;
+    LocalImage color;
+    LocalImage depth;
 
     std::array<VkImageView, 2> attachmentViews; 
 
@@ -231,13 +232,13 @@ public:
     const VkCommandPool gfxPool;
     const QueueState &gfxQueue;
     const VkCommandBuffer gfxCopyCommand;
-    const VkFence renderFence;
 
     const VkCommandPool transferPool;
     const QueueState &transferQueue;
     const VkCommandBuffer transferStageCommand;
-    const VkSemaphore copySemaphore;
-    const VkFence copyFence;
+
+    const VkSemaphore semaphore;
+    const VkFence fence;
 
     MemoryAllocator &alloc;
     DescriptorManager descriptorManager;
@@ -248,6 +249,8 @@ private:
     uint32_t fb_y_pos_;
     uint32_t render_width_;
     uint32_t render_height_;
+    uint32_t color_buffer_offset_;
+    uint32_t depth_buffer_offset_;
 };
 
 struct VulkanState {
@@ -259,7 +262,6 @@ public:
     CommandStreamState makeStreamState();
 
     const RenderConfig cfg;
-    const FramebufferConfig fbCfg;
 
     const InstanceState inst;
     const DeviceState dev;
@@ -267,6 +269,7 @@ public:
     QueueManager queueMgr;
     MemoryAllocator alloc;
 
+    const FramebufferConfig fbCfg;
     const PerStreamDescriptorConfig streamDescCfg;
     const PerSceneDescriptorConfig sceneDescCfg;
     const PipelineState pipeline;
