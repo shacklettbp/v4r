@@ -19,7 +19,14 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    RenderContext ctx({0, 128, 128});
+    RenderContext ctx({0, 128, 128,
+        glm::mat4(
+            1, 0, 0, 0,
+            0, -1.19209e-07, -1, 0,
+            0, 1, -1.19209e-07, 0,
+            0, 0, 0, 1
+        )
+    });
 
     vector<RenderContext::SceneHandle> handles;
     vector<RenderContext::CommandStream> streams;
@@ -31,10 +38,10 @@ int main(int argc, char *argv[]) {
         auto cmd_stream = ctx.makeCommandStream();
         handles.emplace_back(move(cmd_stream.loadScene(argv[1])));
         streams.emplace_back(move(cmd_stream));
-        cameras.emplace_back(60, 1, 0.1, 1000,
+        cameras.emplace_back(ctx.makeCamera(60, 0.01, 1000,
                              glm::vec3(1.f, 1.f, 0.f),
                              glm::vec3(0.f, 1.f, 0.f),
-                             glm::vec3(0.f, 1.f, 0.f));
+                             glm::vec3(0.f, 1.f, 0.f)));
     }
 
     vector<thread> threads;

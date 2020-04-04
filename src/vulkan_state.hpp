@@ -223,8 +223,10 @@ public:
     CommandStreamState(CommandStreamState &&) = default;
 
     SceneState loadScene(SceneAssets &&assets);
+
     StreamSceneState initStreamSceneState(const SceneState &scene);
     void cleanupStreamSceneState(const StreamSceneState &scene);
+
     std::pair<VkDeviceSize, VkDeviceSize> render(
             const StreamSceneState &scene, const CameraState &camera);
 

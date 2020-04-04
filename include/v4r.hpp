@@ -24,15 +24,20 @@ public:
 
 class Camera {
 public:
-    Camera(float fov, float aspect, float near, float far,
+    Camera(float hfov, uint32_t width, uint32_t height, float near, float far,
+           const glm::mat4 &view);
+
+    Camera(float hfov, uint32_t width, uint32_t height, float near, float far,
            const glm::vec3 &eye_pos, const glm::vec3 &look_pos,
            const glm::vec3 &up);
+
     Camera(const Camera &) = delete;
     Camera(Camera &&o);
     ~Camera();
 
     void rotate(float angle, const glm::vec3 &axis);
     void translate(const glm::vec3 &v);
+    void setView(const glm::mat4 &m);
 
     const CameraState & getState() const;
 
@@ -71,6 +76,13 @@ public:
 
     RenderContext(const RenderConfig &cfg);
     ~RenderContext();
+
+    Camera makeCamera(float hfov, float near, float far,
+                      const glm::mat4 &view) const;
+
+    Camera makeCamera(float hfov, float near, float far,
+                      const glm::vec3 &eye_pos, const glm::vec3 &look_pos,
+                      const glm::vec3 &up) const;
 
     CommandStream makeCommandStream();
 

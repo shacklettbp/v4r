@@ -11,7 +11,8 @@ namespace v4r {
 
 class Scene {
 public:
-    Scene(const std::string &scene_path, CommandStreamState &renderer_state);
+    Scene(const std::string &scene_path, CommandStreamState &renderer_state,
+          const glm::mat4 &coordinate_transform);
 
     const std::string & getPath() const { return path_; }
     void refIncrement() { ref_count_++; }
@@ -46,7 +47,7 @@ private:
 
 class SceneManager {
 public:
-    SceneManager();
+    SceneManager(const glm::mat4 &coordinate_transform);
 
     SceneID loadScene(const std::string &scene_path,
                       CommandStreamState &renderer_state);
@@ -54,6 +55,7 @@ public:
                    CommandStreamState &renderer_state);
 
 private:
+    glm::mat4 coordinate_txfm_;
     std::mutex load_mutex_;
     std::list<Scene> scenes_;
     std::unordered_map<std::string, std::list<Scene>::iterator> scene_lookup_;

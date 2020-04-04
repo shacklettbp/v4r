@@ -10,6 +10,8 @@
 #include <optional>
 #include <vector>
 
+#include <glm/gtx/string_cast.hpp>
+
 using namespace std;
 
 namespace v4r {
@@ -24,12 +26,12 @@ static PerSceneDescriptorConfig getSceneDescriptorConfig(
     sampler_info.magFilter = VK_FILTER_LINEAR;
     sampler_info.minFilter = VK_FILTER_LINEAR;
     sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     sampler_info.mipLodBias = 0;
-    sampler_info.anisotropyEnable = VK_TRUE;
-    sampler_info.maxAnisotropy = 16.f;
+    sampler_info.anisotropyEnable = VK_FALSE;
+    sampler_info.maxAnisotropy = 0;
     sampler_info.compareEnable = VK_FALSE;
     sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
     sampler_info.minLod = 0;
@@ -410,7 +412,7 @@ static PipelineState makePipeline(const DeviceState &dev,
     raster_info.rasterizerDiscardEnable = VK_FALSE;
     raster_info.polygonMode = VK_POLYGON_MODE_FILL;
     raster_info.cullMode = VK_CULL_MODE_BACK_BIT;
-    raster_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    raster_info.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     raster_info.depthBiasEnable = VK_FALSE;
     raster_info.lineWidth = 1.0f;
     
@@ -653,7 +655,6 @@ CommandStreamState::CommandStreamState(
                            sizeof(float) * 4 + 
                            (fb_y_pos_ * VulkanConfig::num_fb_images_wide *
                             render_width_ + fb_x_pos_) * sizeof(float))
-
 {}
 
 static constexpr uint32_t getMipLevels(const Texture &texture)

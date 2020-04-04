@@ -12,24 +12,34 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    RenderContext ctx({0, 128, 128});
+    RenderContext ctx({0, 800, 600,
+        glm::mat4(
+            1, 0, 0, 0,
+            0, -1.19209e-07, -1, 0,
+            0, 1, -1.19209e-07, 0,
+            0, 0, 0, 1
+        )
+    });
+
+    Camera cam = ctx.makeCamera(90, 0.01, 1000,
+        glm::transpose(
+            glm::mat4(1, -0, 0, 3.75057,
+                      -0, 1, -0, -1.64849,
+                      0, -0, 1, 1.16259,
+                      -0, 0, -0, 1)));
+
     auto cmd_stream = ctx.makeCommandStream();
 
     RenderDoc rdoc {};
 
     auto scene_handle = cmd_stream.loadScene(argv[1]);
 
-    Camera cam(60, 1, 0.001, 1000,
-               glm::vec3(1.f, 1.f, 0.f),
-               glm::vec3(0.f, 1.f, 0.f),
-               glm::vec3(0.f, 1.f, 0.f));
-
     rdoc.startFrame();
     auto frame = cmd_stream.render(scene_handle, cam);
     rdoc.endFrame();
 
-    saveFrame("/tmp/out_color.bmp", frame.colorPtr, 128, 128, 4);
-    saveFrame("/tmp/out_depth.bmp", frame.depthPtr, 128, 128, 1);
+    saveFrame("/tmp/out_color.bmp", frame.colorPtr, 800, 600, 4);
+    saveFrame("/tmp/out_depth.bmp", frame.depthPtr, 800, 600, 1);
 
     cmd_stream.dropScene(move(scene_handle));
 }

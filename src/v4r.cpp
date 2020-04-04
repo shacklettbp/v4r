@@ -29,13 +29,30 @@ void RenderContext::HandleDeleter<T>::operator()(T *ptr) const
 template struct RenderContext::HandleDeleter<SceneID>;
 template struct RenderContext::HandleDeleter<CommandStreamState>;
 
-Camera::Camera(float fov, float aspect, float near, float far,
-               const glm::vec3 &eye_pos, const glm::vec3 &look_pos,
-               const glm::vec3 &up)
+glm::mat4 makePerspectiveMatrix(float hfov, uint32_t width, uint32_t height,
+                                float near, float far)
+{
+    float aspect = static_cast<float>(width) / static_cast<float>(height);
+    float half_tan = tan(glm::radians(hfov) / 2.f);
+    return glm::mat4(1.f / half_tan, 0.f, 0.f, 0.f,
+                     0.f, -aspect / half_tan, 0.f, 0.f,
+                     0.f, 0.f, far / (near - far), -1.f,
+                     0.f, 0.f, far * near / (near - far), 0.f);
+}
+
+Camera::Camera(float hfov, uint32_t width, uint32_t height, float near,
+               float far, const glm::mat4 &view)
     : state_(new CameraState {
-        glm::perspective(fov, aspect, near, far),
-        glm::lookAt(eye_pos, look_pos, up)
+        makePerspectiveMatrix(hfov, width, height, near, far),
+        view
     })
+{}
+
+Camera::Camera(float hfov, uint32_t width, uint32_t height, float near,
+               float far, const glm::vec3 &eye_pos, const glm::vec3 &look_pos,
+               const glm::vec3 &up)
+    : Camera(hfov, width, height, near, far,
+             glm::lookAt(eye_pos, look_pos, up))
 {}
 
 Camera::Camera(Camera &&o)
@@ -52,6 +69,11 @@ void Camera::rotate(float angle, const glm::vec3 &axis)
 void Camera::translate(const glm::vec3 &v)
 {
     glm::translate(state_->view, v);
+}
+
+void Camera::setView(const glm::mat4 &m)
+{
+    state_->view = m;
 }
 
 const CameraState & Camera::getState() const
@@ -92,12 +114,28 @@ void CommandStream::dropScene(RenderContext::SceneHandle &&handle)
 
 RenderContext::RenderContext(const RenderConfig &cfg)
     : state_(make_unique<VulkanState>(cfg)),
-      scene_mgr_(make_unique<SceneManager>()),
+      scene_mgr_(make_unique<SceneManager>(cfg.coordinateTransform)),
       cuda_(make_unique<CudaState>(state_->getFramebufferFD(),
                                    state_->getFramebufferBytes()))
 {}
 
 RenderContext::~RenderContext() = default;
+
+Camera RenderContext::makeCamera(float hfov, float near, float far,
+                                 const glm::vec3 &eye_pos,
+                                 const glm::vec3 &look_pos,
+                                 const glm::vec3 &up) const
+{
+    return Camera(hfov, state_->cfg.imgWidth, state_->cfg.imgHeight,
+                  near, far, eye_pos, look_pos, up);
+}
+
+Camera RenderContext::makeCamera(float hfov, float near, float far,
+                                 const glm::mat4 &view) const
+{
+    return Camera(hfov, state_->cfg.imgWidth, state_->cfg.imgHeight,
+                  near, far, view);
+}
 
 RenderContext::CommandStream RenderContext::makeCommandStream()
 {

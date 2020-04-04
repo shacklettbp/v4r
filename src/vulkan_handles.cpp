@@ -176,12 +176,13 @@ DeviceState InstanceState::makeDevice(const uint32_t gpu_id) const
     dev_create_info.enabledExtensionCount = num_device_extensions;
     dev_create_info.ppEnabledExtensionNames = device_extensions;
 
-    // Enable sampler anisotropy
+    // Would enable sampler anisotropy here but current habitat
+    // does not use it
     dev_create_info.pEnabledFeatures = nullptr;
     VkPhysicalDeviceFeatures2 requested_features {};
     requested_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     requested_features.pNext = nullptr;
-    requested_features.features.samplerAnisotropy = true;
+    requested_features.features.samplerAnisotropy = false;
     dev_create_info.pNext = &requested_features;
 
     VkDevice dev;

@@ -76,7 +76,7 @@ static const optional<uint64_t> loadTexture(const aiScene *raw_scene,
     }
 }
 
-static SceneAssets loadAssets(const string &scene_path)
+static SceneAssets loadAssets(const string &scene_path, const glm::mat4 &coordinate_txfm)
 {
     Assimp::Importer importer;
     int flags = aiProcess_PreTransformVertices | aiProcess_Triangulate;
@@ -159,16 +159,27 @@ static SceneAssets loadAssets(const string &scene_path)
         for (uint32_t vert_idx = 0; vert_idx < raw_mesh->mNumVertices;
                 vert_idx++) {
             glm::vec3 pos = glm::make_vec3(&raw_mesh->mVertices[vert_idx].x);
-            pos.y = -pos.y;
+
+            glm::vec2 uv;
+            if (has_uv) {
+                const auto &raw_uv = raw_mesh->mTextureCoords[0][vert_idx];
+                uv = glm::vec2(raw_uv.x, 1.f - raw_uv.y);
+            } else {
+                uv = glm::vec2(0.f);
+            }
+
+            glm::vec3 color;
+            if (has_color) {
+                const auto raw_color = &raw_mesh->mColors[0][vert_idx];
+                color = glm::vec3(raw_color->r, raw_color->g, raw_color->b);
+            } else {
+                color = glm::vec3(1.f);
+            }
 
             Vertex vertex {
                 pos,
-                has_uv ?
-                    glm::make_vec2(&raw_mesh->mTextureCoords[0][vert_idx].x) :
-                    glm::vec2(0.f),
-                has_color ?
-                    glm::make_vec3(&raw_mesh->mColors[0][vert_idx].r) :
-                    glm::vec3(1.0f),
+                uv,
+                color
             };
 
             vertices.emplace_back(move(vertex));
@@ -192,7 +203,7 @@ static SceneAssets loadAssets(const string &scene_path)
 
     vector<ObjectInstance> instances;
     vector<pair<aiNode *, glm::mat4>> node_stack {
-        { raw_scene->mRootNode, glm::mat4(1.f) }
+        { raw_scene->mRootNode, coordinate_txfm }
     };
 
     while (!node_stack.empty()) {
@@ -210,6 +221,7 @@ static SceneAssets loadAssets(const string &scene_path)
                     endl;
                 fatalExit();
             }
+
             instances.emplace_back(ObjectInstance {
                 cur_txfm,
                 cur_node->mMeshes[0]
@@ -233,14 +245,16 @@ static SceneAssets loadAssets(const string &scene_path)
     };
 }
 
-Scene::Scene(const std::string &scene_path, CommandStreamState &renderer_state)
+Scene::Scene(const std::string &scene_path, CommandStreamState &renderer_state,
+             const glm::mat4 &coordinate_txfm)
     : path_(scene_path),
       ref_count_(1),
-      state_(renderer_state.loadScene(loadAssets(scene_path)))
+      state_(renderer_state.loadScene(loadAssets(scene_path, coordinate_txfm)))
 {}
 
-SceneManager::SceneManager()
-    : load_mutex_(),
+SceneManager::SceneManager(const glm::mat4 &coordinate_transform)
+    : coordinate_txfm_(coordinate_transform),
+      load_mutex_(),
       scenes_(),
       scene_lookup_()
 {}
@@ -257,7 +271,8 @@ SceneID SceneManager::loadScene(const std::string &scene_path,
             scene = lookup_iter->second;
             scene->refIncrement();
         } else {
-            scenes_.emplace_front(scene_path, renderer_state);
+            scenes_.emplace_front(scene_path, renderer_state,
+                                  coordinate_txfm_);
             scene = scenes_.begin();
             scene_lookup_.emplace(scene_path, scene);
         }
