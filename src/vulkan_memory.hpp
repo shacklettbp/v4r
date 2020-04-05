@@ -96,7 +96,7 @@ struct ResourceFormats {
     VkFormat hdrTexture;
     VkFormat colorAttachment;
     VkFormat depthAttachment;
-    VkFormat depthOut;
+    VkFormat linearDepthAttachment;
 };
 
 class MemoryAllocator {
@@ -118,7 +118,7 @@ public:
 
     LocalImage makeColorAttachment(uint32_t width, uint32_t height);
     LocalImage makeDepthAttachment(uint32_t width, uint32_t height);
-    LocalImage makeDepthOut(uint32_t width, uint32_t height);
+    LocalImage makeLinearDepthAttachment(uint32_t width, uint32_t height);
 
     const ResourceFormats &getFormats() const { return formats_; }
 

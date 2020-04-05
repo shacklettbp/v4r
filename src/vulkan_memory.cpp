@@ -551,10 +551,10 @@ LocalImage MemoryAllocator::makeDepthAttachment(uint32_t width,
                               type_indices_.depthAttachment);
 }
 
-LocalImage MemoryAllocator::makeDepthOut(uint32_t width,
-                                         uint32_t height)
+LocalImage MemoryAllocator::makeLinearDepthAttachment(uint32_t width,
+                                                      uint32_t height)
 {
-    return makeDedicatedImage(width, height, 1, formats_.depthOut,
+    return makeDedicatedImage(width, height, 1, formats_.linearDepthAttachment,
                               ImageFlags::colorAttachmentUsage,
                               type_indices_.colorAttachment);
 }

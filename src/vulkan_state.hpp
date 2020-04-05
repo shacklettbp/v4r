@@ -116,7 +116,7 @@ struct FramebufferState {
 public:
     LocalImage color;
     LocalImage depth;
-    LocalImage depthOut;
+    LocalImage linearDepth;
 
     std::array<VkImageView, 3> attachmentViews; 
 

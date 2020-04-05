@@ -173,7 +173,7 @@ static VkRenderPass makeRenderPass(const DeviceState &dev,
         },
         {
             0,
-            fmts.depthOut, // FIXME
+            fmts.linearDepthAttachment,
             VK_SAMPLE_COUNT_1_BIT,
             VK_ATTACHMENT_LOAD_OP_CLEAR,
             VK_ATTACHMENT_STORE_OP_STORE,
@@ -234,7 +234,8 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
 {
     LocalImage color = alloc.makeColorAttachment(fb_cfg.width, fb_cfg.height);
     LocalImage depth = alloc.makeDepthAttachment(fb_cfg.width, fb_cfg.height);
-    LocalImage depth_out = alloc.makeDepthOut(fb_cfg.width, fb_cfg.height);
+    LocalImage linear_depth =
+        alloc.makeLinearDepthAttachment(fb_cfg.width, fb_cfg.height);
 
     VkImageViewCreateInfo view_info {};
     view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -252,8 +253,8 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
                                   nullptr, &views[0]));
 
-    view_info.image = depth_out.image;
-    view_info.format = alloc.getFormats().depthOut;
+    view_info.image = linear_depth.image;
+    view_info.format = alloc.getFormats().linearDepthAttachment;
 
     REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
                                   nullptr, &views[1]));
@@ -285,7 +286,7 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     return FramebufferState {
         move(color),
         move(depth),
-        move(depth_out),
+        move(linear_depth),
         views,
         fb_handle,
         move(result_buffer),
@@ -1114,7 +1115,7 @@ StreamSceneState CommandStreamState::initStreamSceneState(
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             dev.gfxQF,
             dev.transferQF,
-            fb.depthOut.image,
+            fb.linearDepth.image,
             {
                 VK_IMAGE_ASPECT_COLOR_BIT,
                 0, 1, 0, 1
@@ -1177,7 +1178,7 @@ StreamSceneState CommandStreamState::initStreamSceneState(
     copy_info.bufferOffset = depth_buffer_offset_;
 
     dev.dt.cmdCopyImageToBuffer(copy_command,
-                                fb.depthOut.image,
+                                fb.linearDepth.image,
                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                 fb.resultBuffer.buffer,
                                 1,
