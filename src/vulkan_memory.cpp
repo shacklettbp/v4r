@@ -385,7 +385,10 @@ MemoryAllocator::MemoryAllocator(const DeviceState &d,
           chooseFormat(dev.phy, inst,
                        ImageFlags::depthAttachmentReqs,
                        array { VK_FORMAT_D32_SFLOAT,
-                               VK_FORMAT_D32_SFLOAT_S8_UINT })
+                               VK_FORMAT_D32_SFLOAT_S8_UINT }),
+          chooseFormat(dev.phy, inst,
+                       ImageFlags::colorAttachmentReqs,
+                       array { VK_FORMAT_R32_SFLOAT })
       },
       type_indices_(findTypeIndices(dev, inst, formats_))
 {}
@@ -546,6 +549,14 @@ LocalImage MemoryAllocator::makeDepthAttachment(uint32_t width,
     return makeDedicatedImage(width, height, 1, formats_.depthAttachment,
                               ImageFlags::depthAttachmentUsage,
                               type_indices_.depthAttachment);
+}
+
+LocalImage MemoryAllocator::makeDepthOut(uint32_t width,
+                                         uint32_t height)
+{
+    return makeDedicatedImage(width, height, 1, formats_.depthOut,
+                              ImageFlags::colorAttachmentUsage,
+                              type_indices_.colorAttachment);
 }
 
 }

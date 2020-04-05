@@ -96,6 +96,7 @@ struct ResourceFormats {
     VkFormat hdrTexture;
     VkFormat colorAttachment;
     VkFormat depthAttachment;
+    VkFormat depthOut;
 };
 
 class MemoryAllocator {
@@ -117,26 +118,9 @@ public:
 
     LocalImage makeColorAttachment(uint32_t width, uint32_t height);
     LocalImage makeDepthAttachment(uint32_t width, uint32_t height);
+    LocalImage makeDepthOut(uint32_t width, uint32_t height);
 
-    VkFormat getSDRTextureFormat() const
-    {
-        return formats_.sdrTexture;
-    }
-
-    VkFormat getHDRTextureFormat() const
-    {
-        return formats_.hdrTexture;
-    }
-
-    VkFormat getColorAttachmentFormat() const
-    {
-        return formats_.colorAttachment;
-    }
-
-    VkFormat getDepthAttachmentFormat() const
-    {
-        return formats_.depthAttachment;
-    }
+    const ResourceFormats &getFormats() const { return formats_; }
 
 private:
     HostBuffer makeHostBuffer(VkDeviceSize num_bytes,

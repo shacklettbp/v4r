@@ -157,12 +157,12 @@ static void waitForFenceInfinitely(const DeviceState &dev, VkFence fence)
 }
 
 static VkRenderPass makeRenderPass(const DeviceState &dev,
-                                   VkFormat color_fmt, VkFormat depth_fmt)
+                                   const ResourceFormats &fmts)
 {
-    array<VkAttachmentDescription, 2> attachment_descs {{
+    array<VkAttachmentDescription, 3> attachment_descs {{
         {
             0,
-            color_fmt,
+            fmts.colorAttachment,
             VK_SAMPLE_COUNT_1_BIT,
             VK_ATTACHMENT_LOAD_OP_CLEAR,
             VK_ATTACHMENT_STORE_OP_STORE,
@@ -173,7 +173,7 @@ static VkRenderPass makeRenderPass(const DeviceState &dev,
         },
         {
             0,
-            depth_fmt,
+            fmts.depthOut, // FIXME
             VK_SAMPLE_COUNT_1_BIT,
             VK_ATTACHMENT_LOAD_OP_CLEAR,
             VK_ATTACHMENT_STORE_OP_STORE,
@@ -181,19 +181,32 @@ static VkRenderPass makeRenderPass(const DeviceState &dev,
             VK_ATTACHMENT_STORE_OP_DONT_CARE,
             VK_IMAGE_LAYOUT_UNDEFINED,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+        },
+        {
+            0,
+            fmts.depthAttachment,
+            VK_SAMPLE_COUNT_1_BIT,
+            VK_ATTACHMENT_LOAD_OP_CLEAR,
+            VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
         }
     }};
 
-    array<VkAttachmentReference, 2> attachment_refs {{
+    array<VkAttachmentReference, 3> attachment_refs {{
         { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL },
-        { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL }
+        { 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL },
+        { 2, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL }
     }};
 
     VkSubpassDescription subpass_desc {};
     subpass_desc.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass_desc.colorAttachmentCount = 1;
+    subpass_desc.colorAttachmentCount =
+        static_cast<uint32_t>(attachment_refs.size() - 1);
     subpass_desc.pColorAttachments = &attachment_refs[0];
-    subpass_desc.pDepthStencilAttachment = &attachment_refs[1];
+    subpass_desc.pDepthStencilAttachment = &attachment_refs[2];
 
     VkRenderPassCreateInfo render_pass_info;
     render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -221,12 +234,13 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
 {
     LocalImage color = alloc.makeColorAttachment(fb_cfg.width, fb_cfg.height);
     LocalImage depth = alloc.makeDepthAttachment(fb_cfg.width, fb_cfg.height);
+    LocalImage depth_out = alloc.makeDepthOut(fb_cfg.width, fb_cfg.height);
 
     VkImageViewCreateInfo view_info {};
     view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     view_info.image = color.image;
     view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    view_info.format = alloc.getColorAttachmentFormat();
+    view_info.format = alloc.getFormats().colorAttachment;
     VkImageSubresourceRange &view_info_sr = view_info.subresourceRange;
     view_info_sr.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     view_info_sr.baseMipLevel = 0;
@@ -234,16 +248,22 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     view_info_sr.baseArrayLayer = 0;
     view_info_sr.layerCount = 1;
 
-    array<VkImageView, 2> views;
+    array<VkImageView, 3> views;
     REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
                                   nullptr, &views[0]));
 
-    view_info.image = depth.image;
-    view_info.format = alloc.getDepthAttachmentFormat();
-    view_info_sr.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    view_info.image = depth_out.image;
+    view_info.format = alloc.getFormats().depthOut;
 
     REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
                                   nullptr, &views[1]));
+
+    view_info.image = depth.image;
+    view_info.format = alloc.getFormats().depthAttachment;
+    view_info_sr.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+
+    REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
+                                  nullptr, &views[2]));
 
     VkFramebufferCreateInfo fb_info;
     fb_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -265,6 +285,7 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     return FramebufferState {
         move(color),
         move(depth),
+        move(depth_out),
         views,
         fb_handle,
         move(result_buffer),
@@ -309,7 +330,7 @@ static VkShaderModule loadShader(const string &base_name,
 
 template<typename... LayoutType>
 static PipelineState makePipeline(const DeviceState &dev,
-                                  VkFormat color_fmt, VkFormat depth_fmt,
+                                  const ResourceFormats &formats,
                                   const FramebufferConfig &fb_cfg,
                                   LayoutType... layout)
                                   
@@ -428,20 +449,23 @@ static PipelineState makePipeline(const DeviceState &dev,
     depth_info.back.compareOp = VK_COMPARE_OP_ALWAYS;
 
     // Blend
-    VkPipelineColorBlendAttachmentState blend_attach_state {};
-    blend_attach_state.blendEnable = VK_FALSE;
-    blend_attach_state.colorWriteMask =
+    VkPipelineColorBlendAttachmentState blend_attach {};
+    blend_attach.blendEnable = VK_FALSE;
+    blend_attach.colorWriteMask = 
         VK_COLOR_COMPONENT_R_BIT |
         VK_COLOR_COMPONENT_G_BIT |
         VK_COLOR_COMPONENT_B_BIT |
         VK_COLOR_COMPONENT_A_BIT;
 
+    array blend_attachments { blend_attach, blend_attach };
+
     VkPipelineColorBlendStateCreateInfo blend_info {};
     blend_info.sType =
         VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     blend_info.logicOpEnable = VK_FALSE;
-    blend_info.attachmentCount = 1;
-    blend_info.pAttachments = &blend_attach_state;
+    blend_info.attachmentCount =
+        static_cast<uint32_t>(blend_attachments.size());
+    blend_info.pAttachments = blend_attachments.data();
 
     // Dynamic
     VkDynamicState dyn_viewport_enable = VK_DYNAMIC_STATE_VIEWPORT;
@@ -480,7 +504,7 @@ static PipelineState makePipeline(const DeviceState &dev,
 
 
     // Make pipeline
-    VkRenderPass render_pass = makeRenderPass(dev, color_fmt, depth_fmt);
+    VkRenderPass render_pass = makeRenderPass(dev, formats);
 
     VkGraphicsPipelineCreateInfo pipeline_info;
     pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -933,7 +957,7 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
         view_info.flags = 0;
         view_info.image = gpu_texture.image;
         view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_info.format = alloc.getSDRTextureFormat();
+        view_info.format = alloc.getFormats().sdrTexture;
         view_info.components = { 
             VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
             VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A
@@ -1002,9 +1026,10 @@ StreamSceneState CommandStreamState::initStreamSceneState(
                                  1, &scene.textureSet.hdl,
                                  0, nullptr);
 
-    array<VkClearValue, 2> clear_vals;
+    array<VkClearValue, 3> clear_vals;
     clear_vals[0].color = { 0.f, 0.f, 0.f, 1.f };
-    clear_vals[1].depthStencil = { 1.f, 0 };
+    clear_vals[1].color = { 0.f, 0.f, 0.f, 0.f };
+    clear_vals[2].depthStencil = { 1.f, 0 };
 
     VkRenderPassBeginInfo render_begin;
     render_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -1064,11 +1089,6 @@ StreamSceneState CommandStreamState::initStreamSceneState(
 
     dev.dt.cmdEndRenderPass(render_command);
 
-    const VkPipelineStageFlags write_stages =
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
-        VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-
     array<VkImageMemoryBarrier, 2> barriers {{
         {
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1088,22 +1108,22 @@ StreamSceneState CommandStreamState::initStreamSceneState(
         {
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             nullptr,
-            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
             0,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             dev.gfxQF,
             dev.transferQF,
-            fb.depth.image,
+            fb.depthOut.image,
             {
-                VK_IMAGE_ASPECT_DEPTH_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT,
                 0, 1, 0, 1
             }
         }
     }};
 
     dev.dt.cmdPipelineBarrier(render_command,
-                              write_stages,
+                              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                               VK_PIPELINE_STAGE_TRANSFER_BIT,
                               VK_DEPENDENCY_BY_REGION_BIT,
                               0, nullptr, 0, nullptr,
@@ -1155,10 +1175,9 @@ StreamSceneState CommandStreamState::initStreamSceneState(
                                 &copy_info);
 
     copy_info.bufferOffset = depth_buffer_offset_;
-    copy_info.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
 
     dev.dt.cmdCopyImageToBuffer(copy_command,
-                                fb.depth.image,
+                                fb.depthOut.image,
                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                 fb.resultBuffer.buffer,
                                 1,
@@ -1185,7 +1204,8 @@ pair<VkDeviceSize, VkDeviceSize> CommandStreamState::render(
         const StreamSceneState &scene, const CameraState &camera)
 {
     streamDescState.update(dev, PerViewUBO {
-        camera.projection * camera.view
+        camera.projection * camera.view,
+        glm::vec2(camera.projection[2][2], camera.projection[3][2])
     });
 
     VkSubmitInfo gfx_submit {
@@ -1223,9 +1243,7 @@ VulkanState::VulkanState(const RenderConfig &config)
       fbCfg(getFramebufferConfig(cfg)),
       streamDescCfg(getStreamDescriptorConfig(dev)),
       sceneDescCfg(getSceneDescriptorConfig(dev)),
-      pipeline(makePipeline(dev,
-                            alloc.getColorAttachmentFormat(),
-                            alloc.getDepthAttachmentFormat(),
+      pipeline(makePipeline(dev, alloc.getFormats(),
                             fbCfg, streamDescCfg.layout,
                             sceneDescCfg.layout)),
       fb(makeFramebuffer(dev, alloc, fbCfg, pipeline)),

@@ -23,6 +23,7 @@ namespace v4r {
 
 struct PerViewUBO {
     glm::mat4 vp;
+    glm::vec2 nearFar;
 };
 
 struct PushConstants {
@@ -115,8 +116,9 @@ struct FramebufferState {
 public:
     LocalImage color;
     LocalImage depth;
+    LocalImage depthOut;
 
-    std::array<VkImageView, 2> attachmentViews; 
+    std::array<VkImageView, 3> attachmentViews; 
 
     VkFramebuffer hdl;
 
