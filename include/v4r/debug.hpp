@@ -5,8 +5,11 @@
 
 namespace v4r {
 
-void saveFrame(const char *frame_path, void *dev_ptr, uint32_t width,
-                uint32_t height, uint32_t num_channels);
+void saveFrame(const char *frame_path, const uint8_t *dev_ptr, uint32_t width,
+               uint32_t height, uint32_t num_channels);
+
+void saveFrame(const char *frame_path, const float *dev_ptr, uint32_t width,
+               uint32_t height, uint32_t num_channels);
 
 class RenderDoc {
 public:

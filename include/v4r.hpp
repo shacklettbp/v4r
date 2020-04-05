@@ -18,18 +18,14 @@ class CudaState;
 
 struct RenderResult {
 public:
-    void *colorPtr;
-    void *depthPtr;
+    uint8_t *colorPtr;
+    float *depthPtr;
 };
 
 class Camera {
 public:
     Camera(float hfov, uint32_t width, uint32_t height, float near, float far,
            const glm::mat4 &view);
-
-    Camera(float hfov, uint32_t width, uint32_t height, float near, float far,
-           const glm::vec3 &eye_pos, const glm::vec3 &look_pos,
-           const glm::vec3 &up);
 
     Camera(const Camera &) = delete;
     Camera(Camera &&o);

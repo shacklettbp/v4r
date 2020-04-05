@@ -64,8 +64,8 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
     return FramebufferConfig {
         fb_width,
         fb_height,
-        // RGBA color attachment + single channel depth = 5 channels
-        sizeof(float) * fb_width * fb_height * 5
+        4 * sizeof(uint8_t) * fb_width * fb_height +
+            sizeof(float) * fb_width * fb_height
     };
 }
 
@@ -649,10 +649,10 @@ CommandStreamState::CommandStreamState(
       render_width_(render_width),
       render_height_(render_height),
       color_buffer_offset_((fb_y_pos_ * VulkanConfig::num_fb_images_wide *
-                           render_width_ + fb_x_pos_) * sizeof(float) * 4),
+                           render_width_ + fb_x_pos_) * sizeof(uint8_t) * 4),
       depth_buffer_offset_(VulkanConfig::num_fb_images_wide * render_width_ *
                            VulkanConfig::num_fb_images_tall * render_height_ *
-                           sizeof(float) * 4 + 
+                           sizeof(uint8_t) * 4 + 
                            (fb_y_pos_ * VulkanConfig::num_fb_images_wide *
                             render_width_ + fb_x_pos_) * sizeof(float))
 {}

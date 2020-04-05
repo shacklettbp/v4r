@@ -1,7 +1,6 @@
 #include <v4r/debug.hpp>
 #include <vector> 
 
-
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb/stb_image_write.h>
 
@@ -9,22 +8,42 @@ using namespace std;
 
 namespace v4r {
 
-void saveFrame(const char *fname, void *dev_ptr,
-               uint32_t width, uint32_t height, uint32_t num_channels)
+template<typename T>
+static vector<T> copyToHost(const T *dev_ptr, uint32_t width,
+                            uint32_t height, uint32_t num_channels)
 {
     uint64_t num_pixels = width * height * num_channels;
 
-    vector<float> buffer(num_pixels);
+    vector<T> buffer(num_pixels);
 
-    cudaMemcpy(buffer.data(), dev_ptr, sizeof(float) * num_pixels,
+    cudaMemcpy(buffer.data(), dev_ptr, sizeof(T) * num_pixels,
                cudaMemcpyDeviceToHost);
 
-    vector<uint8_t> sdr_buffer(num_pixels);
+    return buffer;
+}
+
+void saveFrame(const char *fname, const float *dev_ptr,
+               uint32_t width, uint32_t height, uint32_t num_channels)
+{
+    auto buffer = copyToHost(dev_ptr, width, height, num_channels);
+
+    vector<uint8_t> sdr_buffer(buffer.size());
     for (unsigned i = 0; i < buffer.size(); i++) {
-        sdr_buffer[i] = buffer[i] * 255;
+        float v = buffer[i];
+        if (v < 0) v = 0;
+        if (v > 1) v = 1;
+        sdr_buffer[i] = v * 255;
     }
 
     stbi_write_bmp(fname, width, height, num_channels, sdr_buffer.data());
+}
+
+void saveFrame(const char *fname, const uint8_t *dev_ptr,
+               uint32_t width, uint32_t height, uint32_t num_channels)
+{
+    auto buffer = copyToHost(dev_ptr, width, height, num_channels);
+
+    stbi_write_bmp(fname, width, height, num_channels, buffer.data());
 }
 
 }

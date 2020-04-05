@@ -48,13 +48,6 @@ Camera::Camera(float hfov, uint32_t width, uint32_t height, float near,
     })
 {}
 
-Camera::Camera(float hfov, uint32_t width, uint32_t height, float near,
-               float far, const glm::vec3 &eye_pos, const glm::vec3 &look_pos,
-               const glm::vec3 &up)
-    : Camera(hfov, width, height, near, far,
-             glm::lookAt(eye_pos, look_pos, up))
-{}
-
 Camera::Camera(Camera &&o)
     : state_(move(o.state_))
 {}
@@ -95,8 +88,8 @@ RenderResult CommandStream::render(const SceneHandle &scene, const Camera &camer
                                                  camera.getState());
 
     return RenderResult {
-        global_.cuda_->getPointer(color_off),
-        global_.cuda_->getPointer(depth_off)
+        (uint8_t *)global_.cuda_->getPointer(color_off),
+        (float *)global_.cuda_->getPointer(depth_off)
     };
 }
 
@@ -126,8 +119,8 @@ Camera RenderContext::makeCamera(float hfov, float near, float far,
                                  const glm::vec3 &look_pos,
                                  const glm::vec3 &up) const
 {
-    return Camera(hfov, state_->cfg.imgWidth, state_->cfg.imgHeight,
-                  near, far, eye_pos, look_pos, up);
+    return makeCamera(hfov, near, far,
+                      glm::lookAt(eye_pos, look_pos, up));
 }
 
 Camera RenderContext::makeCamera(float hfov, float near, float far,
