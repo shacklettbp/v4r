@@ -1,6 +1,6 @@
 #include <cstdlib>
-#include <EGL/egl.h>
 #include <iostream>
+#include <EGL/egl.h>
 #include <dlfcn.h>
 
 using namespace std;
@@ -20,5 +20,18 @@ static __attribute__((constructor)) void nvidiaLinuxHeadlessHacksEntry()
     // libGLVND's state correctly, which avoids a segfault on exit
     // when libGLX_nvidia.so calls eglReleaseThread, which would otherwise
     // mistakenly end up calling the function in libEGL_mesa.so
-    eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    void *lib = dlopen("libEGL.so", RTLD_NOW | RTLD_NODELETE);
+    if (!lib) return;
+
+    using eglGetDisplayType = decltype(&eglGetDisplay);
+    auto egl_get_display_ptr = (eglGetDisplayType)dlsym(lib, "eglGetDisplay");
+    if (!egl_get_display_ptr) return;
+    egl_get_display_ptr(EGL_DEFAULT_DISPLAY);
+
+    using eglReleaseThreadType = decltype(&eglReleaseThread);
+    auto egl_release_thread_ptr = (eglReleaseThreadType)dlsym(lib, "eglReleaseThread");
+    if (!egl_release_thread_ptr) return;
+    egl_release_thread_ptr();
+
+    dlclose(lib);
 }
