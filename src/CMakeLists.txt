@@ -66,3 +66,24 @@ add_library(v4r_debug SHARED
     renderdoc_interop.cpp
     save_frame.cu
 )
+
+list(APPEND V4R_HEADLESS_LIBS v4r) 
+
+# Hacks
+
+# if nvidia libEGL exists, apply nvidia workarounds
+find_library(NVIDIA_EGL "libEGL_nvidia.so")
+
+if (NVIDIA_EGL)
+    add_library(v4r_headless_hacks SHARED
+        linux_hacks.cpp
+    )
+
+    target_link_libraries(v4r_headless_hacks libEGL.so)
+endif()
+
+if (TARGET v4r_headless_hacks)
+    list(PREPEND V4R_HEADLESS_LIBS v4r_headless_hacks)
+endif()
+
+set(V4R_HEADLESS_LIBS ${V4R_HEADLESS_LIBS} PARENT_SCOPE)
