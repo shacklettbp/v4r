@@ -1,4 +1,5 @@
 #include <v4r.hpp>
+#include <v4r/debug.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -15,8 +16,9 @@ using namespace std;
 using namespace v4r;
 
 constexpr size_t max_load_frames = 10000;
-constexpr size_t max_render_frames = 10000;
+constexpr size_t max_render_frames = 3;
 constexpr int num_threads = 4;
+constexpr bool debug = false;
 
 vector<glm::mat4> readViews(const char *dump_path)
 {
@@ -42,6 +44,8 @@ int main(int argc, char *argv[]) {
         cerr << "SCENE VIEWS" << endl;
         exit(EXIT_FAILURE);
     }
+
+    RenderDoc rdoc;
 
     RenderContext ctx({0, 256, 256,
         glm::mat4(
@@ -97,11 +101,19 @@ int main(int argc, char *argv[]) {
     }
 
     pthread_barrier_wait(&start_barrier);
+    if (debug) {
+        rdoc.startFrame();
+    }
+
     auto start = chrono::steady_clock::now();
     go.store(true);
 
     pthread_barrier_wait(&end_barrier);
     auto end = chrono::steady_clock::now();
+
+    if (debug) {
+        rdoc.endFrame();
+    }
 
     auto diff = chrono::duration_cast<chrono::milliseconds>(end - start);
 
