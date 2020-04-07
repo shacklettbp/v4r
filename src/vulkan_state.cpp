@@ -1206,7 +1206,6 @@ pair<VkDeviceSize, VkDeviceSize> CommandStreamState::render(
 {
     streamDescState.update(dev, PerViewUBO {
         camera.projection * camera.view,
-        glm::vec2(camera.projection[2][2], camera.projection[3][2])
     });
 
     VkSubmitInfo gfx_submit {

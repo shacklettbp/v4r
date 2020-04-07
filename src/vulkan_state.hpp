@@ -23,7 +23,6 @@ namespace v4r {
 
 struct PerViewUBO {
     glm::mat4 vp;
-    glm::vec2 nearFar;
 };
 
 struct PushConstants {
