@@ -14,7 +14,8 @@
 using namespace std;
 using namespace v4r;
 
-constexpr int max_frames = 10000;
+constexpr size_t max_load_frames = 10000;
+constexpr size_t max_render_frames = 10000;
 constexpr int num_threads = 4;
 
 vector<glm::mat4> readViews(const char *dump_path)
@@ -23,7 +24,7 @@ vector<glm::mat4> readViews(const char *dump_path)
 
     vector<glm::mat4> views;
 
-    for (int i = 0; i < max_frames; i++) {
+    for (size_t i = 0; i < max_load_frames; i++) {
         float raw[16];
         dump_file.read((char *)raw, sizeof(float)*16);
         views.emplace_back(glm::inverse(
@@ -52,7 +53,7 @@ int main(int argc, char *argv[]) {
     });
 
     vector<glm::mat4> init_views = readViews(argv[2]);
-    int num_frames = init_views.size();
+    size_t num_frames = min(init_views.size(), max_render_frames);
 
     pthread_barrier_t start_barrier;
     pthread_barrier_init(&start_barrier, nullptr, num_threads + 1);
@@ -64,9 +65,9 @@ int main(int argc, char *argv[]) {
 
     atomic_bool go(false);
 
-    for (int i = 0; i < num_threads; i++) {
+    for (int t_idx = 0; t_idx < num_threads; t_idx++) {
         threads.emplace_back(
-            [&go, &ctx, &start_barrier, &end_barrier]
+            [num_frames, &go, &ctx, &start_barrier, &end_barrier]
             (const char *scene_path, vector<glm::mat4> views)
             {
                 auto cmd_stream = ctx.makeCommandStream();
@@ -81,7 +82,8 @@ int main(int argc, char *argv[]) {
                 pthread_barrier_wait(&start_barrier);
                 while (!go.load()) {}
 
-                for (const glm::mat4 &mat : views) {
+                for (size_t i = 0; i < num_frames; i++) {
+                    const glm::mat4 &mat = views[i];
                     cam.setView(mat);
                     auto frame = cmd_stream.render(scene, cam);
                     (void)frame;
