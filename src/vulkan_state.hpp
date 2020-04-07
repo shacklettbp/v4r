@@ -91,7 +91,6 @@ struct SceneState {
 
 struct StreamSceneState {
     const VkCommandBuffer renderCommand;
-    const VkCommandBuffer copyCommand;
 };
 
 struct PerSceneDescriptorConfig {

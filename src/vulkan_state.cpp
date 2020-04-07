@@ -1095,11 +1095,11 @@ StreamSceneState CommandStreamState::initStreamSceneState(
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             nullptr,
             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-            0,
+            VK_ACCESS_TRANSFER_READ_BIT,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            dev.gfxQF,
-            dev.transferQF,
+            VK_QUEUE_FAMILY_IGNORED,
+            VK_QUEUE_FAMILY_IGNORED,
             fb.color.image,
             {
                 VK_IMAGE_ASPECT_COLOR_BIT,
@@ -1110,11 +1110,11 @@ StreamSceneState CommandStreamState::initStreamSceneState(
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             nullptr,
             VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-            0,
+            VK_ACCESS_TRANSFER_READ_BIT,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            dev.gfxQF,
-            dev.transferQF,
+            VK_QUEUE_FAMILY_IGNORED,
+            VK_QUEUE_FAMILY_IGNORED,
             fb.linearDepth.image,
             {
                 VK_IMAGE_ASPECT_COLOR_BIT,
@@ -1125,24 +1125,6 @@ StreamSceneState CommandStreamState::initStreamSceneState(
 
     dev.dt.cmdPipelineBarrier(render_command,
                               VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                              VK_PIPELINE_STAGE_TRANSFER_BIT,
-                              VK_DEPENDENCY_BY_REGION_BIT,
-                              0, nullptr, 0, nullptr,
-                              static_cast<uint32_t>(barriers.size()),
-                              barriers.data());
-
-    REQ_VK(dev.dt.endCommandBuffer(render_command));
-
-    VkCommandBuffer copy_command = makeCmdBuffer(transferPool, dev);
-    REQ_VK(dev.dt.beginCommandBuffer(copy_command, &begin_info));
-
-    barriers[0].srcAccessMask = 0;
-    barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-    barriers[1].srcAccessMask = 0;
-    barriers[1].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-
-    dev.dt.cmdPipelineBarrier(copy_command,
-                              VK_PIPELINE_STAGE_TRANSFER_BIT,
                               VK_PIPELINE_STAGE_TRANSFER_BIT,
                               VK_DEPENDENCY_BY_REGION_BIT,
                               0, nullptr, 0, nullptr,
@@ -1168,7 +1150,7 @@ StreamSceneState CommandStreamState::initStreamSceneState(
         1
     };
 
-    dev.dt.cmdCopyImageToBuffer(copy_command,
+    dev.dt.cmdCopyImageToBuffer(render_command,
                                 fb.color.image,
                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                 fb.resultBuffer.buffer,
@@ -1177,18 +1159,17 @@ StreamSceneState CommandStreamState::initStreamSceneState(
 
     copy_info.bufferOffset = depth_buffer_offset_;
 
-    dev.dt.cmdCopyImageToBuffer(copy_command,
+    dev.dt.cmdCopyImageToBuffer(render_command,
                                 fb.linearDepth.image,
                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                 fb.resultBuffer.buffer,
                                 1,
                                 &copy_info);
 
-    REQ_VK(dev.dt.endCommandBuffer(copy_command));
+    REQ_VK(dev.dt.endCommandBuffer(render_command));
 
     return StreamSceneState {
-        render_command,
-        copy_command
+        render_command
     };
 }
 
@@ -1196,9 +1177,6 @@ void CommandStreamState::cleanupStreamSceneState(const StreamSceneState &scene)
 {   
     dev.dt.freeCommandBuffers(dev.hdl, gfxPool,
                               1, &scene.renderCommand);
-
-    dev.dt.freeCommandBuffers(dev.hdl, transferPool,
-                              1, &scene.copyCommand);
 }
 
 pair<VkDeviceSize, VkDeviceSize> CommandStreamState::render(
@@ -1213,21 +1191,10 @@ pair<VkDeviceSize, VkDeviceSize> CommandStreamState::render(
         nullptr,
         0, nullptr, nullptr,
         1, &scene.renderCommand,
-        1, &semaphore
-    };
-
-    gfxQueue.submit(dev, 1, &gfx_submit, VK_NULL_HANDLE);
-
-    VkPipelineStageFlags sema_wait_mask = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    VkSubmitInfo transfer_submit {
-        VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        nullptr,
-        1, &semaphore, &sema_wait_mask,
-        1, &scene.copyCommand,
         0, nullptr
     };
 
-    transferQueue.submit(dev, 1, &transfer_submit, fence);
+    gfxQueue.submit(dev, 1, &gfx_submit, fence);
     waitForFenceInfinitely(dev, fence);
     REQ_VK(dev.dt.resetFences(dev.hdl, 1, &fence));
 
