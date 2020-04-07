@@ -1,21 +1,44 @@
 #include <v4r.hpp>
-#include <iostream>
+
+#include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <chrono>
-#include <thread>
+#include <fstream>
+#include <iostream>
+#include <pthread.h>
 #include <random>
+#include <thread>
 #include <vector>
 
 using namespace std;
 using namespace v4r;
 
-constexpr int num_frames = 10000;
-constexpr int num_threads = 1;
-constexpr int frames_per_thread = num_frames / num_threads;
+constexpr int max_frames = 10000;
+constexpr int num_threads = 4;
+
+vector<glm::mat4> readViews(const char *dump_path)
+{
+    ifstream dump_file(dump_path, ios::binary);
+
+    vector<glm::mat4> views;
+
+    for (int i = 0; i < max_frames; i++) {
+        float raw[16];
+        dump_file.read((char *)raw, sizeof(float)*16);
+        views.emplace_back(glm::inverse(
+                glm::mat4(raw[0], raw[1], raw[2], raw[3],
+                          raw[4], raw[5], raw[6], raw[7],
+                          raw[8], raw[9], raw[10], raw[11],
+                          raw[12], raw[13], raw[14], raw[15])));
+    }
+
+    return views;
+}
 
 int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        cerr << "Specify scene" << endl;
+    if (argc < 3) {
+        cerr << "SCENE VIEWS" << endl;
         exit(EXIT_FAILURE);
     }
 
@@ -28,55 +51,61 @@ int main(int argc, char *argv[]) {
         )
     });
 
-    vector<RenderContext::SceneHandle> handles;
-    vector<RenderContext::CommandStream> streams;
-    vector<Camera> cameras;
-    handles.reserve(num_threads);
-    streams.reserve(num_threads);
-    cameras.reserve(num_threads);
-    for (int i = 0; i < num_threads; i++) {
-        auto cmd_stream = ctx.makeCommandStream();
-        handles.emplace_back(move(cmd_stream.loadScene(argv[1])));
-        streams.emplace_back(move(cmd_stream));
-        cameras.emplace_back(ctx.makeCamera(60, 0.01, 1000,
-                             glm::vec3(1.f, 1.f, 0.f),
-                             glm::vec3(0.f, 1.f, 0.f),
-                             glm::vec3(0.f, 1.f, 0.f)));
-    }
+    vector<glm::mat4> init_views = readViews(argv[2]);
+    int num_frames = init_views.size();
+
+    pthread_barrier_t start_barrier;
+    pthread_barrier_init(&start_barrier, nullptr, num_threads + 1);
+    pthread_barrier_t end_barrier;
+    pthread_barrier_init(&end_barrier, nullptr, num_threads + 1);
 
     vector<thread> threads;
     threads.reserve(num_threads);
 
-    auto start = chrono::steady_clock::now();
+    atomic_bool go(false);
 
     for (int i = 0; i < num_threads; i++) {
         threads.emplace_back(
-            [] (RenderContext::CommandStream &cmd_stream,
-                RenderContext::SceneHandle &scene,
-                Camera &camera) {
-                random_device rd;
-                mt19937 gen(rd());
-                uniform_int_distribution<> dis(1, 90);
+            [&go, &ctx, &start_barrier, &end_barrier]
+            (const char *scene_path, vector<glm::mat4> views)
+            {
+                auto cmd_stream = ctx.makeCommandStream();
+                auto scene = cmd_stream.loadScene(scene_path);
 
-                for (int f = 0; f < frames_per_thread; f++) {
-                    camera.rotate(dis(gen), glm::vec3(0.f, 1.f, 0.f));
-                    auto frame = cmd_stream.render(scene, camera);
+                random_device rd;
+                mt19937 g(rd());
+                shuffle(views.begin(), views.end(), g);
+
+                auto cam = ctx.makeCamera(90, 0.01, 1000, glm::mat4(1.f));
+
+                pthread_barrier_wait(&start_barrier);
+                while (!go.load()) {}
+
+                for (const glm::mat4 &mat : views) {
+                    cam.setView(mat);
+                    auto frame = cmd_stream.render(scene, cam);
                     (void)frame;
                 }
-        }, ref(streams[i]), ref(handles[i]), ref(cameras[i]));
+
+                pthread_barrier_wait(&end_barrier);
+
+                cmd_stream.dropScene(move(scene));
+            }, 
+            argv[1], init_views);
     }
+
+    pthread_barrier_wait(&start_barrier);
+    auto start = chrono::steady_clock::now();
+    go.store(true);
+
+    pthread_barrier_wait(&end_barrier);
+    auto end = chrono::steady_clock::now();
+
+    auto diff = chrono::duration_cast<chrono::milliseconds>(end - start);
+
+    cout << "FPS: " << ((double)num_frames * num_threads / (double)diff.count()) * 1000.0 << endl;
 
     for (thread &t : threads) {
         t.join();
     }
-
-    auto end = chrono::steady_clock::now();
-
-    for (int i = 0; i < num_threads; i++) {
-        streams[i].dropScene(move(handles[i]));
-    }
-
-    auto diff = chrono::duration_cast<chrono::milliseconds>(end - start);
-
-    cout << "FPS: " << ((double)num_frames / (double)diff.count()) * 1000.0 << endl;
 }
