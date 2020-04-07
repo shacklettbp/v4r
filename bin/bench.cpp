@@ -16,7 +16,7 @@ using namespace std;
 using namespace v4r;
 
 constexpr size_t max_load_frames = 10000;
-constexpr size_t max_render_frames = 3;
+constexpr size_t max_render_frames = 10000;
 constexpr int num_threads = 4;
 constexpr bool debug = false;
 
