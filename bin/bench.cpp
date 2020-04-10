@@ -17,7 +17,7 @@ using namespace v4r;
 
 constexpr size_t max_load_frames = 10000;
 constexpr size_t max_render_frames = 10000;
-constexpr int num_threads = 4;
+constexpr int num_threads = 1;
 constexpr bool debug = false;
 
 vector<glm::mat4> readViews(const char *dump_path)

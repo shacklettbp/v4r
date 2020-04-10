@@ -69,7 +69,7 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
     };
 }
 
-static VkCommandPool makeCmdPool(uint32_t qf_idx, const DeviceState &dev)
+static VkCommandPool makeCmdPool(const DeviceState &dev, uint32_t qf_idx)
 {
     VkCommandPoolCreateInfo pool_info = {};
     pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -81,8 +81,8 @@ static VkCommandPool makeCmdPool(uint32_t qf_idx, const DeviceState &dev)
     return pool;
 }
 
-static VkCommandBuffer makeCmdBuffer(VkCommandPool pool,
-        const DeviceState &dev,
+static VkCommandBuffer makeCmdBuffer(const DeviceState &dev,
+        VkCommandPool pool,
         VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY)
 {
     VkCommandBufferAllocateInfo info;
@@ -98,8 +98,8 @@ static VkCommandBuffer makeCmdBuffer(VkCommandPool pool,
     return cmd;
 }
 
-static VkQueue makeQueue(uint32_t qf_idx, uint32_t queue_idx,
-                         const DeviceState &dev)
+static VkQueue makeQueue(const DeviceState &dev,
+                         uint32_t qf_idx, uint32_t queue_idx)
 {
     VkDeviceQueueInfo2 queue_info;
     queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2;
@@ -582,7 +582,7 @@ QueueState & QueueManager::allocateQueue(uint32_t qf_idx,
     scoped_lock lock(alloc_mutex_);
 
     if (queues.size() < max_queues) {
-        queues.emplace_back(makeQueue(qf_idx, queues.size(), dev));
+        queues.emplace_back(makeQueue(dev, qf_idx, queues.size()));
 
         return queues.back();
     }
@@ -656,12 +656,12 @@ CommandStreamState::CommandStreamState(
       dev(d),
       pipeline(pl),
       fb(framebuffer),
-      gfxPool(makeCmdPool(dev.gfxQF, dev)),
+      gfxPool(makeCmdPool(dev, dev.gfxQF)),
       gfxQueue(queue_manager.allocateGraphicsQueue()),
-      gfxCopyCommand(makeCmdBuffer(gfxPool, dev)),
-      transferPool(makeCmdPool(dev.transferQF, dev)),
+      gfxCopyCommand(makeCmdBuffer(dev, gfxPool)),
+      transferPool(makeCmdPool(dev, dev.transferQF)),
       transferQueue(queue_manager.allocateTransferQueue()),
-      transferStageCommand(makeCmdBuffer(transferPool, dev)),
+      transferStageCommand(makeCmdBuffer(dev, transferPool)),
       semaphore(makeBinarySemaphore(dev)),
       fence(makeFence(dev)),
       alloc(alc),
@@ -1013,7 +1013,7 @@ SceneState CommandStreamState::loadScene(SceneAssets &&assets)
 StreamSceneState CommandStreamState::initStreamSceneState(
         const SceneState &scene)
 {
-    VkCommandBuffer render_command = makeCmdBuffer(gfxPool, dev);
+    VkCommandBuffer render_command = makeCmdBuffer(dev, gfxPool);
 
     VkCommandBufferBeginInfo begin_info {};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
