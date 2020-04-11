@@ -1069,7 +1069,6 @@ StreamSceneState CommandStreamState::initStreamSceneState(
     for (const ObjectInstance &instance : scene.instances) {
         // FIXME select texture id from global array and
         // change instance system so meshes are grouped together
-        assert(instance.meshIndices.size() == 1);
         const SceneMesh &mesh = scene.meshes[instance.meshIndex];
 
         const Material &mat = scene.materials[mesh.materialIndex];

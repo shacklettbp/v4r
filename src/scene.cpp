@@ -23,7 +23,7 @@ namespace v4r {
 static const optional<uint64_t> loadTexture(const aiScene *raw_scene,
         const aiMaterial *raw_mat,
         aiTextureType type,
-        list<Texture> &textures,
+        vector<Texture> &textures,
         unordered_map<string, uint64_t> &loaded_texture_lookup)
 {
     aiString tex_path;
@@ -87,7 +87,7 @@ static SceneAssets loadAssets(const string &scene_path, const glm::mat4 &coordin
         fatalExit();
     }
 
-    list<Texture> textures;
+    vector<Texture> textures;
     vector<Material> materials;
     
     unordered_map<string, uint64_t> loaded_texture_lookup;

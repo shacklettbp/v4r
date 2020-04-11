@@ -68,7 +68,7 @@ struct ObjectInstance {
 };
 
 struct SceneAssets {
-    std::list<Texture> textures;
+    std::vector<Texture> textures;
     std::vector<Material> materials;
 
     std::vector<Vertex> vertices;

@@ -22,7 +22,7 @@ DescriptorManager::~DescriptorManager()
 
     for (PoolState &pool_state : used_pools_) {
         dev.dt.destroyDescriptorPool(dev.hdl, pool_state.pool, nullptr);
-        assert(pool_state->numActive == 0);
+        assert(pool_state.numActive == 0);
     }
 }
 
