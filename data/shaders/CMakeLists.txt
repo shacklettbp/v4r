@@ -1,6 +1,8 @@
 set(SHADER_FILES
-    unlit.vert
-    unlit.frag
+    texture_unlit.vert
+    texture_unlit.frag
+    color_unlit.vert
+    color_unlit.frag
 )
 
 find_program(GLSLC glslc)

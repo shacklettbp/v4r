@@ -2,11 +2,20 @@
 #define UTILS_HPP_INCLUDED
 
 #include <algorithm>
+#include <array>
 #include <memory>
 
 namespace v4r {
 
 [[noreturn]] void fatalExit() noexcept;
+
+template <typename>
+struct ArraySize {};
+
+template <typename T, size_t N>
+struct ArraySize<std::array<T, N>> {
+    static constexpr size_t value = N;
+};
 
 template <typename T>
 class ManagedArray {

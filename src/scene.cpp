@@ -142,7 +142,10 @@ static SceneAssets loadAssets(const string &scene_path, const glm::mat4 &coordin
         });
     }
 
-    vector<Vertex> vertices;
+    bool has_textures = textures.size() > 0;
+    vector<TexturedVertex> textured_vertices;
+    vector<ColoredVertex> colored_vertices;
+
     vector<uint32_t> indices;
     vector<SceneMesh> meshes;
 
@@ -160,29 +163,34 @@ static SceneAssets loadAssets(const string &scene_path, const glm::mat4 &coordin
                 vert_idx++) {
             glm::vec3 pos = glm::make_vec3(&raw_mesh->mVertices[vert_idx].x);
 
-            glm::vec2 uv;
-            if (has_uv) {
-                const auto &raw_uv = raw_mesh->mTextureCoords[0][vert_idx];
-                uv = glm::vec2(raw_uv.x, 1.f - raw_uv.y);
+            if (has_textures) {
+                glm::vec2 uv;
+                if (has_uv) {
+                    const auto &raw_uv = raw_mesh->mTextureCoords[0][vert_idx];
+                    uv = glm::vec2(raw_uv.x, 1.f - raw_uv.y);
+                } else {
+                    uv = glm::vec2(0.f);
+                }
+
+                textured_vertices.emplace_back(TexturedVertex {
+                    pos,
+                    uv
+                });
             } else {
-                uv = glm::vec2(0.f);
+                glm::u8vec3 color;
+                if (has_color) {
+                    const auto raw_color = &raw_mesh->mColors[0][vert_idx];
+                    color = glm::u8vec3(raw_color->r * 255, raw_color->g * 255,
+                                        raw_color->b * 255);
+                } else {
+                    color = glm::u8vec3(255);
+                }
+
+                colored_vertices.emplace_back(ColoredVertex {
+                    pos,
+                    color
+                });
             }
-
-            glm::vec3 color;
-            if (has_color) {
-                const auto raw_color = &raw_mesh->mColors[0][vert_idx];
-                color = glm::vec3(raw_color->r, raw_color->g, raw_color->b);
-            } else {
-                color = glm::vec3(1.f);
-            }
-
-            Vertex vertex {
-                pos,
-                uv,
-                color
-            };
-
-            vertices.emplace_back(move(vertex));
         }
 
         for (uint32_t face_idx = 0; face_idx < raw_mesh->mNumFaces;
@@ -238,7 +246,8 @@ static SceneAssets loadAssets(const string &scene_path, const glm::mat4 &coordin
     return SceneAssets {
         move(textures),
         move(materials),
-        move(vertices),
+        move(textured_vertices),
+        move(colored_vertices),
         move(indices),
         move(meshes),
         move(instances)

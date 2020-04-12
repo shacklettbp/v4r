@@ -3,7 +3,6 @@
 
 #include <array>
 #include <deque>
-#include <list>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -11,6 +10,7 @@
 #include <vector>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/type_precision.hpp>
 
 #include <v4r/config.hpp>
 
@@ -29,10 +29,14 @@ struct PushConstants {
     glm::mat4 modelTransform;
 };
 
-struct Vertex {
+struct TexturedVertex {
     glm::vec3 position;
     glm::vec2 uv;
-    glm::vec3 color;
+};
+
+struct ColoredVertex {
+    glm::vec3 position;
+    glm::u8vec3 color;
 };
 
 struct Texture {
@@ -71,7 +75,8 @@ struct SceneAssets {
     std::vector<Texture> textures;
     std::vector<Material> materials;
 
-    std::vector<Vertex> vertices;
+    std::vector<TexturedVertex> textured_vertices;
+    std::vector<ColoredVertex> colored_vertices;
     std::vector<uint32_t> indices;
 
     std::vector<SceneMesh> meshes;
@@ -124,11 +129,42 @@ public:
     VkDeviceMemory resultMem;
 };
 
-// FIXME separate out things like the layout, cache (maybe renderpass)
-// into a PipelineConfig type struct
-struct PipelineState {
-    VkRenderPass renderPass;
+template <size_t NumInputs, size_t NumAttrs,
+          size_t NumShaders, size_t NumDescriptorLayouts>
+struct PipelineConfig {
+public:
+    std::array<VkVertexInputBindingDescription, NumInputs> inputBindings;
+    std::array<VkVertexInputAttributeDescription, NumAttrs> inputAttrs;
 
+    std::array<std::pair<const char *, VkShaderStageFlagBits>, NumShaders>
+        shaders;
+    std::array<VkDescriptorSetLayout, NumDescriptorLayouts> descLayouts;
+
+    PipelineConfig(
+            typename std::add_rvalue_reference<decltype(inputBindings)>::type
+                input_bindings,
+            typename std::add_rvalue_reference<decltype(inputAttrs)>::type
+                input_attrs,
+            typename std::add_rvalue_reference<decltype(shaders)>::type
+                s,
+            typename std::add_rvalue_reference<decltype(descLayouts)>::type
+                desc_layouts)
+        : inputBindings(std::move(input_bindings)), 
+          inputAttrs(std::move(input_attrs)),
+          shaders(std::move(s)),
+          descLayouts(std::move(desc_layouts))
+    {}
+};
+
+// Deduction guide!
+template<typename B, typename A, typename S, typename D>
+PipelineConfig(B, A, S, D) ->
+    PipelineConfig<ArraySize<B>::value, ArraySize<A>::value,
+                   ArraySize<S>::value, ArraySize<D>::value>;
+
+// FIXME separate out things like the layout, cache (maybe renderpass)
+// into PipelineManager
+struct PipelineState {
     std::array<VkShaderModule, 2> shaders;
 
     VkPipelineCache pipelineCache;
@@ -212,7 +248,9 @@ public:
                        const DeviceState &dev,
                        const PerStreamDescriptorConfig &stream_desc_cfg,
                        const PerSceneDescriptorConfig &scene_desc_cfg,
-                       const PipelineState &pl,
+                       VkRenderPass render_pass,
+                       const PipelineState &textured_pipeline,
+                       const PipelineState &vertex_color_pipeline,
                        const FramebufferState &fb,
                        MemoryAllocator &alc,
                        QueueManager &queue_manager,
@@ -232,7 +270,10 @@ public:
 
     const InstanceState &inst;
     const DeviceState &dev;
-    const PipelineState &pipeline;
+
+    VkRenderPass renderPass;
+    const PipelineState &texturedPipeline;
+    const PipelineState &vertexColorPipeline;
     const FramebufferState &fb;
 
     const VkCommandPool gfxPool;
@@ -280,7 +321,9 @@ public:
     const FramebufferConfig fbCfg;
     const PerStreamDescriptorConfig streamDescCfg;
     const PerSceneDescriptorConfig sceneDescCfg;
-    const PipelineState pipeline;
+    VkRenderPass renderPass;
+    const PipelineState texturedPipeline;
+    const PipelineState vertexColorPipeline;
     const FramebufferState fb;
 
     uint32_t numStreams;

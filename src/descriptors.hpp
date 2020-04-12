@@ -161,6 +161,7 @@ public:
     ~DescriptorManager();
 
     DescriptorSet makeSet();
+    DescriptorSet emptySet();
 
 private:
     const DeviceState &dev;
@@ -168,6 +169,8 @@ private:
 
     std::list<PoolState> free_pools_;
     std::list<PoolState> used_pools_;
+
+    std::unique_ptr<PoolState> empty_pool_;
 };
 
 }
