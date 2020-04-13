@@ -41,7 +41,7 @@ vector<glm::mat4> readViews(const char *dump_path)
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
-        cerr << "SCENE VIEWS" << endl;
+        cerr << "SCENE SCENE2 VIEWS VIEWS2" << endl;
         exit(EXIT_FAILURE);
     }
 
@@ -56,7 +56,8 @@ int main(int argc, char *argv[]) {
         )
     });
 
-    vector<glm::mat4> init_views = readViews(argv[2]);
+    vector<glm::mat4> init_views = readViews(argv[3]);
+    vector<glm::mat4> init_views2 = readViews(argv[4]);
     size_t num_frames = min(init_views.size(), max_render_frames);
 
     pthread_barrier_t start_barrier;
@@ -72,10 +73,21 @@ int main(int argc, char *argv[]) {
     for (int t_idx = 0; t_idx < num_threads; t_idx++) {
         threads.emplace_back(
             [num_frames, &go, &ctx, &start_barrier, &end_barrier]
-            (const char *scene_path, vector<glm::mat4> views)
+            (const char *scene_path, const char *scene_path2, vector<glm::mat4> cam_views, vector<glm::mat4> cam_views2)
             {
                 auto cmd_stream = ctx.makeCommandStream();
                 auto scene = cmd_stream.loadScene(scene_path);
+                auto scene2 = cmd_stream.loadScene(scene_path2);
+
+                vector<pair<glm::mat4, RenderContext::SceneHandle *>> views;
+                views.reserve(cam_views.size() + cam_views2.size());
+                for (auto &mat : cam_views) {
+                    views.emplace_back(mat, &scene);
+                }
+
+                for (auto &mat : cam_views2) {
+                    views.emplace_back(mat, &scene2);
+                }
 
                 random_device rd;
                 mt19937 g(rd());
@@ -87,17 +99,19 @@ int main(int argc, char *argv[]) {
                 while (!go.load()) {}
 
                 for (size_t i = 0; i < num_frames; i++) {
-                    const glm::mat4 &mat = views[i];
+                    auto &[mat, scene_ptr] = views[i];
                     cam.setView(mat);
-                    auto frame = cmd_stream.render(scene, cam);
+
+                    auto frame = cmd_stream.render(*scene_ptr, cam);
                     (void)frame;
                 }
 
                 pthread_barrier_wait(&end_barrier);
 
                 cmd_stream.dropScene(move(scene));
+                cmd_stream.dropScene(move(scene2));
             }, 
-            argv[1], init_views);
+            argv[1], argv[2], init_views, init_views2);
     }
 
     pthread_barrier_wait(&start_barrier);
@@ -118,6 +132,7 @@ int main(int argc, char *argv[]) {
     auto diff = chrono::duration_cast<chrono::milliseconds>(end - start);
 
     cout << "FPS: " << ((double)num_frames * num_threads / (double)diff.count()) * 1000.0 << endl;
+    cout << "MS per 32 frames " << (double)diff.count() / ((double)num_frames * num_threads / 32.0) << endl;
 
     for (thread &t : threads) {
         t.join();
