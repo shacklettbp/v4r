@@ -9,7 +9,7 @@ class CudaState {
 public:
     CudaState(int buf_fd, uint64_t num_bytes);
 
-    void *getPointer(uint64_t offset)
+    void *getPointer(uint64_t offset) const
     {
         return (uint8_t *)dev_ptr_ + offset;
     }

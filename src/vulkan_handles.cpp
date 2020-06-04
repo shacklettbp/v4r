@@ -66,7 +66,12 @@ static void fillQueueInfo(VkDeviceQueueCreateInfo &info, uint32_t idx,
     info.queueCount = priorities.size();
     info.pQueuePriorities = priorities.data();
 }
-DeviceState InstanceState::makeDevice(const uint32_t gpu_id) const
+
+DeviceState InstanceState::makeDevice(
+        uint32_t gpu_id,
+        uint32_t desired_gfx_queues,
+        uint32_t desired_compute_queues,
+        uint32_t desired_transfer_queues) const
 {
     uint32_t num_gpus;
     REQ_VK(dt.enumeratePhysicalDevices(hdl, &num_gpus, nullptr));
@@ -147,15 +152,15 @@ DeviceState InstanceState::makeDevice(const uint32_t gpu_id) const
     }
 
     const uint32_t num_gfx_queues =
-        min(VulkanConfig::num_desired_gfx_queues,
+        min(desired_gfx_queues,
             queue_family_props[*gfx_queue_family].
                 queueFamilyProperties.queueCount);
     const uint32_t num_compute_queues =
-        min(VulkanConfig::num_desired_compute_queues,
+        min(desired_compute_queues,
             queue_family_props[*compute_queue_family].
                 queueFamilyProperties.queueCount);
     const uint32_t num_transfer_queues =
-        min(VulkanConfig::num_desired_transfer_queues,
+        min(desired_transfer_queues,
         queue_family_props[*transfer_queue_family].
             queueFamilyProperties.queueCount);
 

@@ -1,9 +1,3 @@
-add_executable(viewer
-    viewer.cpp
-)
-
-target_link_libraries(viewer ${V4R_HEADLESS_LIBS})
-
 add_executable(bench
     bench.cpp
 )

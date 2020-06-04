@@ -254,11 +254,12 @@ static SceneAssets loadAssets(const string &scene_path, const glm::mat4 &coordin
     };
 }
 
-Scene::Scene(const std::string &scene_path, CommandStreamState &renderer_state,
-             const glm::mat4 &coordinate_txfm)
+LoadedScene::LoadedScene(const std::string &scene_path,
+                         LoaderState &loader_state,
+                         const glm::mat4 &coordinate_txfm)
     : path_(scene_path),
       ref_count_(1),
-      state_(renderer_state.loadScene(loadAssets(scene_path, coordinate_txfm)))
+      state_(loader_state.loadScene(loadAssets(scene_path, coordinate_txfm)))
 {}
 
 SceneManager::SceneManager(const glm::mat4 &coordinate_transform)
@@ -269,9 +270,9 @@ SceneManager::SceneManager(const glm::mat4 &coordinate_transform)
 {}
 
 SceneID SceneManager::loadScene(const std::string &scene_path,
-                                CommandStreamState &renderer_state)
+                                LoaderState &loader_state)
 {
-    std::list<Scene>::iterator scene;
+    std::list<LoadedScene>::iterator scene;
     {
         scoped_lock lock(load_mutex_);
 
@@ -280,35 +281,31 @@ SceneID SceneManager::loadScene(const std::string &scene_path,
             scene = lookup_iter->second;
             scene->refIncrement();
         } else {
-            scenes_.emplace_front(scene_path, renderer_state,
+            scenes_.emplace_front(scene_path, loader_state,
                                   coordinate_txfm_);
             scene = scenes_.begin();
             scene_lookup_.emplace(scene_path, scene);
         }
     }
 
-    SceneID id(scene, renderer_state.initStreamSceneState(scene->getState()));
+    SceneID id(scene);
 
     return id;
 }
 
-void SceneManager::dropScene(SceneID &&scene_id,
-                             CommandStreamState &renderer_state)
+void SceneManager::dropScene(SceneID &&scene_id)
 {
-    renderer_state.cleanupStreamSceneState(scene_id.getStreamState());
-    {
-        scoped_lock lock(load_mutex_);
-        
-        bool should_free = scene_id.scene_->refDecrement();
-        if (!should_free) return;
+    scoped_lock lock(load_mutex_);
+    
+    bool should_free = scene_id.scene_->refDecrement();
+    if (!should_free) return;
 
-        [[maybe_unused]] size_t num_erased =
-            scene_lookup_.erase(scene_id.scene_->getPath());
+    [[maybe_unused]] size_t num_erased =
+        scene_lookup_.erase(scene_id.scene_->getPath());
 
-        assert(num_erased == 1);
+    assert(num_erased == 1);
 
-        scenes_.erase(scene_id.scene_);
-    }
+    scenes_.erase(scene_id.scene_);
 }
 
 }

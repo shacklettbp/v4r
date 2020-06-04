@@ -9,9 +9,9 @@
 
 namespace v4r {
 
-class Scene {
+class LoadedScene {
 public:
-    Scene(const std::string &scene_path, CommandStreamState &renderer_state,
+    LoadedScene(const std::string &scene_path, LoaderState &loader_state,
           const glm::mat4 &coordinate_transform);
 
     const std::string & getPath() const { return path_; }
@@ -31,16 +31,13 @@ class SceneManager;
 class SceneID {
 public:
     const SceneState &getState() const { return scene_->getState(); }
-    const StreamSceneState &getStreamState() const { return stream_state_; }
 
 private:
-    SceneID(std::list<Scene>::iterator scene, StreamSceneState &&stream_state)
-        : scene_(scene),
-          stream_state_(std::move(stream_state))
+    SceneID(std::list<LoadedScene>::iterator scene)
+        : scene_(scene)
     {}
 
-    std::list<Scene>::iterator scene_;
-    StreamSceneState stream_state_;
+    std::list<LoadedScene>::iterator scene_;
 
     friend class SceneManager;
 };
@@ -50,15 +47,14 @@ public:
     SceneManager(const glm::mat4 &coordinate_transform);
 
     SceneID loadScene(const std::string &scene_path,
-                      CommandStreamState &renderer_state);
-    void dropScene(SceneID &&scene_id,
-                   CommandStreamState &renderer_state);
+                      LoaderState &loader_state);
+    void dropScene(SceneID &&scene_id);
 
 private:
     glm::mat4 coordinate_txfm_;
     std::mutex load_mutex_;
-    std::list<Scene> scenes_;
-    std::unordered_map<std::string, std::list<Scene>::iterator> scene_lookup_;
+    std::list<LoadedScene> scenes_;
+    std::unordered_map<std::string, std::list<LoadedScene>::iterator> scene_lookup_;
 };
 
 }

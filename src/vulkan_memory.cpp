@@ -137,7 +137,7 @@ LocalBuffer::~LocalBuffer()
 }
 
 LocalImage::LocalImage(uint32_t w, uint32_t h, uint32_t mip_levels,
-                           VkImage img, AllocDeleter<false> deleter)
+                       VkImage img, AllocDeleter<false> deleter)
     : width(w), height(h), mipLevels(mip_levels),
       image(img),
       deleter_(deleter)

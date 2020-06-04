@@ -7,6 +7,9 @@ namespace v4r {
 
 struct RenderConfig {
     uint32_t gpuID;
+    uint32_t numLoaders;
+    uint32_t numStreams;
+    uint32_t batchSize;
     uint32_t imgWidth;
     uint32_t imgHeight;
     glm::mat4 coordinateTransform;

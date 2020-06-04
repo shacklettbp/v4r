@@ -14,7 +14,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    RenderContext ctx({0, 256, 256,
+    Renderer renderer({0, 1, 1, 1, 256, 256,
         glm::mat4(
             1, 0, 0, 0,
             0, -1.19209e-07, -1, 0,
@@ -23,22 +23,22 @@ int main(int argc, char *argv[]) {
         )
     });
 
-    Camera cam = ctx.makeCamera(90, 0.01, 1000,
-        glm::inverse(glm::mat4(-1.19209e-07, 0, 1, 0,
-                  0, 1, 0, 0,
-                  -1, 0, -1.19209e-07, 0,
-                  -3.38921, 1.62114, -3.34509, 1)));
+    auto loader = renderer.makeLoader();
+    auto scene = loader.loadScene(argv[1]);
 
-
-    auto cmd_stream = ctx.makeCommandStream();
-
-
-    auto scene_handle = cmd_stream.loadScene(argv[1]);
+    auto cmd_stream = renderer.makeCommandStream();
+    cmd_stream.initState(0, scene, 90);
+    cmd_stream.setCameraView(0,
+        glm::inverse(glm::mat4(
+            -1.19209e-07, 0, 1, 0,
+            0, 1, 0, 0,
+            -1, 0, -1.19209e-07, 0,
+            -3.38921, 1.62114, -3.34509, 1)));
 
     auto start = chrono::steady_clock::now();
 
     for (int i = 0; i < 10000; i++) {
-        cmd_stream.render(scene_handle, cam);
+        cmd_stream.render();
     }
 
     auto end = chrono::steady_clock::now();
@@ -46,5 +46,5 @@ int main(int argc, char *argv[]) {
     auto diff = chrono::duration_cast<chrono::milliseconds>(end - start);
     cout << "FPS: " << ((double)num_frames / (double)diff.count()) * 1000.0 << endl;
 
-    cmd_stream.dropScene(move(scene_handle));
+    loader.dropScene(move(scene));
 }

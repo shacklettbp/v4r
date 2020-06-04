@@ -40,14 +40,14 @@ vector<glm::mat4> readViews(const char *dump_path)
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 3) {
-        cerr << "SCENE SCENE2 VIEWS VIEWS2" << endl;
+    if (argc < 2) {
+        cerr << "SCENE VIEWS" << endl;
         exit(EXIT_FAILURE);
     }
 
     RenderDoc rdoc;
 
-    RenderContext ctx({0, 256, 256,
+    Renderer renderer({0, 1, num_threads, 1, 256, 256,
         glm::mat4(
             1, 0, 0, 0,
             0, -1.19209e-07, -1, 0,
@@ -56,8 +56,7 @@ int main(int argc, char *argv[]) {
         )
     });
 
-    vector<glm::mat4> init_views = readViews(argv[3]);
-    vector<glm::mat4> init_views2 = readViews(argv[4]);
+    vector<glm::mat4> init_views = readViews(argv[2]);
     size_t num_frames = min(init_views.size(), max_render_frames);
 
     pthread_barrier_t start_barrier;
@@ -68,50 +67,36 @@ int main(int argc, char *argv[]) {
     vector<thread> threads;
     threads.reserve(num_threads);
 
+    auto loader = renderer.makeLoader();
+    auto scene = loader.loadScene(argv[1]);
+
     atomic_bool go(false);
 
     for (int t_idx = 0; t_idx < num_threads; t_idx++) {
         threads.emplace_back(
-            [num_frames, &go, &ctx, &start_barrier, &end_barrier]
-            (const char *scene_path, const char *scene_path2, vector<glm::mat4> cam_views, vector<glm::mat4> cam_views2)
+            [num_frames, &go, &renderer, &start_barrier, &end_barrier, &scene]
+            (vector<glm::mat4> cam_views)
             {
-                auto cmd_stream = ctx.makeCommandStream();
-                auto scene = cmd_stream.loadScene(scene_path);
-                auto scene2 = cmd_stream.loadScene(scene_path2);
-
-                vector<pair<glm::mat4, RenderContext::SceneHandle *>> views;
-                views.reserve(cam_views.size() + cam_views2.size());
-                for (auto &mat : cam_views) {
-                    views.emplace_back(mat, &scene);
-                }
-
-                for (auto &mat : cam_views2) {
-                    views.emplace_back(mat, &scene2);
-                }
+                auto cmd_stream = renderer.makeCommandStream();
+                cmd_stream.initState(0, scene, 90, 0.01, 1000);
 
                 random_device rd;
                 mt19937 g(rd());
-                shuffle(views.begin(), views.end(), g);
-
-                auto cam = ctx.makeCamera(90, 0.01, 1000, glm::mat4(1.f));
+                shuffle(cam_views.begin(), cam_views.end(), g);
 
                 pthread_barrier_wait(&start_barrier);
                 while (!go.load()) {}
 
                 for (size_t i = 0; i < num_frames; i++) {
-                    auto &[mat, scene_ptr] = views[i];
-                    cam.setView(mat);
+                    auto mat = cam_views[i];
+                    cmd_stream.setCameraView(0, mat);
 
-                    auto frame = cmd_stream.render(*scene_ptr, cam);
-                    (void)frame;
+                    cmd_stream.render();
                 }
 
                 pthread_barrier_wait(&end_barrier);
-
-                cmd_stream.dropScene(move(scene));
-                cmd_stream.dropScene(move(scene2));
             }, 
-            argv[1], argv[2], init_views, init_views2);
+            init_views);
     }
 
     pthread_barrier_wait(&start_barrier);
@@ -124,6 +109,8 @@ int main(int argc, char *argv[]) {
 
     pthread_barrier_wait(&end_barrier);
     auto end = chrono::steady_clock::now();
+
+    loader.dropScene(move(scene));
 
     if (debug) {
         rdoc.endFrame();

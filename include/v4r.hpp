@@ -1,85 +1,118 @@
-#ifndef V4R_H_INCLUDED
-#define V4R_H_INCLUDED
-
-#include <memory>
-
-#include <glm/glm.hpp>
+#ifndef V4R_HPP_INCLUDED
+#define V4R_HPP_INCLUDED
 
 #include <v4r/config.hpp>
+#include <v4r/utils.hpp>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <vector>
 
 namespace v4r {
 
 struct VulkanState;
 struct CommandStreamState;
+struct LoaderState;
 struct CameraState;
 class SceneID;
 class SceneManager;
 class CudaState;
+class Renderer;
+class SceneLoader;
 
-struct RenderResult {
+struct FrameBatch {
 public:
     uint8_t *colorPtr;
     float *depthPtr;
 };
 
-class Camera {
+class RenderFuture {
 public:
-    Camera(float hfov, uint32_t width, uint32_t height, float near, float far,
-           const glm::mat4 &view);
-
-    Camera(const Camera &) = delete;
-    Camera(Camera &&o);
-    ~Camera();
-
-    void rotate(float angle, const glm::vec3 &axis);
-    void translate(const glm::vec3 &v);
-    void setView(const glm::mat4 &m);
-
-    const CameraState & getState() const;
-
 private:
-    std::unique_ptr<CameraState> state_;
+friend class CommandStream;
 };
 
-class RenderContext {
+using SceneHandle = Handle<SceneID>;
+
+class SceneLoader {
 public:
-    template <typename T>
-    struct HandleDeleter {
-        constexpr HandleDeleter() noexcept = default;
-        void operator()(T *ptr) const;
+    SceneHandle loadScene(const std::string &file);
+    void dropScene(SceneHandle &&scene);
+
+private:
+    SceneLoader(Handle<LoaderState> &&state,
+                SceneManager &mgr);
+
+    Handle<LoaderState> state_;
+    SceneManager &mgr_;
+
+friend class Renderer;
+};
+
+class CommandStream {
+public:
+    // Initialize state to render 'scene' into the frame at 'batch_idx'.
+    // Can be called repeatedly with the same 'batch_idx' to switch scenes
+    void initState(uint32_t batch_idx, const SceneHandle &scene, float hfov,
+                   float near = 0.001f, float far = 10000.f);
+
+    // Object Instance transformations
+    inline const glm::mat4 & getInstanceTransform(uint32_t batch_idx,
+                                                  uint32_t inst_idx) const;
+
+    inline void updateInstanceTransform(uint32_t batch_idx,
+                                        uint32_t inst_idx,
+                                        const glm::mat4 &mat);
+
+    inline uint32_t numInstanceTransforms(uint32_t batch_idx) const;
+
+    // Camera transformations
+    inline void setCameraView(uint32_t batch_idx, const glm::vec3 &eye,
+                              const glm::vec3 &look, const glm::vec3 &up);
+
+    inline void setCameraView(uint32_t batch_idx, const glm::mat4 &mat);
+
+    inline void rotateCamera(uint32_t batch_idx, float angle,
+                             const glm::vec3 &axis);
+
+    inline void translateCamera(uint32_t batch_idx, const glm::vec3 &v);
+
+    // Fixed pointers to output buffers
+    FrameBatch getResultsPointer() const;
+
+    // Render batch based on current state
+    RenderFuture render();
+
+private:
+    CommandStream(Handle<CommandStreamState> &&state,
+                  const CudaState &cuda,
+                  uint32_t render_width,
+                  uint32_t render_height,
+                  uint32_t batch_size);
+
+    Handle<CommandStreamState> state_;
+    const CudaState &cuda_;
+
+    struct RenderInput {
+        glm::mat4 *view;
+        glm::mat4 *instanceTransforms;
+        uint32_t numInstances;
+        bool dirty;
     };
 
-    template <typename T>
-    using Handle = std::unique_ptr<T, HandleDeleter<T>>;
-    using SceneHandle = Handle<SceneID>;
+    uint32_t render_width_;
+    uint32_t render_height_;
+    std::vector<RenderInput> cur_inputs_;
 
-    class CommandStream {
-    public:
-        RenderResult render(const SceneHandle &scene, const Camera &camera);
+friend class Renderer;
+};
 
-        SceneHandle loadScene(const std::string &file);
-        void dropScene(SceneHandle &&handle);
+class Renderer {
+public:
+    Renderer(const RenderConfig &cfg);
+    ~Renderer();
 
-    private:
-        using StreamStateHandle = Handle<CommandStreamState>;
-
-        CommandStream(StreamStateHandle &&state, RenderContext &global);
-        StreamStateHandle state_;
-        RenderContext &global_;
-
-        friend class RenderContext;
-    };
-
-    RenderContext(const RenderConfig &cfg);
-    ~RenderContext();
-
-    Camera makeCamera(float hfov, float near, float far,
-                      const glm::mat4 &view) const;
-
-    Camera makeCamera(float hfov, float near, float far,
-                      const glm::vec3 &eye_pos, const glm::vec3 &look_pos,
-                      const glm::vec3 &up) const;
-
+    SceneLoader makeLoader();
     CommandStream makeCommandStream();
 
 private:
@@ -89,5 +122,7 @@ private:
 };
 
 }
+
+#include <v4r/impl.inl>
 
 #endif

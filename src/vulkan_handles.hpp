@@ -31,7 +31,10 @@ public:
 
     InstanceState();
 
-    DeviceState makeDevice(uint32_t gpu_id) const;
+    DeviceState makeDevice(uint32_t gpu_id,
+                           uint32_t desired_gfx_queues,
+                           uint32_t desired_compute_queues,
+                           uint32_t desired_transfer_queues) const;
 };
 
 }
