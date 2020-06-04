@@ -27,6 +27,10 @@ void HandleDeleter<T>::operator()(T *ptr) const
 template struct HandleDeleter<SceneID>;
 template struct HandleDeleter<LoaderState>;
 template struct HandleDeleter<CommandStreamState>;
+template struct HandleDeleter<CudaStreamState>;
+template struct HandleDeleter<VulkanState>;
+template struct HandleDeleter<SceneManager>;
+template struct HandleDeleter<CudaState>;
 
 static glm::mat4 makePerspectiveMatrix(float hfov, uint32_t width,
                                        uint32_t height, float near, float far)
@@ -57,32 +61,34 @@ void SceneLoader::dropScene(SceneHandle &&handle)
     mgr_.dropScene(move(*handle));
 }
 
+RenderSync::RenderSync(cudaExternalSemaphore_t sem)
+    : ext_sem_(sem)
+{}
+
+void RenderSync::gpuWait(cudaStream_t strm)
+{
+    cudaGPUWait(ext_sem_, strm);
+}
+
+void RenderSync::cpuWait()
+{
+    cudaCPUWait(ext_sem_);
+}
+
 CommandStream::CommandStream(Handle<CommandStreamState> &&state,
-                             const CudaState &cuda,
+                             const CudaState &renderer_cuda,
                              uint32_t render_width,
                              uint32_t render_height,
                              uint32_t batch_size)
     : state_(move(state)),
-      cuda_(cuda),
+      cuda_(make_handle<CudaStreamState>(
+                (uint8_t *)renderer_cuda.getPointer(state_->getColorOffset()),
+                (float *)renderer_cuda.getPointer(state_->getDepthOffset()),
+                state_->getSemaphoreFD())),
       render_width_(render_width),
       render_height_(render_height),
       cur_inputs_(batch_size)
 {}
-
-FrameBatch CommandStream::getResultsPointer() const
-{
-    return FrameBatch {
-        (uint8_t *)cuda_.getPointer(state_->getColorOffset()),
-        (float *)cuda_.getPointer(state_->getDepthOffset())
-    };
-}
-
-RenderFuture CommandStream::render()
-{
-    state_->render();
-
-    return RenderFuture {};
-}
 
 void CommandStream::initState(uint32_t batch_idx,
                               const SceneHandle &scene,
@@ -105,23 +111,38 @@ void CommandStream::initState(uint32_t batch_idx,
     cur_input.dirty = false;
 }
 
-Renderer::Renderer(const RenderConfig &cfg)
-    : state_(make_unique<VulkanState>(cfg)),
-      scene_mgr_(make_unique<SceneManager>(cfg.coordinateTransform)),
-      cuda_(make_unique<CudaState>(state_->getFramebufferFD(),
+uint8_t * CommandStream::getColorDevPtr() const
+{
+    return cuda_->getColor();
+}
+
+float * CommandStream::getDepthDevPtr() const
+{
+    return cuda_->getDepth();
+}
+
+RenderSync CommandStream::render()
+{
+    state_->render();
+
+    return RenderSync(cuda_->getSemaphore());
+}
+
+BatchRenderer::BatchRenderer(const RenderConfig &cfg)
+    : state_(make_handle<VulkanState>(cfg)),
+      scene_mgr_(make_handle<SceneManager>(cfg.coordinateTransform)),
+      cuda_(make_handle<CudaState>(state_->getFramebufferFD(),
                                    state_->getFramebufferBytes()))
 {}
 
-Renderer::~Renderer() = default;
-
-SceneLoader Renderer::makeLoader()
+SceneLoader BatchRenderer::makeLoader()
 {
     return SceneLoader(make_handle<LoaderState>(
             state_->makeLoader()),
             *scene_mgr_);
 }
 
-CommandStream Renderer::makeCommandStream()
+CommandStream BatchRenderer::makeCommandStream()
 {
     return CommandStream(make_handle<CommandStreamState>(
             state_->makeStream()), *cuda_, state_->cfg.imgWidth,

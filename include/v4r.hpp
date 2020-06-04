@@ -2,35 +2,16 @@
 #define V4R_HPP_INCLUDED
 
 #include <v4r/config.hpp>
+#include <v4r/fwd.hpp>
 #include <v4r/utils.hpp>
 
+#include <cuda.h>
+#include <cuda_runtime.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <vector>
 
 namespace v4r {
-
-struct VulkanState;
-struct CommandStreamState;
-struct LoaderState;
-struct CameraState;
-class SceneID;
-class SceneManager;
-class CudaState;
-class Renderer;
-class SceneLoader;
-
-struct FrameBatch {
-public:
-    uint8_t *colorPtr;
-    float *depthPtr;
-};
-
-class RenderFuture {
-public:
-private:
-friend class CommandStream;
-};
 
 using SceneHandle = Handle<SceneID>;
 
@@ -46,7 +27,19 @@ private:
     Handle<LoaderState> state_;
     SceneManager &mgr_;
 
-friend class Renderer;
+friend class BatchRenderer;
+};
+
+class RenderSync {
+public:
+    void gpuWait(cudaStream_t strm);
+    void cpuWait();
+
+private:
+    RenderSync(cudaExternalSemaphore_t sem);
+
+    cudaExternalSemaphore_t ext_sem_;
+friend class CommandStream;
 };
 
 class CommandStream {
@@ -77,21 +70,22 @@ public:
 
     inline void translateCamera(uint32_t batch_idx, const glm::vec3 &v);
 
-    // Fixed pointers to output buffers
-    FrameBatch getResultsPointer() const;
+    // Fixed CUDA device pointers to result buffers
+    uint8_t * getColorDevPtr() const;
+    float * getDepthDevPtr() const;
 
     // Render batch based on current state
-    RenderFuture render();
+    RenderSync render();
 
 private:
     CommandStream(Handle<CommandStreamState> &&state,
-                  const CudaState &cuda,
+                  const CudaState &renderer_cuda,
                   uint32_t render_width,
                   uint32_t render_height,
                   uint32_t batch_size);
 
     Handle<CommandStreamState> state_;
-    const CudaState &cuda_;
+    Handle<CudaStreamState> cuda_;
 
     struct RenderInput {
         glm::mat4 *view;
@@ -104,21 +98,20 @@ private:
     uint32_t render_height_;
     std::vector<RenderInput> cur_inputs_;
 
-friend class Renderer;
+friend class BatchRenderer;
 };
 
-class Renderer {
+class BatchRenderer {
 public:
-    Renderer(const RenderConfig &cfg);
-    ~Renderer();
+    BatchRenderer(const RenderConfig &cfg);
 
     SceneLoader makeLoader();
     CommandStream makeCommandStream();
 
 private:
-    std::unique_ptr<VulkanState> state_;
-    std::unique_ptr<SceneManager> scene_mgr_;
-    std::unique_ptr<CudaState> cuda_;
+    Handle<VulkanState> state_;
+    Handle<SceneManager> scene_mgr_;
+    Handle<CudaState> cuda_;
 };
 
 }

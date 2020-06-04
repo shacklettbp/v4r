@@ -1,5 +1,5 @@
-#ifndef DEBUG_HPP_INCLUDED
-#define DEBUG_HPP_INCLUDED
+#ifndef V4R_DEBUG_HPP_INCLUDED
+#define V4R_DEBUG_HPP_INCLUDED
 
 #include <cstdint>
 

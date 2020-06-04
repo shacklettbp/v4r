@@ -64,6 +64,7 @@ device:
 - vkCmdPushConstants
 - vkCmdSetViewport
 - vkGetMemoryFdKHR
+- vkGetSemaphoreFdKHR
 
 instance:
 - vkEnumeratePhysicalDevices

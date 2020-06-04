@@ -53,6 +53,8 @@ ENDIF()
 
 find_package(glm REQUIRED CONFIG)
 
+find_package(CUDAToolkit REQUIRED)
+
 include_directories(include external)
 
 add_subdirectory(src)

@@ -14,7 +14,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    Renderer renderer({0, 1, 1, 1, 256, 256,
+    BatchRenderer renderer({0, 1, 1, 1, 256, 256,
         glm::mat4(
             1, 0, 0, 0,
             0, -1.19209e-07, -1, 0,
@@ -38,7 +38,8 @@ int main(int argc, char *argv[]) {
     auto start = chrono::steady_clock::now();
 
     for (int i = 0; i < 10000; i++) {
-        cmd_stream.render();
+        auto sync = cmd_stream.render();
+        sync.cpuWait();
     }
 
     auto end = chrono::steady_clock::now();

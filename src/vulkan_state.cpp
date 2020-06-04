@@ -141,6 +141,24 @@ static VkSemaphore makeBinarySemaphore(const DeviceState &dev)
     return sema;
 }
 
+static VkSemaphore makeBinaryExternalSemaphore(const DeviceState &dev)
+{
+    VkExportSemaphoreCreateInfo export_info;
+    export_info.sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO;
+    export_info.pNext = nullptr;
+    export_info.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+ 
+    VkSemaphoreCreateInfo sema_info;
+    sema_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    sema_info.pNext = &export_info;
+    sema_info.flags = 0;
+
+    VkSemaphore sema;
+    REQ_VK(dev.dt.createSemaphore(dev.hdl, &sema_info, nullptr, &sema));
+
+    return sema;
+}
+
 static VkFence makeFence(const DeviceState &dev, bool pre_signal=false)
 {
     VkFenceCreateInfo fence_info;
@@ -1218,7 +1236,7 @@ CommandStreamState::CommandStreamState(
       gfxQueue(queue_manager.allocateGraphicsQueue()),
       copyCommand(makeCmdBuffer(dev, gfxPool)),
       alloc(alc),
-      fence(makeFence(dev)),
+      semaphore(makeBinaryExternalSemaphore(dev)),
       fb_pos_(stream_idx * batch_size * fb_cfg.numImagesWidePerBatch, 0),
       color_buffer_offset_(stream_idx * fb_cfg.totalLinearBytes),
       depth_buffer_offset_(color_buffer_offset_ + fb_cfg.colorLinearBytes),
@@ -1365,12 +1383,24 @@ void CommandStreamState::render()
         nullptr,
         0, nullptr, nullptr,
         static_cast<uint32_t>(commands_.size()), commands_.data(),
-        0, nullptr
+        1, &semaphore
     };
 
-    gfxQueue.submit(dev, 1, &gfx_submit, fence);
-    waitForFenceInfinitely(dev, fence);
-    REQ_VK(dev.dt.resetFences(dev.hdl, 1, &fence));
+    gfxQueue.submit(dev, 1, &gfx_submit, VK_NULL_HANDLE);
+}
+
+int CommandStreamState::getSemaphoreFD() const
+{
+    VkSemaphoreGetFdInfoKHR fd_info;
+    fd_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR;
+    fd_info.pNext = nullptr;
+    fd_info.semaphore = semaphore;
+    fd_info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+
+    int fd;
+    REQ_VK(dev.dt.getSemaphoreFdKHR(dev.hdl, &fd_info, &fd));
+
+    return fd;
 }
 
 VulkanState::VulkanState(const RenderConfig &config)

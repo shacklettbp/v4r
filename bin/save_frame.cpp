@@ -12,7 +12,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    Renderer renderer({0, 1, 1, 1, 256, 256,
+    BatchRenderer renderer({0, 1, 1, 1, 256, 256,
         glm::mat4(
             1, 0, 0, 0,
             0, -1.19209e-07, -1, 0,
@@ -34,13 +34,12 @@ int main(int argc, char *argv[]) {
                   -1, 0, -1.19209e-07, 0,
                   -3.38921, 1.62114, -3.34509, 1)));
 
-    auto ptrs = cmd_stream.getResultsPointer();
-
-    cmd_stream.render();
+    auto sync = cmd_stream.render();
+    sync.cpuWait();
     rdoc.endFrame();
 
-    saveFrame("/tmp/out_color.bmp", ptrs.colorPtr, 256, 256, 4);
-    saveFrame("/tmp/out_depth.bmp", ptrs.depthPtr, 256, 256, 1);
+    saveFrame("/tmp/out_color.bmp", cmd_stream.getColorDevPtr(), 256, 256, 4);
+    saveFrame("/tmp/out_depth.bmp", cmd_stream.getDepthDevPtr(), 256, 256, 1);
 
     loader.dropScene(move(scene));
 }

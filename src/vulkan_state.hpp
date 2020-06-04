@@ -315,6 +315,7 @@ public:
 
     VkDeviceSize getColorOffset() const { return color_buffer_offset_; }
     VkDeviceSize getDepthOffset() const { return depth_buffer_offset_; }
+    int getSemaphoreFD() const;
 
     const InstanceState &inst;
     const DeviceState &dev;
@@ -329,8 +330,7 @@ public:
     const VkCommandBuffer copyCommand;
 
     MemoryAllocator &alloc;
-
-    VkFence fence; // FIXME remove
+    const VkSemaphore semaphore;
 
 private:
     glm::u32vec2 fb_pos_;

@@ -42,7 +42,7 @@ add_definitions("-DSHADER_DIR=${SHADER_DIR}")
 # Main library
 
 add_library(v4r SHARED
-    cuda_state.hpp cuda_state.cu
+    cuda_state.hpp cuda_state.cpp
     descriptors.hpp descriptors.cpp
     dispatch.hpp dispatch.cpp
     scene.hpp scene.cpp
@@ -52,12 +52,13 @@ add_library(v4r SHARED
     vulkan_handles.hpp vulkan_handles.cpp
     vulkan_memory.hpp vulkan_memory.cpp
     vulkan_state.hpp vulkan_state.cpp
-    ../include/v4r.hpp v4r.cpp ../include/v4r/config.hpp
+    ../include/v4r.hpp v4r.cpp
+    ../include/v4r/config.hpp ../include/v4r/fwd.hpp ../include/v4r/utils.hpp
 )
 
 add_dependencies(v4r generate_vk_dispatch compile_shaders)
 
-target_link_libraries(v4r Vulkan::Vulkan Threads::Threads ${ASSIMP_LIBRARIES})
+target_link_libraries(v4r Vulkan::Vulkan CUDA::cudart Threads::Threads ${ASSIMP_LIBRARIES})
 
 # Debug utilities for frontend
 

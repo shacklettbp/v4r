@@ -21,7 +21,8 @@ static const char *instance_extensions[] = {
 };
 
 static const char *device_extensions[] = {
-    VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME
+    VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+    VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME
 };
 
 static constexpr uint32_t num_instance_extensions =
