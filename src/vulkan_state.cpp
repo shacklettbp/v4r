@@ -1309,42 +1309,53 @@ CommandStreamState::CommandStreamState(
                               static_cast<uint32_t>(barriers.size()),
                               barriers.data());
 
-    assert(fb_pos_.x == 0);
+    for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
+        glm::u32vec2 cur_pos =
+                computeFBPosition(batch_idx, fb_cfg, render_size) + fb_pos_;
 
-    VkBufferImageCopy copy_info;
-    copy_info.bufferOffset = color_buffer_offset_;
-    copy_info.bufferRowLength = 0;
-    copy_info.bufferImageHeight = 0;
-    copy_info.imageSubresource = {
-        VK_IMAGE_ASPECT_COLOR_BIT,
-        0, 0, 1
-    };
-    copy_info.imageOffset = {
-        static_cast<int32_t>(fb_pos_.x),
-        static_cast<int32_t>(fb_pos_.y),
-        0
-    };
-    copy_info.imageExtent = {
-        render_width * fb_cfg.numImagesWidePerBatch,
-        render_height * fb_cfg.numImagesTallPerBatch,
-        1
-    };
+        uint32_t cur_color_offset = color_buffer_offset_ +
+                batch_idx * render_width * render_height *
+                sizeof(uint8_t) * 4;
 
-    dev.dt.cmdCopyImageToBuffer(copy_command,
-                                fb.color.image,
-                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                fb.resultBuffer.buffer,
-                                1,
-                                &copy_info);
+        uint32_t cur_depth_offset = depth_buffer_offset_ +
+                batch_idx * render_width * render_height *
+                sizeof(float);
 
-    copy_info.bufferOffset = depth_buffer_offset_;
+        VkBufferImageCopy copy_info;
+        copy_info.bufferOffset = cur_color_offset;
+        copy_info.bufferRowLength = 0;
+        copy_info.bufferImageHeight = 0;
+        copy_info.imageSubresource = {
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            0, 0, 1
+        };
+        copy_info.imageOffset = {
+            static_cast<int32_t>(cur_pos.x),
+            static_cast<int32_t>(cur_pos.y),
+            0
+        };
+        copy_info.imageExtent = {
+            render_width,
+            render_height,
+            1
+        };
 
-    dev.dt.cmdCopyImageToBuffer(copy_command,
-                                fb.linearDepth.image,
-                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                fb.resultBuffer.buffer,
-                                1,
-                                &copy_info);
+        dev.dt.cmdCopyImageToBuffer(copy_command,
+                                    fb.color.image,
+                                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                    fb.resultBuffer.buffer,
+                                    1,
+                                    &copy_info);
+
+        copy_info.bufferOffset = cur_depth_offset;
+
+        dev.dt.cmdCopyImageToBuffer(copy_command,
+                                    fb.linearDepth.image,
+                                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                    fb.resultBuffer.buffer,
+                                    1,
+                                    &copy_info);
+    }
 
     REQ_VK(dev.dt.endCommandBuffer(copy_command));
 }
