@@ -23,6 +23,7 @@ int main(int argc, char *argv[]) {
 
     RenderDoc rdoc {};
 
+    rdoc.startFrame();
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
     auto cmd_stream = renderer.makeCommandStream();
@@ -35,7 +36,6 @@ int main(int argc, char *argv[]) {
 
     auto ptrs = cmd_stream.getResultsPointer();
 
-    rdoc.startFrame();
     cmd_stream.render();
     rdoc.endFrame();
 

@@ -248,8 +248,8 @@ public:
 };
 
 struct TransformPointers {
-    glm::mat4 *instances;
     glm::mat4 *view;
+    glm::mat4 *instances;
 };
 
 class SceneRenderState {
