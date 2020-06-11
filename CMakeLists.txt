@@ -40,22 +40,47 @@ IF (DEFINED ENV{VULKAN_SDK})
     endif()
 ENDIF()
 
-find_package(ASSIMP REQUIRED CONFIG)
-
 set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
 
-if (!HEADLESS)
+IF (NOT DEFINED HEADLESS)
+    set(HEADLESS 1)
+ENDIF()
+
+IF (NOT HEADLESS)
     find_package(XCB REQUIRED)
     add_definitions(-DVK_USE_PLATFORM_XCB_KHR)
 ENDIF()
 
-find_package(glm REQUIRED CONFIG)
+include_directories(include external)
 
 find_package(CUDAToolkit REQUIRED)
 
-include_directories(include external)
+IF (NOT USE_BUNDLED)
+    find_package(glm 0.9.9.8 CONFIG)
+ENDIF()
+
+IF (NOT glm_FOUND OR USE_BUNDLED)
+    message(STATUS "Using bundled GLM")
+    include_directories(external/glm)
+ENDIF()
+
+IF (NOT USE_BUNDLED)
+    find_package(ASSIMP 5.0.1 CONFIG)
+    if (ASSIMP_FOUND)
+        find_library(ASSIMP_LIBRARY_NAMES ${ASSIMP_LIBRARIES} PATH ${ASSIMP_LIBRARY_DIRS})
+        set_target_properties(assimp::assimp PROPERTIES IMPORTED_LOCATION "${ASSIMP_LIBRARY_NAMES}")
+    ENDIF()
+ENDIF()
+
+IF (NOT ASSIMP_FOUND OR USE_BUNDLED)
+    message(STATUS "Using bundled assimp")
+    set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "ASSIMP_BUILD_ASSIMP_TOOLS" FORCE)
+    set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "ASSIMP_BUILD_TESTS" FORCE)
+    add_subdirectory(external/assimp)
+    include_directories(external/assimp/include)
+ENDIF()
 
 add_subdirectory(src)
 add_subdirectory(bin)

@@ -58,7 +58,7 @@ add_library(v4r SHARED
 
 add_dependencies(v4r generate_vk_dispatch compile_shaders)
 
-target_link_libraries(v4r Vulkan::Vulkan CUDA::cudart Threads::Threads ${ASSIMP_LIBRARIES})
+target_link_libraries(v4r Vulkan::Vulkan CUDA::cudart Threads::Threads assimp::assimp)
 
 # Debug utilities for frontend
 
