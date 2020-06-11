@@ -84,6 +84,7 @@ void cudaGPUWait(cudaExternalSemaphore_t sem, cudaStream_t strm)
         cudaWaitExternalSemaphoresAsync(&sem, &params, 1, strm);
     if (res != cudaSuccess) {
         cerr << "CUDA failed to wait on vulkan semaphore" << endl;
+        fatalExit();
     }
 }
 
