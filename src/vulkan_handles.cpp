@@ -68,11 +68,8 @@ static void fillQueueInfo(VkDeviceQueueCreateInfo &info, uint32_t idx,
     info.pQueuePriorities = priorities.data();
 }
 
-DeviceState InstanceState::makeDevice(
-        uint32_t gpu_id,
-        uint32_t desired_gfx_queues,
-        uint32_t desired_compute_queues,
-        uint32_t desired_transfer_queues) const
+VkPhysicalDevice InstanceState::findPhysicalDevice(
+        const DeviceUUID &uuid) const
 {
     uint32_t num_gpus;
     REQ_VK(dt.enumeratePhysicalDevices(hdl, &num_gpus, nullptr));
@@ -80,17 +77,33 @@ DeviceState InstanceState::makeDevice(
     DynArray<VkPhysicalDevice> phys(num_gpus);
     REQ_VK(dt.enumeratePhysicalDevices(hdl, &num_gpus, phys.data()));
 
-    if (num_gpus <= gpu_id) {
-        cerr << "Not enough GPUs found by vulkan" << endl;
-        fatalExit();
+    for (uint32_t idx = 0; idx < phys.size(); idx++) {
+        VkPhysicalDevice phy = phys[idx];
+        VkPhysicalDeviceIDProperties dev_id {};
+        dev_id.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES;
+
+        VkPhysicalDeviceProperties2 props {};
+        props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        props.pNext = &dev_id;
+        dt.getPhysicalDeviceProperties2(phy, &props);
+
+        if (!memcmp(uuid.data(), dev_id.deviceUUID,
+                    sizeof(DeviceUUID::value_type) * uuid.size())) {
+            return phy;
+        }
     }
 
-    VkPhysicalDevice phy = phys[gpu_id];
+    cerr << "Cannot find matching vulkan UUID" << endl;
+    fatalExit();
+}
 
-    VkPhysicalDeviceProperties2 props;
-    props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
-    props.pNext = nullptr;
-    dt.getPhysicalDeviceProperties2(phy, &props);
+DeviceState InstanceState::makeDevice(
+        const DeviceUUID &uuid,
+        uint32_t desired_gfx_queues,
+        uint32_t desired_compute_queues,
+        uint32_t desired_transfer_queues) const
+{
+    VkPhysicalDevice phy = findPhysicalDevice(uuid);
 
     VkPhysicalDeviceFeatures2 feats;
     feats.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;

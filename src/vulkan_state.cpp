@@ -1414,10 +1414,10 @@ int CommandStreamState::getSemaphoreFD() const
     return fd;
 }
 
-VulkanState::VulkanState(const RenderConfig &config)
+VulkanState::VulkanState(const RenderConfig &config, const DeviceUUID &uuid)
     : cfg(config),
       inst(),
-      dev(inst.makeDevice(cfg.gpuID, cfg.numStreams + cfg.numLoaders, 1, cfg.numLoaders)),
+      dev(inst.makeDevice(uuid, cfg.numStreams + cfg.numLoaders, 1, cfg.numLoaders)),
       queueMgr(dev),
       alloc(dev, inst),
       fbCfg(getFramebufferConfig(cfg)),

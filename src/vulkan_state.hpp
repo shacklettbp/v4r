@@ -343,7 +343,7 @@ private:
 
 struct VulkanState {
 public:
-    VulkanState(const RenderConfig &cfg);
+    VulkanState(const RenderConfig &cfg, const DeviceUUID &uuid);
     VulkanState(const VulkanState &) = delete;
     VulkanState(VulkanState &&) = delete;
 

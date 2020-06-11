@@ -79,7 +79,8 @@ public:
 
 private:
     CommandStream(Handle<CommandStreamState> &&state,
-                  const CudaState &renderer_cuda,
+                  uint8_t *color_ptr,
+                  float *depth_ptr,
                   uint32_t render_width,
                   uint32_t render_height,
                   uint32_t batch_size);

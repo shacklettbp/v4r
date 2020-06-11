@@ -76,15 +76,14 @@ void RenderSync::cpuWait()
 }
 
 CommandStream::CommandStream(Handle<CommandStreamState> &&state,
-                             const CudaState &renderer_cuda,
+                             uint8_t *color_ptr,
+                             float *depth_ptr,
                              uint32_t render_width,
                              uint32_t render_height,
                              uint32_t batch_size)
     : state_(move(state)),
-      cuda_(make_handle<CudaStreamState>(
-                (uint8_t *)renderer_cuda.getPointer(state_->getColorOffset()),
-                (float *)renderer_cuda.getPointer(state_->getDepthOffset()),
-                state_->getSemaphoreFD())),
+      cuda_(make_handle<CudaStreamState>(color_ptr, depth_ptr,
+                                         state_->getSemaphoreFD())),
       render_width_(render_width),
       render_height_(render_height),
       cur_inputs_(batch_size)
@@ -129,9 +128,9 @@ RenderSync CommandStream::render()
 }
 
 BatchRenderer::BatchRenderer(const RenderConfig &cfg)
-    : state_(make_handle<VulkanState>(cfg)),
+    : state_(make_handle<VulkanState>(cfg, getUUIDFromCudaID(cfg.gpuID))),
       scene_mgr_(make_handle<SceneManager>(cfg.coordinateTransform)),
-      cuda_(make_handle<CudaState>(state_->getFramebufferFD(),
+      cuda_(make_handle<CudaState>(cfg.gpuID, state_->getFramebufferFD(),
                                    state_->getFramebufferBytes()))
 {}
 
@@ -144,9 +143,17 @@ SceneLoader BatchRenderer::makeLoader()
 
 CommandStream BatchRenderer::makeCommandStream()
 {
-    return CommandStream(make_handle<CommandStreamState>(
-            state_->makeStream()), *cuda_, state_->cfg.imgWidth,
-            state_->cfg.imgHeight, state_->cfg.batchSize);
+    auto stream_state = make_handle<CommandStreamState>(state_->makeStream());
+
+    cuda_->setActiveDevice();
+    auto color_ptr =
+        (uint8_t *)cuda_->getPointer(stream_state->getColorOffset());
+    auto depth_ptr =
+        (float *)cuda_->getPointer(stream_state->getDepthOffset());
+
+    return CommandStream(move(stream_state), color_ptr, depth_ptr,
+            state_->cfg.imgWidth, state_->cfg.imgHeight,
+            state_->cfg.batchSize);
 }
 
 }

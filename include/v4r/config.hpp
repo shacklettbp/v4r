@@ -6,7 +6,7 @@
 namespace v4r {
 
 struct RenderConfig {
-    uint32_t gpuID;
+    int gpuID;
     uint32_t numLoaders;
     uint32_t numStreams;
     uint32_t batchSize;
