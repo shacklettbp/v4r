@@ -47,7 +47,7 @@ int main(int argc, char *argv[]) {
 
     RenderDoc rdoc;
 
-    BatchRenderer renderer({0, 1, num_threads, 1, 256, 256,
+    UnlitBatchRenderer renderer({0, 1, num_threads, 1, 256, 256,
         glm::mat4(
             1, 0, 0, 0,
             0, -1.19209e-07, -1, 0,
@@ -78,7 +78,8 @@ int main(int argc, char *argv[]) {
             (vector<glm::mat4> cam_views)
             {
                 auto cmd_stream = renderer.makeCommandStream();
-                cmd_stream.initState(0, scene, 90, 0.01, 1000);
+                vector<Environment> envs;
+                envs.emplace_back(move(cmd_stream.makeEnvironment(scene, 90, 0.01, 1000)));
 
                 random_device rd;
                 mt19937 g(rd());
@@ -89,9 +90,9 @@ int main(int argc, char *argv[]) {
 
                 for (size_t i = 0; i < num_frames; i++) {
                     auto mat = cam_views[i];
-                    cmd_stream.setCameraView(0, mat);
+                    envs[0].setCameraView(mat);
 
-                    auto sync = cmd_stream.render();
+                    auto sync = cmd_stream.render(envs);
                     sync.cpuWait();
                 }
 
@@ -110,8 +111,6 @@ int main(int argc, char *argv[]) {
 
     pthread_barrier_wait(&end_barrier);
     auto end = chrono::steady_clock::now();
-
-    loader.dropScene(move(scene));
 
     if (debug) {
         rdoc.endFrame();

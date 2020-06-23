@@ -12,7 +12,8 @@ constexpr float compute_priority = 1.0;
 constexpr float transfer_priority = 1.0;
 
 constexpr uint32_t descriptor_pool_size = 10;
-constexpr uint32_t max_textures = 1;
+constexpr uint32_t max_textures = 500;
+constexpr uint32_t max_instances = 1000;
 
 }
 

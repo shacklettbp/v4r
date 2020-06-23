@@ -11,12 +11,15 @@
 namespace v4r {
 
 template<uint32_t BindingNum, VkDescriptorType DescType,
-         uint32_t NumDescriptors, VkShaderStageFlags DescStage>
+         uint32_t NumDescriptors, VkShaderStageFlags DescStage,
+         VkDescriptorBindingFlags BindingFlags = 0>
 struct BindingConfig {
     using Num = std::integral_constant<uint32_t, BindingNum>;
     using Type = std::integral_constant<VkDescriptorType, DescType>;
     using Count = std::integral_constant<uint32_t, NumDescriptors>;
     using Stage = std::integral_constant<VkShaderStageFlags, DescStage>;
+    using Flags =
+        std::integral_constant<VkDescriptorBindingFlags, BindingFlags>;
 };
 
 template<typename... Binding>
@@ -39,9 +42,21 @@ struct DescriptorLayout {
             } ...
         }};
 
+        std::array<VkDescriptorBindingFlags, sizeof...(Binding)> binding_flags
+        {{
+            Binding::Flags::value
+            ...
+        }};
+
+        VkDescriptorSetLayoutBindingFlagsCreateInfo flag_info;
+        flag_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+        flag_info.pNext = nullptr;
+        flag_info.bindingCount = static_cast<uint32_t>(binding_flags.size());
+        flag_info.pBindingFlags = binding_flags.data();
+
         VkDescriptorSetLayoutCreateInfo info;
         info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        info.pNext = nullptr;
+        info.pNext = &flag_info;
         info.flags = 0;
         info.bindingCount = static_cast<uint32_t>(bindings.size());
         info.pBindings = bindings.data();
@@ -84,14 +99,17 @@ struct DescriptorLayout {
 
 using PerSceneDescriptorLayout = DescriptorLayout<
     BindingConfig<0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VulkanConfig::max_textures,
-                  VK_SHADER_STAGE_FRAGMENT_BIT>,
+                  VK_SHADER_STAGE_FRAGMENT_BIT,
+                  VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT>,
     BindingConfig<1, VK_DESCRIPTOR_TYPE_SAMPLER, 1,
                   VK_SHADER_STAGE_FRAGMENT_BIT>
 >;
 
 using PerRenderDescriptorLayout = DescriptorLayout<
-    BindingConfig<0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
-                  VK_SHADER_STAGE_VERTEX_BIT>
+    BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                  VK_SHADER_STAGE_VERTEX_BIT>,
+    BindingConfig<1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                  VK_SHADER_STAGE_FRAGMENT_BIT>
 >;
 
 struct PoolState {

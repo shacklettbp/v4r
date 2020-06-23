@@ -14,7 +14,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    BatchRenderer renderer({0, 1, 1, 1, 256, 256,
+    UnlitBatchRenderer renderer({0, 1, 1, 1, 256, 256,
         glm::mat4(
             1, 0, 0, 0,
             0, -1.19209e-07, -1, 0,
@@ -27,8 +27,10 @@ int main(int argc, char *argv[]) {
     auto scene = loader.loadScene(argv[1]);
 
     auto cmd_stream = renderer.makeCommandStream();
-    cmd_stream.initState(0, scene, 90);
-    cmd_stream.setCameraView(0,
+    vector<Environment> envs;
+    envs.emplace_back(move(cmd_stream.makeEnvironment(scene, 90))); 
+
+    envs[0].setCameraView(
         glm::inverse(glm::mat4(
             -1.19209e-07, 0, 1, 0,
             0, 1, 0, 0,
@@ -38,7 +40,7 @@ int main(int argc, char *argv[]) {
     auto start = chrono::steady_clock::now();
 
     for (int i = 0; i < 10000; i++) {
-        auto sync = cmd_stream.render();
+        auto sync = cmd_stream.render(envs);
         sync.cpuWait();
     }
 
@@ -46,6 +48,4 @@ int main(int argc, char *argv[]) {
 
     auto diff = chrono::duration_cast<chrono::milliseconds>(end - start);
     cout << "FPS: " << ((double)num_frames / (double)diff.count()) * 1000.0 << endl;
-
-    loader.dropScene(move(scene));
 }

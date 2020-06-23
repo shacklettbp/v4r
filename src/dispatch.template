@@ -59,6 +59,7 @@ device:
 - vkCmdBindVertexBuffers
 - vkCmdBindIndexBuffer
 - vkCmdDrawIndexed
+- vkCmdDrawIndexedIndirect
 - vkCmdBeginRenderPass
 - vkCmdEndRenderPass
 - vkCmdPushConstants

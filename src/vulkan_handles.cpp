@@ -22,7 +22,8 @@ static const char *instance_extensions[] = {
 
 static const char *device_extensions[] = {
     VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
-    VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME
+    VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
+    VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME
 };
 
 static constexpr uint32_t num_instance_extensions =
@@ -198,9 +199,17 @@ DeviceState InstanceState::makeDevice(
     // Would enable sampler anisotropy here but current habitat
     // does not use it
     dev_create_info.pEnabledFeatures = nullptr;
+
+    VkPhysicalDeviceDescriptorIndexingFeatures desc_idx_features {};
+    desc_idx_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+    desc_idx_features.runtimeDescriptorArray = true;
+    desc_idx_features.shaderStorageBufferArrayNonUniformIndexing = true;
+    desc_idx_features.shaderSampledImageArrayNonUniformIndexing = true;
+    desc_idx_features.descriptorBindingPartiallyBound = true;
+
     VkPhysicalDeviceFeatures2 requested_features {};
     requested_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    requested_features.pNext = nullptr;
+    requested_features.pNext = &desc_idx_features;
     requested_features.features.samplerAnisotropy = false;
     dev_create_info.pNext = &requested_features;
 

@@ -3,17 +3,35 @@
 
 namespace v4r {
 
-struct VulkanState;
-struct CommandStreamState;
-struct LoaderState;
-struct CameraState;
-class SceneID;
-class SceneManager;
+class VulkanState;
+class CommandStreamState;
+
+class LoaderState;
+
+template <typename VertexType>
+class Mesh;
+
+template <typename DescriptionType>
+class Material;
+
+class Texture;
+
+template <typename PipelineType>
+class SceneDescription;
+
+class Scene;
+class EnvironmentState;
+class Environment;
+
 class CudaStreamState;
 class CudaState;
-class BatchRenderer;
-class SceneLoader;
+
+template <typename PipelineType>
 class CommandStream;
+
+template <typename PipelineType>
+class BatchRenderer;
+
 
 }
 

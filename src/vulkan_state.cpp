@@ -52,7 +52,7 @@ static PerRenderDescriptorConfig getRenderDescriptorConfig(
         const DeviceState &dev)
 {
     return PerRenderDescriptorConfig {
-        PerRenderDescriptorLayout::makeSetLayout(dev, nullptr)
+        PerRenderDescriptorLayout::makeSetLayout(dev, nullptr, nullptr)
     };
 }
 
@@ -81,111 +81,6 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
         depth_bytes,
         color_bytes + depth_bytes
     };
-}
-
-static VkCommandPool makeCmdPool(const DeviceState &dev, uint32_t qf_idx)
-{
-    VkCommandPoolCreateInfo pool_info = {};
-    pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    pool_info.queueFamilyIndex = qf_idx;
-    pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-
-    VkCommandPool pool;
-    REQ_VK(dev.dt.createCommandPool(dev.hdl, &pool_info, nullptr, &pool));
-    return pool;
-}
-
-static VkCommandBuffer makeCmdBuffer(const DeviceState &dev,
-        VkCommandPool pool,
-        VkCommandBufferLevel level = VK_COMMAND_BUFFER_LEVEL_PRIMARY)
-{
-    VkCommandBufferAllocateInfo info;
-    info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    info.pNext = nullptr;
-    info.commandPool = pool;
-    info.level = level;
-    info.commandBufferCount = 1;
-
-    VkCommandBuffer cmd;
-    REQ_VK(dev.dt.allocateCommandBuffers(dev.hdl, &info, &cmd));
-
-    return cmd;
-}
-
-static VkQueue makeQueue(const DeviceState &dev,
-                         uint32_t qf_idx, uint32_t queue_idx)
-{
-    VkDeviceQueueInfo2 queue_info;
-    queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2;
-    queue_info.pNext = nullptr;
-    queue_info.flags = 0;
-    queue_info.queueFamilyIndex = qf_idx;
-    queue_info.queueIndex = queue_idx;
-
-    VkQueue queue;
-    dev.dt.getDeviceQueue2(dev.hdl, &queue_info, &queue);
-
-    return queue;
-}
-
-static VkSemaphore makeBinarySemaphore(const DeviceState &dev)
-{
-    VkSemaphoreCreateInfo sema_info;
-    sema_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    sema_info.pNext = nullptr;
-    sema_info.flags = 0;
-
-    VkSemaphore sema;
-    REQ_VK(dev.dt.createSemaphore(dev.hdl, &sema_info, nullptr, &sema));
-
-    return sema;
-}
-
-static VkSemaphore makeBinaryExternalSemaphore(const DeviceState &dev)
-{
-    VkExportSemaphoreCreateInfo export_info;
-    export_info.sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO;
-    export_info.pNext = nullptr;
-    export_info.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
- 
-    VkSemaphoreCreateInfo sema_info;
-    sema_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    sema_info.pNext = &export_info;
-    sema_info.flags = 0;
-
-    VkSemaphore sema;
-    REQ_VK(dev.dt.createSemaphore(dev.hdl, &sema_info, nullptr, &sema));
-
-    return sema;
-}
-
-static VkFence makeFence(const DeviceState &dev, bool pre_signal=false)
-{
-    VkFenceCreateInfo fence_info;
-    fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    fence_info.pNext = nullptr;
-    if (pre_signal) {
-        fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-    } else {
-        fence_info.flags = 0;
-    }
-    
-    VkFence fence;
-    REQ_VK(dev.dt.createFence(dev.hdl, &fence_info, nullptr, &fence));
-
-    return fence;
-}
-
-static void waitForFenceInfinitely(const DeviceState &dev, VkFence fence)
-{
-    VkResult res;
-    while ((res = dev.dt.waitForFences(dev.hdl, 1,
-                                       &fence, VK_TRUE,
-                                       ~0ull)) != VK_SUCCESS) {
-        if (res != VK_TIMEOUT) {
-            REQ_VK(res);
-        }
-    }
 }
 
 static VkRenderPass makeRenderPass(const DeviceState &dev,
@@ -371,16 +266,16 @@ static auto getTexturedPipelineConfig(LayoutType... desc_layout)
     array<VkVertexInputBindingDescription, 1> input_bindings {{
         {
             0,
-            sizeof(TexturedVertex),
+            sizeof(UnlitVertex),
             VK_VERTEX_INPUT_RATE_VERTEX
         }
     }};
 
     array<VkVertexInputAttributeDescription, 2> input_attrs {{
         { 0, 0, VK_FORMAT_R32G32B32_SFLOAT,
-          offsetof(TexturedVertex, position) },
+          offsetof(UnlitVertex, position) },
         { 1, 0, VK_FORMAT_R32G32_SFLOAT,
-          offsetof(TexturedVertex, uv) }
+          offsetof(UnlitVertex, uv) }
     }};
 
     array shaders {
@@ -623,588 +518,6 @@ static PipelineState makePipeline(const DeviceState &dev,
     };
 }
 
-QueueState::QueueState(VkQueue queue_hdl)
-    : queue_hdl_(queue_hdl),
-      num_users_(1),
-      mutex_()
-{
-}
-
-void QueueState::submit(const DeviceState &dev, uint32_t submit_count,
-                        const VkSubmitInfo *pSubmits, VkFence fence) const
-{
-    // FIXME there is a race here if more users are added
-    // while threads are already submitting
-    if (num_users_ > 1) {
-        mutex_.lock();
-    }
-
-    REQ_VK(dev.dt.queueSubmit(queue_hdl_, submit_count, pSubmits, fence));
-
-    if (num_users_ > 1) {
-        mutex_.unlock();
-    }
-}
-
-QueueManager::QueueManager(const DeviceState &d)
-    : dev(d),
-      gfx_queues_(),
-      cur_gfx_idx_(0),
-      transfer_queues_(),
-      cur_transfer_idx_(0),
-      alloc_mutex_()
-{}
-
-QueueState & QueueManager::allocateQueue(uint32_t qf_idx,
-                                         deque<QueueState> &queues,
-                                         uint32_t &cur_queue_idx,
-                                         uint32_t max_queues)
-{
-    scoped_lock lock(alloc_mutex_);
-
-    if (queues.size() < max_queues) {
-        queues.emplace_back(makeQueue(dev, qf_idx, queues.size()));
-
-        return queues.back();
-    }
-
-    QueueState &cur_queue = queues[cur_queue_idx];
-    cur_queue_idx = (cur_queue_idx + 1) % max_queues;
-
-    cur_queue.incrUsers();
-
-    return cur_queue;
-}
-
-SceneRenderState::SceneRenderState(const DeviceState &d,
-                                   VkCommandBuffer render_cmd,
-                                   VkDescriptorSet desc_set,
-                                   const glm::u32vec2 &fb_offset,
-                                   const glm::u32vec2 &render_size,
-                                   MemoryAllocator &alloc)
-    : dev(d),
-      render_cmd_(render_cmd),
-      fb_offset_(fb_offset),
-      render_size_(render_size),
-      desc_set_(desc_set),
-      vp_ubo_(alloc.makeUniformBuffer(sizeof(PerViewUBO))),
-      projection_(),
-      view_(),
-      transform_ssbo_()
-{
-    VkDescriptorBufferInfo buffer_info;
-    buffer_info.buffer = vp_ubo_.buffer;
-    buffer_info.offset = 0;
-    buffer_info.range = sizeof(PerViewUBO);
-
-    VkWriteDescriptorSet desc_update;
-    desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    desc_update.pNext = nullptr;
-    desc_update.dstSet = desc_set_;
-    desc_update.dstBinding = 0;
-    desc_update.dstArrayElement = 0;
-    desc_update.descriptorCount = 1;
-    desc_update.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    desc_update.pImageInfo = nullptr;
-    desc_update.pBufferInfo = &buffer_info;
-    desc_update.pTexelBufferView = nullptr;
-    dev.dt.updateDescriptorSets(dev.hdl, 1, &desc_update, 0, nullptr);
-}
-
-void SceneRenderState::setInstanceTransformBuffer(HostBuffer &&buffer)
-{
-    transform_ssbo_.emplace(move(buffer));
-}
-
-void SceneRenderState::setProjection(const glm::mat4 &projection)
-{
-    projection_ = projection;
-}
-
-glm::mat4 * SceneRenderState::getViewPtr()
-{ 
-    return &view_;
-}
-
-glm::mat4 * SceneRenderState::getInstanceTransformsPtr()
-{ 
-    return (glm::mat4 *)transform_ssbo_->ptr;
-}
-
-void SceneRenderState::record(const SceneState &scene,
-                              const PipelineState &pipeline,
-                              const FramebufferState &fb,
-                              VkRenderPass render_pass)
-{
-    VkCommandBufferBeginInfo begin_info {};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    REQ_VK(dev.dt.beginCommandBuffer(render_cmd_, &begin_info));
-
-    if (scene.textures.size() > 0) {
-        dev.dt.cmdBindDescriptorSets(render_cmd_,
-                                     VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                     pipeline.gfxLayout, 1,
-                                     1, &scene.textureSet.hdl,
-                                     0, nullptr);
-    }
-
-    // FIXME this linkage is super fragile (0 is hardcoded as the
-    // the vertex shader's per command stream binding for example)
-    dev.dt.cmdBindDescriptorSets(render_cmd_,
-                                 VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                 pipeline.gfxLayout, 0,
-                                 1, &desc_set_,
-                                 0, nullptr);
-
-    dev.dt.cmdBindPipeline(render_cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                           pipeline.gfxPipeline);
-    
-
-    array<VkClearValue, 3> clear_vals;
-    clear_vals[0].color = {{ 0.f, 0.f, 0.f, 1.f }};
-    clear_vals[1].color = {{ 0.f, 0.f, 0.f, 0.f }};
-    clear_vals[2].depthStencil = { 1.f, 0 };
-
-    VkRenderPassBeginInfo render_begin;
-    render_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    render_begin.pNext = nullptr;
-    render_begin.renderPass = render_pass;
-    render_begin.framebuffer = fb.hdl;
-    render_begin.renderArea.offset = {
-        static_cast<int32_t>(fb_offset_.x),
-        static_cast<int32_t>(fb_offset_.y) };
-    render_begin.renderArea.extent = { render_size_.x, render_size_.y };
-    render_begin.clearValueCount = static_cast<uint32_t>(clear_vals.size());
-    render_begin.pClearValues = clear_vals.data();
-
-    dev.dt.cmdBeginRenderPass(render_cmd_, &render_begin,
-                              VK_SUBPASS_CONTENTS_INLINE);
-
-    VkViewport viewport;
-    viewport.x = fb_offset_.x;
-    viewport.y = fb_offset_.y;
-    viewport.width = render_size_.x;
-    viewport.height = render_size_.y;
-    viewport.minDepth = 0.f;
-    viewport.maxDepth = 1.f;
-
-    dev.dt.cmdSetViewport(render_cmd_, 0, 1, &viewport);
-
-    VkDeviceSize vert_offset = 0;
-    dev.dt.cmdBindVertexBuffers(render_cmd_, 0, 1, &scene.geometry.buffer,
-                                &vert_offset);
-    dev.dt.cmdBindIndexBuffer(render_cmd_, scene.geometry.buffer,
-                              scene.indexOffset, VK_INDEX_TYPE_UINT32);
-
-    for (const ObjectInstance &instance : scene.instances) {
-        // FIXME select texture id from global array and
-        // change instance system so meshes are grouped together
-        const SceneMesh &mesh = scene.meshes[instance.meshIndex];
-
-        const Material &mat = scene.materials[mesh.materialIndex];
-        (void)mat;
-
-        PushConstants consts {
-            instance.modelTransform
-        };
-
-        dev.dt.cmdPushConstants(render_cmd_, pipeline.gfxLayout,
-                                VK_SHADER_STAGE_VERTEX_BIT,
-                                0, sizeof(PushConstants),
-                                &consts);
-
-        dev.dt.cmdDrawIndexed(render_cmd_, mesh.numIndices, 1,
-                              mesh.startIndex, 0, 0);
-    }
-
-    dev.dt.cmdEndRenderPass(render_cmd_);
-
-    REQ_VK(dev.dt.endCommandBuffer(render_cmd_));
-}
-
-void SceneRenderState::updateVP()
-{
-    PerViewUBO data {
-        projection_ * view_
-    };
-
-    memcpy(vp_ubo_.ptr, &data, sizeof(PerViewUBO));
-    vp_ubo_.flush(dev);
-}
-
-void SceneRenderState::flushInstanceTransforms()
-{
-    transform_ssbo_->flush(dev);
-}
-
-LoaderState::LoaderState(const DeviceState &d,
-                         const PerSceneDescriptorConfig &scene_desc_cfg,
-                         MemoryAllocator &alc,
-                         QueueManager &queue_manager)
-    : dev(d),
-      gfxPool(makeCmdPool(dev, dev.gfxQF)),
-      gfxQueue(queue_manager.allocateGraphicsQueue()),
-      gfxCopyCommand(makeCmdBuffer(dev, gfxPool)),
-      transferPool(makeCmdPool(dev, dev.transferQF)),
-      transferQueue(queue_manager.allocateTransferQueue()),
-      transferStageCommand(makeCmdBuffer(dev, transferPool)),
-      semaphore(makeBinarySemaphore(dev)),
-      fence(makeFence(dev)),
-      alloc(alc),
-      descriptorManager(dev, scene_desc_cfg.layout)
-{}
-
-static uint32_t getMipLevels(const Texture &texture)
-{
-    return static_cast<uint32_t>(
-        floor(log2(max(texture.width, texture.height)))) + 1;
-}
-
-static void generateMips(const DeviceState &dev,
-                         const VkCommandBuffer copy_cmd,
-                         const vector<LocalImage> &gpu_textures,
-                         DynArray<VkImageMemoryBarrier> &barriers)
-{
-    for (size_t texture_idx = 0; texture_idx < gpu_textures.size();
-            texture_idx++) {
-        const LocalImage &gpu_texture = gpu_textures[texture_idx];
-        VkImageMemoryBarrier &barrier = barriers[texture_idx];
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-
-        for (uint32_t mip_level = 1; mip_level < gpu_texture.mipLevels;
-                mip_level++) {
-            VkImageBlit blit_spec {};
-            
-            // Src
-            blit_spec.srcSubresource =
-                { VK_IMAGE_ASPECT_COLOR_BIT, mip_level - 1, 0, 1 };
-            blit_spec.srcOffsets[1] =
-                { static_cast<int32_t>(gpu_texture.width >> (mip_level - 1)),
-                  static_cast<int32_t>(gpu_texture.height >> (mip_level - 1)),
-                  1 };
-
-            // Dst
-            blit_spec.dstSubresource =
-                { VK_IMAGE_ASPECT_COLOR_BIT, mip_level, 0, 1 };
-            blit_spec.dstOffsets[1] =
-                { static_cast<int32_t>(gpu_texture.width >> mip_level),
-                  static_cast<int32_t>(gpu_texture.height >> mip_level),
-                  1 };
-
-            barrier.srcAccessMask = 0;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            barrier.subresourceRange.baseMipLevel = mip_level;
-
-            dev.dt.cmdPipelineBarrier(copy_cmd,
-                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                      0, 0, nullptr, 0, nullptr,
-                                      1, &barrier);
-
-            dev.dt.cmdBlitImage(copy_cmd,
-                                gpu_texture.image,
-                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                gpu_texture.image,
-                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                1, &blit_spec, VK_FILTER_LINEAR);
-
-            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-
-            dev.dt.cmdPipelineBarrier(copy_cmd,
-                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                      0, 0, nullptr, 0, nullptr,
-                                      1, &barrier);
-        }
-    }
-}
-
-SceneState LoaderState::loadScene(SceneAssets &&assets)
-{
-    vector<HostBuffer> texture_stagings;
-    vector<LocalImage> gpu_textures;
-    for (const Texture &texture : assets.textures) {
-        uint64_t texture_bytes = texture.width * texture.height *
-            texture.num_channels * sizeof(uint8_t);
-
-        HostBuffer texture_staging = alloc.makeStagingBuffer(texture_bytes);
-        memcpy(texture_staging.ptr, texture.raw_image.data(), texture_bytes);
-        texture_staging.flush(dev);
-
-        texture_stagings.emplace_back(move(texture_staging));
-
-        uint32_t mip_levels = getMipLevels(texture);
-        gpu_textures.emplace_back(alloc.makeTexture(texture.width,
-                                                    texture.height,
-                                                    mip_levels));
-    }
-
-    bool textured_scene = gpu_textures.size() > 0;
-
-    VkDeviceSize vertex_bytes = textured_scene ?
-        assets.textured_vertices.size() * sizeof(TexturedVertex) :
-        assets.colored_vertices.size() * sizeof(ColoredVertex);
-    VkDeviceSize index_bytes = assets.indices.size() * sizeof(uint32_t);
-    VkDeviceSize geometry_bytes = vertex_bytes + index_bytes;
-
-    HostBuffer geo_staging = alloc.makeStagingBuffer(geometry_bytes);
-
-    // Store vertex buffer immediately followed by index buffer
-    if (textured_scene) {
-        memcpy(geo_staging.ptr, assets.textured_vertices.data(), vertex_bytes);
-    } else {
-        memcpy(geo_staging.ptr, assets.colored_vertices.data(), vertex_bytes);
-    }
-    memcpy((uint8_t *)geo_staging.ptr + vertex_bytes, assets.indices.data(),
-           index_bytes);
-    geo_staging.flush(dev);
-
-    LocalBuffer geometry = alloc.makeGeometryBuffer(geometry_bytes);
-
-    // Start recording for transfer queue
-    VkCommandBufferBeginInfo begin_info {};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    REQ_VK(dev.dt.beginCommandBuffer(transferStageCommand, &begin_info));
-
-    // Copy vertex/index buffer onto GPU
-    VkBufferCopy copy_settings {};
-    copy_settings.size = geometry_bytes;
-    dev.dt.cmdCopyBuffer(transferStageCommand, geo_staging.buffer,
-                         geometry.buffer, 1, &copy_settings);
-
-    // Set initial texture layouts
-    DynArray<VkImageMemoryBarrier> barriers(gpu_textures.size());
-    for (size_t i = 0; i < gpu_textures.size(); i++) {
-        const LocalImage &gpu_texture = gpu_textures[i];
-        VkImageMemoryBarrier &barrier = barriers[i];
-
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.pNext = nullptr;
-        barrier.srcAccessMask = 0;
-        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = gpu_texture.image;
-        barrier.subresourceRange = {
-            VK_IMAGE_ASPECT_COLOR_BIT,
-            0, 1, 0, 1
-        };
-    }
-
-    if (textured_scene) {
-        dev.dt.cmdPipelineBarrier(transferStageCommand,
-                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                  0, 0, nullptr, 0, nullptr,
-                                  barriers.size(), barriers.data());
-
-        for (size_t i = 0; i < gpu_textures.size(); i++) {
-            const HostBuffer &stage_buffer = texture_stagings[i];
-            const LocalImage &gpu_texture = gpu_textures[i];
-            VkBufferImageCopy copy_spec {};
-            copy_spec.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            copy_spec.imageSubresource.mipLevel = 0;
-            copy_spec.imageSubresource.baseArrayLayer = 0;
-            copy_spec.imageSubresource.layerCount = 1;
-            copy_spec.imageExtent =
-                { gpu_texture.width, gpu_texture.height, 1 };
-
-            dev.dt.cmdCopyBufferToImage(transferStageCommand,
-                                        stage_buffer.buffer,
-                                        gpu_texture.image,
-                                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                        1, &copy_spec);
-        }
-
-        // Transfer queue relinquish mip level 0
-        for (VkImageMemoryBarrier &barrier : barriers) {
-            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.dstAccessMask = 0;
-            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;;
-            barrier.srcQueueFamilyIndex = dev.transferQF;
-            barrier.dstQueueFamilyIndex = dev.gfxQF;
-        }
-    }
-
-    // Transfer queue relinquish geometry (also barrier on geometry write)
-    VkBufferMemoryBarrier geometry_barrier;
-    geometry_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-    geometry_barrier.pNext = nullptr;
-    geometry_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    geometry_barrier.dstAccessMask = 0;
-    geometry_barrier.srcQueueFamilyIndex = dev.transferQF;
-    geometry_barrier.dstQueueFamilyIndex = dev.gfxQF;
-    geometry_barrier.buffer = geometry.buffer;
-    geometry_barrier.offset = 0;
-    geometry_barrier.size = geometry_bytes;
-
-    // Geometry & texture barrier execute.
-    dev.dt.cmdPipelineBarrier(transferStageCommand,
-                              VK_PIPELINE_STAGE_TRANSFER_BIT,
-                              VK_PIPELINE_STAGE_TRANSFER_BIT,
-                              0, 0, nullptr,
-                              1, &geometry_barrier,
-                              barriers.size(), barriers.data());
-
-    REQ_VK(dev.dt.endCommandBuffer(transferStageCommand));
-
-    VkSubmitInfo copy_submit{};
-    copy_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    copy_submit.commandBufferCount = 1;
-    copy_submit.pCommandBuffers = &transferStageCommand;
-    copy_submit.signalSemaphoreCount = 1;
-    copy_submit.pSignalSemaphores = &semaphore;
-
-    transferQueue.submit(dev, 1, &copy_submit, VK_NULL_HANDLE);
-
-    // Start recording for graphics queue
-    REQ_VK(dev.dt.beginCommandBuffer(gfxCopyCommand, &begin_info));
-
-    // Finish moving geometry onto graphics queue family
-    geometry_barrier.srcAccessMask = 0;
-    geometry_barrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT |
-                                     VK_ACCESS_INDEX_READ_BIT;
-    dev.dt.cmdPipelineBarrier(gfxCopyCommand,
-                              VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                              VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
-                              0, 0, nullptr,
-                              1, &geometry_barrier,
-                              0, nullptr);
-
-    if (textured_scene)  {
-        // Finish acquiring mip level 0 on graphics queue and transition layout
-        for (VkImageMemoryBarrier &barrier : barriers) {
-            barrier.srcAccessMask = 0;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            barrier.srcQueueFamilyIndex = dev.transferQF;
-            barrier.dstQueueFamilyIndex = dev.gfxQF;
-        }
-
-        dev.dt.cmdPipelineBarrier(gfxCopyCommand,
-                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                  0, 0, nullptr, 0, nullptr,
-                                  barriers.size(), barriers.data());
-
-        generateMips(dev, gfxCopyCommand, gpu_textures, barriers);
-
-        // Final layout transition for textures
-        for (size_t texture_idx = 0; texture_idx < gpu_textures.size();
-                texture_idx++) {
-            const LocalImage &gpu_texture = gpu_textures[texture_idx];
-            VkImageMemoryBarrier &barrier = barriers[texture_idx];
-
-            barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            barrier.subresourceRange.baseMipLevel = 0;
-            barrier.subresourceRange.levelCount = gpu_texture.mipLevels;
-        }
-
-        dev.dt.cmdPipelineBarrier(gfxCopyCommand,
-                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                  0, 0, nullptr, 0, nullptr,
-                                  barriers.size(), barriers.data());
-
-    }
-
-    REQ_VK(dev.dt.endCommandBuffer(gfxCopyCommand));
-
-    VkSubmitInfo gfx_submit{};
-    gfx_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    gfx_submit.waitSemaphoreCount = 1;
-    gfx_submit.pWaitSemaphores = &semaphore;
-    VkPipelineStageFlags sema_wait_mask = 
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-    gfx_submit.pWaitDstStageMask = &sema_wait_mask;
-    gfx_submit.commandBufferCount = 1;
-    gfx_submit.pCommandBuffers = &gfxCopyCommand;
-
-    gfxQueue.submit(dev, 1, &gfx_submit, fence);
-
-    waitForFenceInfinitely(dev, fence);
-    REQ_VK(dev.dt.resetFences(dev.hdl, 1, &fence));
-
-    vector<VkImageView> texture_views;
-    vector<VkDescriptorImageInfo> view_infos;
-    texture_views.reserve(gpu_textures.size());
-    view_infos.reserve(gpu_textures.size());
-    for (const LocalImage &gpu_texture : gpu_textures) {
-        VkImageViewCreateInfo view_info;
-        view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        view_info.pNext = nullptr;
-        view_info.flags = 0;
-        view_info.image = gpu_texture.image;
-        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_info.format = alloc.getFormats().sdrTexture;
-        view_info.components = { 
-            VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
-            VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A
-        };
-        view_info.subresourceRange = {
-            VK_IMAGE_ASPECT_COLOR_BIT,
-            0, gpu_texture.mipLevels,
-            0, 1
-        };
-
-        VkImageView view;
-        REQ_VK(dev.dt.createImageView(dev.hdl, &view_info, nullptr, &view));
-
-        texture_views.push_back(view);
-        view_infos.emplace_back(VkDescriptorImageInfo {
-            VK_NULL_HANDLE, // Immutable
-            view,
-            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-        });
-    }
-
-    assert(gpu_textures.size() <= VulkanConfig::max_textures);
-
-    DescriptorSet texture_set = textured_scene ?
-        descriptorManager.makeSet() :
-        descriptorManager.emptySet();
-
-    if (textured_scene) {
-        VkWriteDescriptorSet desc_update;
-        desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        desc_update.pNext = nullptr;
-        desc_update.dstSet = texture_set.hdl;
-        desc_update.dstBinding = 0;
-        desc_update.dstArrayElement = 0;
-        desc_update.descriptorCount = VulkanConfig::max_textures;
-        desc_update.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        desc_update.pImageInfo = view_infos.data();
-        desc_update.pBufferInfo = nullptr;
-        desc_update.pTexelBufferView = nullptr;
-        dev.dt.updateDescriptorSets(dev.hdl, 1, &desc_update, 0, nullptr);
-    }
-
-    return SceneState {
-        move(gpu_textures),
-        move(texture_views),
-        move(assets.materials),
-        move(texture_set),
-        move(geometry),
-        vertex_bytes,
-        move(assets.meshes),
-        move(assets.instances)
-    };
-}
-
-
 static glm::u32vec2 computeFBPosition(uint32_t batch_idx, const FramebufferConfig &cfg, const glm::u32vec2 &render_size)
 {
     return glm::u32vec2((batch_idx % cfg.numImagesWidePerBatch) * render_size.x,
@@ -1234,36 +547,69 @@ CommandStreamState::CommandStreamState(
       fb(framebuffer),
       gfxPool(makeCmdPool(dev, dev.gfxQF)),
       gfxQueue(queue_manager.allocateGraphicsQueue()),
-      copyCommand(makeCmdBuffer(dev, gfxPool)),
       alloc(alc),
       semaphore(makeBinaryExternalSemaphore(dev)),
-      fb_pos_(stream_idx * batch_size * fb_cfg.numImagesWidePerBatch, 0),
+      render_cmd_(makeCmdBuffer(dev, gfxPool)),
+      copy_cmd_(makeCmdBuffer(dev, gfxPool)),
+      per_render_pool_(PerRenderDescriptorLayout::makePool(dev, 1)),
+      per_render_descriptor_(makeDescriptorSet(dev, per_render_pool_,
+                                               desc_cfg.layout)),
+      transform_ssbo_(alloc.makeShaderBuffer(sizeof(glm::mat4) * 
+                                             VulkanConfig::max_instances)), // FIXME
+      material_params_ssbo_(alloc.makeShaderBuffer(sizeof(uint32_t) *
+                                                   VulkanConfig::max_instances)), // FIXME
+      fb_pos_(stream_idx * fb_cfg.numImagesWidePerBatch * render_width, 0),
+      render_size_(render_width, render_height),
+      render_extent_(render_width * fb_cfg.numImagesWidePerBatch,
+                     render_height * fb_cfg.numImagesTallPerBatch),
       color_buffer_offset_(stream_idx * fb_cfg.totalLinearBytes),
       depth_buffer_offset_(color_buffer_offset_ + fb_cfg.colorLinearBytes),
-      batch_desc_pool_(PerRenderDescriptorLayout::makePool(dev, batch_size)),
-      commands_(),
-      batch_state_()
+      batch_offsets_()
 {
-    commands_.reserve(batch_size + 1);
-    batch_state_.reserve(batch_size);
+    VkDescriptorBufferInfo transform_buffer_info;
+    transform_buffer_info.buffer = transform_ssbo_.buffer;
+    transform_buffer_info.offset = 0;
+    transform_buffer_info.range = sizeof(glm::mat4) *
+                                  VulkanConfig::max_instances;
 
-    glm::u32vec2 render_size(render_width, render_height);
+    array<VkWriteDescriptorSet, 2> render_desc_update;
+    render_desc_update[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    render_desc_update[0].pNext = nullptr;
+    render_desc_update[0].dstSet = per_render_descriptor_;
+    render_desc_update[0].dstBinding = 0;
+    render_desc_update[0].dstArrayElement = 0;
+    render_desc_update[0].descriptorCount = 1;
+    render_desc_update[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    render_desc_update[0].pImageInfo = nullptr;
+    render_desc_update[0].pBufferInfo = &transform_buffer_info;
+    render_desc_update[0].pTexelBufferView = nullptr;
+
+    VkDescriptorBufferInfo material_buffer_info;
+    material_buffer_info.buffer = material_params_ssbo_.buffer;
+    material_buffer_info.offset = 0;
+    material_buffer_info.range = sizeof(uint32_t) *
+                                  VulkanConfig::max_instances;
+
+    render_desc_update[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    render_desc_update[1].pNext = nullptr;
+    render_desc_update[1].dstSet = per_render_descriptor_;
+    render_desc_update[1].dstBinding = 1;
+    render_desc_update[1].dstArrayElement = 0;
+    render_desc_update[1].descriptorCount = 1;
+    render_desc_update[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    render_desc_update[1].pImageInfo = nullptr;
+    render_desc_update[1].pBufferInfo = &material_buffer_info;
+    render_desc_update[1].pTexelBufferView = nullptr;
+    dev.dt.updateDescriptorSets(dev.hdl,
+            static_cast<uint32_t>(render_desc_update.size()),
+            render_desc_update.data(), 0, nullptr);
+
+    batch_offsets_.reserve(batch_size);
+
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
-        commands_.push_back(makeCmdBuffer(dev, gfxPool));
-
-        glm::u32vec2 elem_offset = 
-            computeFBPosition(batch_idx, fb_cfg, render_size) + fb_pos_;
-
-        VkDescriptorSet elem_desc_set = 
-            makeDescriptorSet(dev, batch_desc_pool_, desc_cfg.layout);
-
-        batch_state_.emplace_back(dev, commands_.back(), elem_desc_set,
-                                  elem_offset, render_size, alloc);
+        batch_offsets_.emplace_back(
+                computeFBPosition(batch_idx, fb_cfg, render_size_) + fb_pos_);
     }
-
-    commands_.push_back(makeCmdBuffer(dev, gfxPool));
-
-    VkCommandBuffer copy_command = commands_.back();
 
     array<VkImageMemoryBarrier, 2> barriers {{
         {
@@ -1300,8 +646,8 @@ CommandStreamState::CommandStreamState(
 
     VkCommandBufferBeginInfo begin_info {};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    REQ_VK(dev.dt.beginCommandBuffer(copy_command, &begin_info));
-    dev.dt.cmdPipelineBarrier(copy_command,
+    REQ_VK(dev.dt.beginCommandBuffer(copy_cmd_, &begin_info));
+    dev.dt.cmdPipelineBarrier(copy_cmd_,
                               VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                               VK_PIPELINE_STAGE_TRANSFER_BIT,
                               VK_DEPENDENCY_BY_REGION_BIT,
@@ -1310,8 +656,7 @@ CommandStreamState::CommandStreamState(
                               barriers.data());
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
-        glm::u32vec2 cur_pos =
-                computeFBPosition(batch_idx, fb_cfg, render_size) + fb_pos_;
+        glm::u32vec2 cur_pos = batch_offsets_[batch_idx];
 
         uint32_t cur_color_offset = color_buffer_offset_ +
                 batch_idx * render_width * render_height *
@@ -1340,7 +685,7 @@ CommandStreamState::CommandStreamState(
             1
         };
 
-        dev.dt.cmdCopyImageToBuffer(copy_command,
+        dev.dt.cmdCopyImageToBuffer(copy_cmd_,
                                     fb.color.image,
                                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                     fb.resultBuffer.buffer,
@@ -1349,7 +694,7 @@ CommandStreamState::CommandStreamState(
 
         copy_info.bufferOffset = cur_depth_offset;
 
-        dev.dt.cmdCopyImageToBuffer(copy_command,
+        dev.dt.cmdCopyImageToBuffer(copy_cmd_,
                                     fb.linearDepth.image,
                                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                     fb.resultBuffer.buffer,
@@ -1357,43 +702,127 @@ CommandStreamState::CommandStreamState(
                                     &copy_info);
     }
 
-    REQ_VK(dev.dt.endCommandBuffer(copy_command));
+    REQ_VK(dev.dt.endCommandBuffer(copy_cmd_));
 }
 
-TransformPointers CommandStreamState::setSceneRenderState(uint32_t batch_idx,
-        const glm::mat4 &projection,
-        const SceneState &scene)
+void CommandStreamState::render(const vector<Environment> &envs)
 {
-    const PipelineState &scene_pipeline =
-        (scene.textures.size() > 0) ? texturedPipeline : vertexColorPipeline;
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    REQ_VK(dev.dt.beginCommandBuffer(render_cmd_, &begin_info));
 
-    SceneRenderState &batch_elem = batch_state_[batch_idx];
+    // FIXME this linkage is super fragile (0 is hardcoded as the
+    // the vertex shader's per command stream binding for example)
+    dev.dt.cmdBindDescriptorSets(render_cmd_,
+                                 VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                 texturedPipeline.gfxLayout, 0,
+                                 1, &per_render_descriptor_,
+                                 0, nullptr);
 
     // FIXME
-    batch_elem.setInstanceTransformBuffer(
-        alloc.makeUniformBuffer(sizeof(glm::mat4) * scene.instances.size()));
+    dev.dt.cmdBindPipeline(render_cmd_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                           texturedPipeline.gfxPipeline);
 
-    batch_elem.setProjection(projection);
-    batch_elem.record(scene, scene_pipeline, fb, renderPass);
+    array<VkClearValue, 3> clear_vals;
+    clear_vals[0].color = {{ 0.f, 0.f, 0.f, 1.f }};
+    clear_vals[1].color = {{ 0.f, 0.f, 0.f, 0.f }};
+    clear_vals[2].depthStencil = { 1.f, 0 };
 
-    return TransformPointers {
-        batch_elem.getViewPtr(),
-        batch_elem.getInstanceTransformsPtr()
-    };
-}
+    VkRenderPassBeginInfo render_begin;
+    render_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    render_begin.pNext = nullptr;
+    render_begin.renderPass = renderPass;
+    render_begin.framebuffer = fb.hdl;
+    render_begin.renderArea.offset = { static_cast<int32_t>(fb_pos_.x), 
+                                       static_cast<int32_t>(fb_pos_.y) };
+    render_begin.renderArea.extent = { render_extent_.x, 
+                                       render_extent_.y };
+    render_begin.clearValueCount = static_cast<uint32_t>(clear_vals.size());
+    render_begin.pClearValues = clear_vals.data();
 
-void CommandStreamState::render()
-{
-    for (SceneRenderState &batch_elem : batch_state_) {
-        batch_elem.updateVP();
-        batch_elem.flushInstanceTransforms();
+    //render_begin.renderArea.offset = {
+    //    static_cast<int32_t>(fb_offset_.x),
+    //    static_cast<int32_t>(fb_offset_.y) };
+    //render_begin.renderArea.extent = { render_size_.x, render_size_.y };
+
+    dev.dt.cmdBeginRenderPass(render_cmd_, &render_begin,
+                              VK_SUBPASS_CONTENTS_INLINE);
+
+    assert(envs.size() == batch_offsets_.size());
+
+    uint32_t cur_instance = 0;
+    glm::mat4 *transform_ptr = (glm::mat4 *)transform_ssbo_.ptr;
+    uint32_t *material_ptr = (uint32_t *)material_params_ssbo_.ptr;
+    for (uint32_t batch_idx = 0; batch_idx < envs.size(); batch_idx++) {
+        const Environment &env = envs[batch_idx];
+
+        const Scene &scene = *(envs[batch_idx].state_->scene);
+        if (scene.textures.size() > 0) {
+            dev.dt.cmdBindDescriptorSets(render_cmd_,
+                                         VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                         texturedPipeline.gfxLayout, 1,
+                                         1, &scene.textureSet.hdl,
+                                         0, nullptr);
+        }
+
+        glm::u32vec2 batch_offset = batch_offsets_[batch_idx];
+
+        VkViewport viewport;
+        viewport.x = batch_offset.x;
+        viewport.y = batch_offset.y;
+        viewport.width = render_size_.x;
+        viewport.height = render_size_.y;
+        viewport.minDepth = 0.f;
+        viewport.maxDepth = 1.f;
+
+        dev.dt.cmdSetViewport(render_cmd_, 0, 1, &viewport);
+
+        VkDeviceSize vert_offset = 0;
+        dev.dt.cmdBindVertexBuffers(render_cmd_, 0, 1, &scene.geometry.buffer,
+                                    &vert_offset);
+        dev.dt.cmdBindIndexBuffer(render_cmd_, scene.geometry.buffer,
+                                  scene.indexOffset, VK_INDEX_TYPE_UINT32);
+
+        for (uint32_t mesh_idx = 0; mesh_idx < scene.meshes.size();
+                mesh_idx++) {
+            uint32_t num_instances = env.transforms_[mesh_idx].size();
+            if (num_instances == 0) continue;
+
+            auto &mesh = scene.meshes[mesh_idx];
+
+            dev.dt.cmdDrawIndexed(render_cmd_, mesh.numIndices, num_instances,
+                                  mesh.startIndex, mesh.vertexOffset, cur_instance);
+
+            memcpy(material_ptr, env.materials_[mesh_idx].data(),
+                   num_instances * sizeof(uint32_t));
+
+            for (uint32_t inst_idx = 0; inst_idx < num_instances; inst_idx++) {
+                transform_ptr[inst_idx] = env.state_->projection * env.view_ *
+                    env.transforms_[mesh_idx][inst_idx];
+            }
+
+            cur_instance += num_instances;
+            transform_ptr += num_instances;
+            material_ptr += num_instances;
+        }
     }
+
+    dev.dt.cmdEndRenderPass(render_cmd_);
+
+    REQ_VK(dev.dt.endCommandBuffer(render_cmd_));
+
+    assert(cur_instance < VulkanConfig::max_instances);
+
+    transform_ssbo_.flush(dev);
+    material_params_ssbo_.flush(dev);
+
+    array commands { render_cmd_, copy_cmd_ };
 
     VkSubmitInfo gfx_submit {
         VK_STRUCTURE_TYPE_SUBMIT_INFO,
         nullptr,
         0, nullptr, nullptr,
-        static_cast<uint32_t>(commands_.size()), commands_.data(),
+        static_cast<uint32_t>(commands.size()), commands.data(),
         1, &semaphore
     };
 
@@ -1442,7 +871,8 @@ LoaderState VulkanState::makeLoader()
     assert(numLoaders <= cfg.numLoaders);
 
     return LoaderState(dev, sceneDescCfg,
-                       alloc, queueMgr);
+                       alloc, queueMgr,
+                       cfg.coordinateTransform);
 }
 
 CommandStreamState VulkanState::makeStream()

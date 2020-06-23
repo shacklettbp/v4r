@@ -82,7 +82,7 @@ private:
 
 struct MemoryTypeIndices {
     uint32_t stageBuffer;
-    uint32_t uniformBuffer;
+    uint32_t shaderBuffer;
     uint32_t localGeometryBuffer;
     uint32_t dedicatedBuffer;
     uint32_t precomputedMipmapTexture;
@@ -106,7 +106,7 @@ public:
     MemoryAllocator(MemoryAllocator &&) = default;
 
     HostBuffer makeStagingBuffer(VkDeviceSize num_bytes);
-    HostBuffer makeUniformBuffer(VkDeviceSize num_bytes);
+    HostBuffer makeShaderBuffer(VkDeviceSize num_bytes);
 
     LocalBuffer makeGeometryBuffer(VkDeviceSize num_bytes);
     std::pair<LocalBuffer, VkDeviceMemory> makeDedicatedBuffer(

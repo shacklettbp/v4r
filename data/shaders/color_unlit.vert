@@ -1,13 +1,9 @@
 #version 450
 
-layout(set = 0, binding = 0) uniform PerViewUBO
+layout(set = 0, binding = 0) readonly buffer Transforms
 {
-    mat4 vp;
-} per_view;
-
-layout(push_constant) uniform PushConstants {
-	mat4 modelTransform;
-} push_consts;
+    mat4 mvp[];
+};
 
 layout (location = 0) in vec3 in_pos;
 layout (location = 1) in vec3 in_color;
@@ -17,9 +13,7 @@ layout (location = 1) out float out_linear_depth;
 
 void main() 
 {
-    mat4 mvp = per_view.vp * push_consts.modelTransform;
-
-    gl_Position = mvp * vec4(in_pos.xyz, 1.0);
+    gl_Position = mvp[gl_InstanceIndex] * vec4(in_pos.xyz, 1.0);
     out_linear_depth = gl_Position.w;
 
     out_color = in_color;

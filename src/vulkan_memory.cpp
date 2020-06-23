@@ -13,8 +13,9 @@ namespace BufferFlags {
     static constexpr VkBufferUsageFlags stageUsage =
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
-    static constexpr VkBufferUsageFlags uniformUsage =
-        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    static constexpr VkBufferUsageFlags shaderUsage =
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 
     static constexpr VkBufferUsageFlags geometryUsage =
         VK_BUFFER_USAGE_TRANSFER_DST_BIT |
@@ -297,11 +298,11 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
             dev_mem_props);
 
-    VkMemoryRequirements uniform_reqs =
-        getBufferMemReqs(dev, BufferFlags::uniformUsage);
+    VkMemoryRequirements shader_reqs =
+        getBufferMemReqs(dev, BufferFlags::shaderUsage);
 
-    uint32_t uniform_type_idx = findMemoryTypeIndex(
-            uniform_reqs.memoryTypeBits,
+    uint32_t shader_type_idx = findMemoryTypeIndex(
+            shader_reqs.memoryTypeBits,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
             dev_mem_props);
 
@@ -359,7 +360,7 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
 
     return MemoryTypeIndices {
         stage_type_idx,
-        uniform_type_idx,
+        shader_type_idx,
         geometry_type_idx,
         dedicated_type_idx,
         texture_precomp_idx,
@@ -430,10 +431,10 @@ HostBuffer MemoryAllocator::makeStagingBuffer(VkDeviceSize num_bytes)
                           type_indices_.stageBuffer);
 }
 
-HostBuffer MemoryAllocator::makeUniformBuffer(VkDeviceSize num_bytes)
+HostBuffer MemoryAllocator::makeShaderBuffer(VkDeviceSize num_bytes)
 {
-    return makeHostBuffer(num_bytes, BufferFlags::uniformUsage, 
-                          type_indices_.uniformBuffer);
+    return makeHostBuffer(num_bytes, BufferFlags::shaderUsage, 
+                          type_indices_.shaderBuffer);
 }
 
 LocalBuffer MemoryAllocator::makeGeometryBuffer(VkDeviceSize num_bytes)

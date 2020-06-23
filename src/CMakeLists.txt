@@ -42,18 +42,22 @@ add_definitions("-DSHADER_DIR=${SHADER_DIR}")
 # Main library
 
 add_library(v4r SHARED
+    asset_load.hpp asset_load.inl
     cuda_state.hpp cuda_state.cpp
     descriptors.hpp descriptors.cpp
     dispatch.hpp dispatch.cpp
     scene.hpp scene.cpp
     utils.hpp utils.cpp
-    vk_utils.hpp vk_utils.cpp
+    vk_utils.hpp vk_utils.cpp vk_utils.inl
     vulkan_config.hpp
     vulkan_handles.hpp vulkan_handles.cpp
     vulkan_memory.hpp vulkan_memory.cpp
     vulkan_state.hpp vulkan_state.cpp
     ../include/v4r.hpp v4r.cpp
-    ../include/v4r/config.hpp ../include/v4r/fwd.hpp ../include/v4r/utils.hpp
+    ../include/v4r/environment.hpp ../include/v4r/environment.inl
+    ../include/v4r/assets.hpp ../include/v4r/assets.inl
+    ../include/v4r/config.hpp  ../include/v4r/pipelines.hpp
+    ../include/v4r/fwd.hpp ../include/v4r/utils.hpp
 )
 
 add_dependencies(v4r generate_vk_dispatch compile_shaders)

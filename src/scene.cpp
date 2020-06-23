@@ -2,15 +2,10 @@
 
 #include "utils.hpp"
 
-#include <assimp/Importer.hpp>
-#include <assimp/postprocess.h>
-#include <assimp/scene.h>
+#include <v4r/pipelines.hpp>
+
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/string_cast.hpp>
-
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb/stb_image.h>
-#undef STB_IMAGE_IMPLEMENTATION
 
 #include <cassert>
 #include <iostream>
@@ -20,292 +15,461 @@ using namespace std;
 
 namespace v4r {
 
-static const optional<uint64_t> loadTexture(const aiScene *raw_scene,
-        const aiMaterial *raw_mat,
-        aiTextureType type,
-        vector<Texture> &textures,
-        unordered_map<string, uint64_t> &loaded_texture_lookup)
+EnvironmentInit::EnvironmentInit(
+        const std::vector<std::vector<InstanceProperties>> &instances)
+    : transforms(instances.size()),
+      materials(instances.size()),
+      indexMap(),
+      reverseIDMap(instances.size())
 {
-    aiString tex_path;
-    bool has_texture = raw_mat->Get(AI_MATKEY_TEXTURE(type, 0), tex_path) ==
-        AI_SUCCESS;
+    uint32_t cur_id = 0;
+    for (uint32_t mesh_idx = 0; mesh_idx < instances.size(); mesh_idx++) {
+        const auto &mesh_instances = instances[mesh_idx];
+        transforms[mesh_idx].reserve(mesh_instances.size());
+        materials[mesh_idx].reserve(mesh_instances.size());
+        reverseIDMap[mesh_idx].reserve(mesh_instances.size());
 
-    if (!has_texture) return optional<uint64_t>();
+        for (uint32_t instance_idx = 0; instance_idx < mesh_instances.size();
+                instance_idx++) {
+            const InstanceProperties &inst = mesh_instances[instance_idx];
 
-    auto lookup = loaded_texture_lookup.find(tex_path.C_Str());
+            transforms[mesh_idx].emplace_back(inst.modelTransform);
+            materials[mesh_idx].emplace_back(inst.materialIndex);
+            reverseIDMap[mesh_idx].emplace_back(cur_id);
+            indexMap.emplace_back(mesh_idx, instance_idx);
 
-    if (lookup != loaded_texture_lookup.end()) return optional(lookup->second);
-
-    if (auto texture = raw_scene->GetEmbeddedTexture(tex_path.C_Str())) {
-        if (texture->mHeight > 0) {
-            cerr << "Uncompressed textures not supported" << endl;
-            fatalExit();
-        } else {
-            const uint8_t *raw_input =
-                reinterpret_cast<const uint8_t *>(texture->pcData);
-            if (stbi_is_hdr_from_memory(raw_input, texture->mWidth)) {
-                cerr << "HDR textures not supported" << endl;
-                fatalExit();
-            }
-
-            int width, height, num_channels;
-            uint8_t *texture_data =
-                stbi_load_from_memory(raw_input, texture->mWidth,
-                                      &width, &height, &num_channels, 4);
-
-            if (texture_data == nullptr) {
-                cerr << "Failed to load texture" << endl;
-                fatalExit();
-            }
-
-            textures.emplace_back(Texture {
-                static_cast<uint32_t>(width),
-                static_cast<uint32_t>(height),
-                4,
-                ManagedArray<uint8_t>(texture_data, stbi_image_free)
-            });
-
-            loaded_texture_lookup.emplace(tex_path.C_Str(), textures.size() - 1);
-
-            return optional(textures.size() - 1);
+            cur_id++;
         }
-    } else {
-        // FIXME
-        cerr << "External textures not supported yet" << endl;
-        fatalExit();
     }
 }
 
-static SceneAssets loadAssets(const string &scene_path, const glm::mat4 &coordinate_txfm)
+EnvironmentState::EnvironmentState(const std::shared_ptr<Scene> &s,
+                                   const glm::mat4 &proj)
+    : scene(s),
+      projection(proj),
+      reverseIDMap(scene->envDefaults.reverseIDMap),
+      freeIDs()
 {
-    Assimp::Importer importer;
-    int flags = aiProcess_PreTransformVertices | aiProcess_Triangulate;
-    const aiScene *raw_scene = importer.ReadFile(scene_path.c_str(), flags);
-    if (!raw_scene) {
-        cerr << "Failed to load scene " << scene_path << ": " <<
-            importer.GetErrorString() << endl;
-        fatalExit();
+}
+
+LoaderState::LoaderState(const DeviceState &d,
+                         const PerSceneDescriptorConfig &scene_desc_cfg,
+                         MemoryAllocator &alc,
+                         QueueManager &queue_manager,
+                         const glm::mat4 &coordinate_transform)
+    : dev(d),
+      gfxPool(makeCmdPool(dev, dev.gfxQF)),
+      gfxQueue(queue_manager.allocateGraphicsQueue()),
+      gfxCopyCommand(makeCmdBuffer(dev, gfxPool)),
+      transferPool(makeCmdPool(dev, dev.transferQF)),
+      transferQueue(queue_manager.allocateTransferQueue()),
+      transferStageCommand(makeCmdBuffer(dev, transferPool)),
+      semaphore(makeBinarySemaphore(dev)),
+      fence(makeFence(dev)),
+      alloc(alc),
+      descriptorManager(dev, scene_desc_cfg.layout),
+      coordinateTransform(coordinate_transform)
+{}
+
+static uint32_t getMipLevels(const Texture &texture)
+{
+    return static_cast<uint32_t>(
+        floor(log2(max(texture.width, texture.height)))) + 1;
+}
+
+static void generateMips(const DeviceState &dev,
+                         const VkCommandBuffer copy_cmd,
+                         const vector<LocalImage> &gpu_textures,
+                         DynArray<VkImageMemoryBarrier> &barriers)
+{
+    for (size_t texture_idx = 0; texture_idx < gpu_textures.size();
+            texture_idx++) {
+        const LocalImage &gpu_texture = gpu_textures[texture_idx];
+        VkImageMemoryBarrier &barrier = barriers[texture_idx];
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+
+        for (uint32_t mip_level = 1; mip_level < gpu_texture.mipLevels;
+                mip_level++) {
+            VkImageBlit blit_spec {};
+            
+            // Src
+            blit_spec.srcSubresource =
+                { VK_IMAGE_ASPECT_COLOR_BIT, mip_level - 1, 0, 1 };
+            blit_spec.srcOffsets[1] =
+                { static_cast<int32_t>(gpu_texture.width >> (mip_level - 1)),
+                  static_cast<int32_t>(gpu_texture.height >> (mip_level - 1)),
+                  1 };
+
+            // Dst
+            blit_spec.dstSubresource =
+                { VK_IMAGE_ASPECT_COLOR_BIT, mip_level, 0, 1 };
+            blit_spec.dstOffsets[1] =
+                { static_cast<int32_t>(gpu_texture.width >> mip_level),
+                  static_cast<int32_t>(gpu_texture.height >> mip_level),
+                  1 };
+
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.subresourceRange.baseMipLevel = mip_level;
+
+            dev.dt.cmdPipelineBarrier(copy_cmd,
+                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                      0, 0, nullptr, 0, nullptr,
+                                      1, &barrier);
+
+            dev.dt.cmdBlitImage(copy_cmd,
+                                gpu_texture.image,
+                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                gpu_texture.image,
+                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                1, &blit_spec, VK_FILTER_LINEAR);
+
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+
+            dev.dt.cmdPipelineBarrier(copy_cmd,
+                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                      0, 0, nullptr, 0, nullptr,
+                                      1, &barrier);
+        }
+    }
+}
+
+template <typename PipelineType>
+shared_ptr<Scene> LoaderState::loadScene(
+        const SceneDescription<PipelineType> &scene_desc)
+{
+    vector<HostBuffer> texture_stagings;
+    vector<LocalImage> gpu_textures;
+
+    // Gather textures
+    vector<shared_ptr<Texture>> cpu_textures;
+    for (const auto &material : scene_desc.getMaterials()) {
+        // FIXME make this type generic
+        // FIXME pack textures?
+        cpu_textures.push_back(material->params.texture);
     }
 
-    vector<Texture> textures;
-    vector<Material> materials;
-    
-    unordered_map<string, uint64_t> loaded_texture_lookup;
+    for (const shared_ptr<Texture> &texture : cpu_textures) {
+        uint64_t texture_bytes = texture->width * texture->height *
+            texture->num_channels * sizeof(uint8_t);
 
-    for (uint32_t mat_idx = 0; mat_idx < raw_scene->mNumMaterials; mat_idx++) {
-        const aiMaterial *raw_mat = raw_scene->mMaterials[mat_idx];
+        HostBuffer texture_staging = alloc.makeStagingBuffer(texture_bytes);
+        memcpy(texture_staging.ptr, texture->raw_image.data(), texture_bytes);
+        texture_staging.flush(dev);
 
-        auto ambient_tex = loadTexture(raw_scene, raw_mat,
-                                       aiTextureType_AMBIENT,
-                                       textures,
-                                       loaded_texture_lookup);
-        glm::vec4 ambient_color {};
-        if (!ambient_tex) {
-            aiColor4D color;
-            raw_mat->Get(AI_MATKEY_COLOR_AMBIENT, color);
-            ambient_color = glm::vec4(color.r, color.g, color.b, color.a);
+        texture_stagings.emplace_back(move(texture_staging));
+
+        uint32_t mip_levels = getMipLevels(*texture);
+        gpu_textures.emplace_back(alloc.makeTexture(texture->width,
+                                                    texture->height,
+                                                    mip_levels));
+    }
+
+    // Copy all geometry into single buffer
+    const auto &cpu_meshes = scene_desc.getMeshes();
+
+    VkDeviceSize total_vertex_bytes = 0;
+    VkDeviceSize total_index_bytes = 0;
+    for (const auto &mesh : cpu_meshes) {
+        total_vertex_bytes +=
+            sizeof(typename PipelineType::VertexType) * mesh->vertices.size();
+        total_index_bytes +=
+            sizeof(uint32_t) * mesh->indices.size();
+    }
+
+    VkDeviceSize total_geometry_bytes = total_vertex_bytes + total_index_bytes;
+
+    HostBuffer geo_staging = alloc.makeStagingBuffer(total_geometry_bytes);
+
+    vector<InlineMesh> inline_meshes;
+    inline_meshes.reserve(cpu_meshes.size());
+
+
+    // Copy all vertices
+    uint32_t vertex_offset = 0;
+    uint8_t *cur_ptr = reinterpret_cast<uint8_t *>(geo_staging.ptr);
+    for (const auto &mesh : cpu_meshes) {
+        VkDeviceSize vertex_bytes =
+            sizeof(typename PipelineType::VertexType) * mesh->vertices.size();
+        memcpy(cur_ptr, mesh->vertices.data(), vertex_bytes);
+
+        inline_meshes.emplace_back(InlineMesh {
+            vertex_offset,
+            0,
+            0
+        });
+
+        cur_ptr += vertex_bytes;
+        vertex_offset += mesh->vertices.size();
+    }
+
+    // Copy all indices
+    uint32_t cur_mesh_idx = 0;
+    for (uint32_t mesh_idx = 0; mesh_idx < cpu_meshes.size(); mesh_idx++) {
+        const auto &mesh = cpu_meshes[mesh_idx];
+
+        VkDeviceSize index_bytes =
+            sizeof(uint32_t) * mesh->indices.size();
+        memcpy(cur_ptr, mesh->indices.data(), index_bytes);
+
+        inline_meshes[mesh_idx].startIndex = cur_mesh_idx;
+        inline_meshes[mesh_idx].numIndices = 
+            static_cast<uint32_t>(mesh->indices.size());
+
+        cur_ptr += index_bytes;
+        cur_mesh_idx += mesh->indices.size();
+    }
+
+    geo_staging.flush(dev);
+
+    LocalBuffer geometry = alloc.makeGeometryBuffer(total_geometry_bytes);
+
+    // Start recording for transfer queue
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    REQ_VK(dev.dt.beginCommandBuffer(transferStageCommand, &begin_info));
+
+    // Copy vertex/index buffer onto GPU
+    VkBufferCopy copy_settings {};
+    copy_settings.size = total_geometry_bytes;
+    dev.dt.cmdCopyBuffer(transferStageCommand, geo_staging.buffer,
+                         geometry.buffer, 1, &copy_settings);
+
+    // Set initial texture layouts
+    DynArray<VkImageMemoryBarrier> barriers(gpu_textures.size());
+    for (size_t i = 0; i < gpu_textures.size(); i++) {
+        const LocalImage &gpu_texture = gpu_textures[i];
+        VkImageMemoryBarrier &barrier = barriers[i];
+
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.pNext = nullptr;
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = gpu_texture.image;
+        barrier.subresourceRange = {
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            0, 1, 0, 1
+        };
+    }
+
+    if (gpu_textures.size() > 0) {
+        dev.dt.cmdPipelineBarrier(transferStageCommand,
+                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                  0, 0, nullptr, 0, nullptr,
+                                  barriers.size(), barriers.data());
+
+        for (size_t i = 0; i < gpu_textures.size(); i++) {
+            const HostBuffer &stage_buffer = texture_stagings[i];
+            const LocalImage &gpu_texture = gpu_textures[i];
+            VkBufferImageCopy copy_spec {};
+            copy_spec.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            copy_spec.imageSubresource.mipLevel = 0;
+            copy_spec.imageSubresource.baseArrayLayer = 0;
+            copy_spec.imageSubresource.layerCount = 1;
+            copy_spec.imageExtent =
+                { gpu_texture.width, gpu_texture.height, 1 };
+
+            dev.dt.cmdCopyBufferToImage(transferStageCommand,
+                                        stage_buffer.buffer,
+                                        gpu_texture.image,
+                                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                        1, &copy_spec);
         }
 
-        auto diffuse_tex = loadTexture(raw_scene, raw_mat,
-                                       aiTextureType_DIFFUSE,
-                                       textures,
-                                       loaded_texture_lookup);
-        glm::vec4 diffuse_color {};
-        if (!diffuse_tex) {
-            aiColor4D color;
-            raw_mat->Get(AI_MATKEY_COLOR_DIFFUSE, color);
-            diffuse_color = glm::vec4(color.r, color.g, color.b, color.a);
+        // Transfer queue relinquish mip level 0
+        for (VkImageMemoryBarrier &barrier : barriers) {
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barrier.dstAccessMask = 0;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;;
+            barrier.srcQueueFamilyIndex = dev.transferQF;
+            barrier.dstQueueFamilyIndex = dev.gfxQF;
+        }
+    }
+
+    // Transfer queue relinquish geometry (also barrier on geometry write)
+    VkBufferMemoryBarrier geometry_barrier;
+    geometry_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    geometry_barrier.pNext = nullptr;
+    geometry_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    geometry_barrier.dstAccessMask = 0;
+    geometry_barrier.srcQueueFamilyIndex = dev.transferQF;
+    geometry_barrier.dstQueueFamilyIndex = dev.gfxQF;
+    geometry_barrier.buffer = geometry.buffer;
+    geometry_barrier.offset = 0;
+    geometry_barrier.size = total_geometry_bytes;
+
+    // Geometry & texture barrier execute.
+    dev.dt.cmdPipelineBarrier(transferStageCommand,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              0, 0, nullptr,
+                              1, &geometry_barrier,
+                              barriers.size(), barriers.data());
+
+    REQ_VK(dev.dt.endCommandBuffer(transferStageCommand));
+
+    VkSubmitInfo copy_submit{};
+    copy_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    copy_submit.commandBufferCount = 1;
+    copy_submit.pCommandBuffers = &transferStageCommand;
+    copy_submit.signalSemaphoreCount = 1;
+    copy_submit.pSignalSemaphores = &semaphore;
+
+    transferQueue.submit(dev, 1, &copy_submit, VK_NULL_HANDLE);
+
+    // Start recording for graphics queue
+    REQ_VK(dev.dt.beginCommandBuffer(gfxCopyCommand, &begin_info));
+
+    // Finish moving geometry onto graphics queue family
+    geometry_barrier.srcAccessMask = 0;
+    geometry_barrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT |
+                                     VK_ACCESS_INDEX_READ_BIT;
+    dev.dt.cmdPipelineBarrier(gfxCopyCommand,
+                              VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                              VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+                              0, 0, nullptr,
+                              1, &geometry_barrier,
+                              0, nullptr);
+
+    if (gpu_textures.size() > 0)  {
+        // Finish acquiring mip level 0 on graphics queue and transition layout
+        for (VkImageMemoryBarrier &barrier : barriers) {
+            barrier.srcAccessMask = 0;
+            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barrier.srcQueueFamilyIndex = dev.transferQF;
+            barrier.dstQueueFamilyIndex = dev.gfxQF;
         }
 
-        auto specular_tex = loadTexture(raw_scene, raw_mat,
-                                        aiTextureType_SPECULAR,
-                                        textures,
-                                        loaded_texture_lookup);
-        glm::vec4 specular_color {};
-        if (!specular_tex) {
-            aiColor4D color;
-            raw_mat->Get(AI_MATKEY_COLOR_SPECULAR, color);
-            specular_color = glm::vec4(color.r, color.g, color.b, color.a);
+        dev.dt.cmdPipelineBarrier(gfxCopyCommand,
+                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                  0, 0, nullptr, 0, nullptr,
+                                  barriers.size(), barriers.data());
+
+        generateMips(dev, gfxCopyCommand, gpu_textures, barriers);
+
+        // Final layout transition for textures
+        for (size_t texture_idx = 0; texture_idx < gpu_textures.size();
+                texture_idx++) {
+            const LocalImage &gpu_texture = gpu_textures[texture_idx];
+            VkImageMemoryBarrier &barrier = barriers[texture_idx];
+
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            barrier.subresourceRange.baseMipLevel = 0;
+            barrier.subresourceRange.levelCount = gpu_texture.mipLevels;
         }
 
-        float shininess = 0.f;
-        raw_mat->Get(AI_MATKEY_SHININESS, shininess);
+        dev.dt.cmdPipelineBarrier(gfxCopyCommand,
+                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                  0, 0, nullptr, 0, nullptr,
+                                  barriers.size(), barriers.data());
 
-        materials.emplace_back(Material {
-            ambient_tex,
-            ambient_color,
-            diffuse_tex,
-            diffuse_color,
-            specular_tex,
-            specular_color,
-            shininess
+    }
+
+    REQ_VK(dev.dt.endCommandBuffer(gfxCopyCommand));
+
+    VkSubmitInfo gfx_submit{};
+    gfx_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    gfx_submit.waitSemaphoreCount = 1;
+    gfx_submit.pWaitSemaphores = &semaphore;
+    VkPipelineStageFlags sema_wait_mask = 
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    gfx_submit.pWaitDstStageMask = &sema_wait_mask;
+    gfx_submit.commandBufferCount = 1;
+    gfx_submit.pCommandBuffers = &gfxCopyCommand;
+
+    gfxQueue.submit(dev, 1, &gfx_submit, fence);
+
+    waitForFenceInfinitely(dev, fence);
+    REQ_VK(dev.dt.resetFences(dev.hdl, 1, &fence));
+
+    vector<VkImageView> texture_views;
+    vector<VkDescriptorImageInfo> view_infos;
+    texture_views.reserve(gpu_textures.size());
+    view_infos.reserve(gpu_textures.size());
+    for (const LocalImage &gpu_texture : gpu_textures) {
+        VkImageViewCreateInfo view_info;
+        view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view_info.pNext = nullptr;
+        view_info.flags = 0;
+        view_info.image = gpu_texture.image;
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.format = alloc.getFormats().sdrTexture;
+        view_info.components = { 
+            VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
+            VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A
+        };
+        view_info.subresourceRange = {
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            0, gpu_texture.mipLevels,
+            0, 1
+        };
+
+        VkImageView view;
+        REQ_VK(dev.dt.createImageView(dev.hdl, &view_info, nullptr, &view));
+
+        texture_views.push_back(view);
+        view_infos.emplace_back(VkDescriptorImageInfo {
+            VK_NULL_HANDLE, // Immutable
+            view,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
         });
     }
 
-    bool has_textures = textures.size() > 0;
-    vector<TexturedVertex> textured_vertices;
-    vector<ColoredVertex> colored_vertices;
+    assert(gpu_textures.size() <= VulkanConfig::max_textures);
 
-    vector<uint32_t> indices;
-    vector<SceneMesh> meshes;
+    DescriptorSet texture_set = gpu_textures.size() > 0 ?
+        descriptorManager.makeSet() :
+        descriptorManager.emptySet();
 
-    uint32_t cur_vertex_index = 0;
-
-    for (uint32_t mesh_idx = 0; mesh_idx < raw_scene->mNumMeshes; mesh_idx++) {
-        aiMesh *raw_mesh = raw_scene->mMeshes[mesh_idx];
-
-        unsigned int mat_idx = raw_mesh->mMaterialIndex;
-
-        bool has_uv = raw_mesh->HasTextureCoords(0);
-        bool has_color = raw_mesh->HasVertexColors(0);
-
-        for (uint32_t vert_idx = 0; vert_idx < raw_mesh->mNumVertices;
-                vert_idx++) {
-            glm::vec3 pos = glm::make_vec3(&raw_mesh->mVertices[vert_idx].x);
-
-            if (has_textures) {
-                glm::vec2 uv;
-                if (has_uv) {
-                    const auto &raw_uv = raw_mesh->mTextureCoords[0][vert_idx];
-                    uv = glm::vec2(raw_uv.x, 1.f - raw_uv.y);
-                } else {
-                    uv = glm::vec2(0.f);
-                }
-
-                textured_vertices.emplace_back(TexturedVertex {
-                    pos,
-                    uv
-                });
-            } else {
-                glm::u8vec3 color;
-                if (has_color) {
-                    const auto raw_color = &raw_mesh->mColors[0][vert_idx];
-                    color = glm::u8vec3(raw_color->r * 255, raw_color->g * 255,
-                                        raw_color->b * 255);
-                } else {
-                    color = glm::u8vec3(255);
-                }
-
-                colored_vertices.emplace_back(ColoredVertex {
-                    pos,
-                    color
-                });
-            }
-        }
-
-        for (uint32_t face_idx = 0; face_idx < raw_mesh->mNumFaces;
-                face_idx++) {
-            for (uint32_t tri_idx = 0; tri_idx < 3; tri_idx++) {
-                indices.push_back(raw_mesh->mFaces[face_idx].mIndices[tri_idx]);
-            }
-        }
-
-        meshes.emplace_back(SceneMesh {
-            cur_vertex_index,
-            raw_mesh->mNumFaces * 3,
-            mat_idx,
-        });
-
-        cur_vertex_index += raw_mesh->mNumFaces * 3;
+    if (gpu_textures.size() > 0) {
+        VkWriteDescriptorSet desc_update;
+        desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        desc_update.pNext = nullptr;
+        desc_update.dstSet = texture_set.hdl;
+        desc_update.dstBinding = 0;
+        desc_update.dstArrayElement = 0;
+        desc_update.descriptorCount = view_infos.size();
+        desc_update.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        desc_update.pImageInfo = view_infos.data();
+        desc_update.pBufferInfo = nullptr;
+        desc_update.pTexelBufferView = nullptr;
+        dev.dt.updateDescriptorSets(dev.hdl, 1, &desc_update, 0, nullptr);
     }
 
-    vector<ObjectInstance> instances;
-    vector<pair<aiNode *, glm::mat4>> node_stack {
-        { raw_scene->mRootNode, coordinate_txfm }
-    };
 
-    while (!node_stack.empty()) {
-        auto [cur_node, parent_txfm] = node_stack.back();
-        node_stack.pop_back();
-        auto raw_txfm = cur_node->mTransformation;
-        glm::mat4 cur_txfm = parent_txfm *
-            glm::transpose(
-                glm::make_mat4(reinterpret_cast<const float *>(&raw_txfm.a1)));
-
-        if (cur_node->mNumChildren == 0) {
-            if (cur_node->mNumMeshes != 1) {
-                cerr <<
-"Assimp loading: only leaf nodes with a single mesh are supported" <<
-                    endl;
-                fatalExit();
-            }
-
-            instances.emplace_back(ObjectInstance {
-                cur_txfm,
-                cur_node->mMeshes[0]
-            });
-        } else {
-            for (unsigned child_idx = 0; child_idx < cur_node->mNumChildren;
-                    child_idx++) {
-                node_stack.emplace_back(cur_node->mChildren[child_idx],
-                                        cur_txfm);
-            }
-        }
-    }
-
-    return SceneAssets {
-        move(textures),
-        move(materials),
-        move(textured_vertices),
-        move(colored_vertices),
-        move(indices),
-        move(meshes),
-        move(instances)
-    };
+    return make_shared<Scene>(Scene {
+        move(gpu_textures),
+        move(texture_views),
+        move(texture_set),
+        move(geometry),
+        total_vertex_bytes,
+        move(inline_meshes),
+        EnvironmentInit(scene_desc.getDefaultInstances())
+    });
 }
 
-LoadedScene::LoadedScene(const std::string &scene_path,
-                         LoaderState &loader_state,
-                         const glm::mat4 &coordinate_txfm)
-    : path_(scene_path),
-      ref_count_(1),
-      state_(loader_state.loadScene(loadAssets(scene_path, coordinate_txfm)))
-{}
-
-SceneManager::SceneManager(const glm::mat4 &coordinate_transform)
-    : coordinate_txfm_(coordinate_transform),
-      load_mutex_(),
-      scenes_(),
-      scene_lookup_()
-{}
-
-SceneID SceneManager::loadScene(const std::string &scene_path,
-                                LoaderState &loader_state)
-{
-    std::list<LoadedScene>::iterator scene;
-    {
-        scoped_lock lock(load_mutex_);
-
-        auto lookup_iter = scene_lookup_.find(scene_path);
-        if (lookup_iter != scene_lookup_.end()) {
-            scene = lookup_iter->second;
-            scene->refIncrement();
-        } else {
-            scenes_.emplace_front(scene_path, loader_state,
-                                  coordinate_txfm_);
-            scene = scenes_.begin();
-            scene_lookup_.emplace(scene_path, scene);
-        }
-    }
-
-    SceneID id(scene);
-
-    return id;
-}
-
-void SceneManager::dropScene(SceneID &&scene_id)
-{
-    scoped_lock lock(load_mutex_);
-    
-    bool should_free = scene_id.scene_->refDecrement();
-    if (!should_free) return;
-
-    [[maybe_unused]] size_t num_erased =
-        scene_lookup_.erase(scene_id.scene_->getPath());
-
-    assert(num_erased == 1);
-
-    scenes_.erase(scene_id.scene_);
-}
+template shared_ptr<Scene> LoaderState::loadScene(
+        const SceneDescription<UnlitPipeline> &scene_desc);
 
 }
