@@ -112,7 +112,16 @@ private:
     Handle<CudaState> cuda_;
 };
 
-using UnlitBatchRenderer = BatchRenderer<UnlitPipeline>;
+namespace Unlit {
+    using BatchRenderer = BatchRenderer<UnlitPipeline>;
+    using AssetLoader = BatchRenderer::LoaderType;
+    using CommandStream = BatchRenderer::CommandStreamType;
+    using SceneDescription = BatchRenderer::SceneDescriptionType;
+    using Mesh = BatchRenderer::MeshType;
+    using Material = BatchRenderer::MaterialType;
+    using Vertex = UnlitPipeline::VertexType;
+    using MaterialDescription = UnlitPipeline::MaterialDescType;
+}
 
 }
 

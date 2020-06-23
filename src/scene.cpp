@@ -97,16 +97,20 @@ static void generateMips(const DeviceState &dev,
             blit_spec.srcSubresource =
                 { VK_IMAGE_ASPECT_COLOR_BIT, mip_level - 1, 0, 1 };
             blit_spec.srcOffsets[1] =
-                { static_cast<int32_t>(gpu_texture.width >> (mip_level - 1)),
-                  static_cast<int32_t>(gpu_texture.height >> (mip_level - 1)),
+                { static_cast<int32_t>(
+                        max(gpu_texture.width >> (mip_level - 1), 1u)),
+                  static_cast<int32_t>(
+                        max(gpu_texture.height >> (mip_level - 1), 1u)),
                   1 };
 
             // Dst
             blit_spec.dstSubresource =
                 { VK_IMAGE_ASPECT_COLOR_BIT, mip_level, 0, 1 };
             blit_spec.dstOffsets[1] =
-                { static_cast<int32_t>(gpu_texture.width >> mip_level),
-                  static_cast<int32_t>(gpu_texture.height >> mip_level),
+                { static_cast<int32_t>(
+                        max(gpu_texture.width >> mip_level, 1u)),
+                  static_cast<int32_t>(
+                        max(gpu_texture.height >> mip_level, 1u)),
                   1 };
 
             barrier.srcAccessMask = 0;

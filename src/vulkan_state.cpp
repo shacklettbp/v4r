@@ -791,7 +791,8 @@ void CommandStreamState::render(const vector<Environment> &envs)
             auto &mesh = scene.meshes[mesh_idx];
 
             dev.dt.cmdDrawIndexed(render_cmd_, mesh.numIndices, num_instances,
-                                  mesh.startIndex, mesh.vertexOffset, cur_instance);
+                                  mesh.startIndex, mesh.vertexOffset,
+                                  cur_instance);
 
             memcpy(material_ptr, env.materials_[mesh_idx].data(),
                    num_instances * sizeof(uint32_t));
