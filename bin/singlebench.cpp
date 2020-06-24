@@ -6,15 +6,17 @@
 using namespace std;
 using namespace v4r;
 
-constexpr int num_frames = 10000;
+constexpr uint32_t num_frames = 10000;
 
 int main(int argc, char *argv[]) {
-    if (argc < 2) {
-        cerr << "Specify scene" << endl;
+    if (argc < 3) {
+        cerr << argv[0] << " scene batch_size" << endl;
         exit(EXIT_FAILURE);
     }
 
-    Unlit::BatchRenderer renderer({0, 1, 1, 1, 256, 256,
+    uint32_t batch_size = stoul(argv[2]);
+
+    Unlit::BatchRenderer renderer({0, 1, 1, batch_size, 256, 256,
         glm::mat4(
             1, 0, 0, 0,
             0, -1.19209e-07, -1, 0,
@@ -28,18 +30,23 @@ int main(int argc, char *argv[]) {
 
     auto cmd_stream = renderer.makeCommandStream();
     vector<Environment> envs;
-    envs.emplace_back(move(cmd_stream.makeEnvironment(scene, 90))); 
 
-    envs[0].setCameraView(
-        glm::inverse(glm::mat4(
-            -1.19209e-07, 0, 1, 0,
-            0, 1, 0, 0,
-            -1, 0, -1.19209e-07, 0,
-            -3.38921, 1.62114, -3.34509, 1)));
+    for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
+        envs.emplace_back(move(cmd_stream.makeEnvironment(scene, 90))); 
+
+        envs[batch_idx].setCameraView(
+            glm::inverse(glm::mat4(
+                -1.19209e-07, 0, 1, 0,
+                0, 1, 0, 0,
+                -1, 0, -1.19209e-07, 0,
+                -3.38921, 1.62114, -3.34509, 1)));
+    }
 
     auto start = chrono::steady_clock::now();
 
-    for (int i = 0; i < 10000; i++) {
+    uint32_t num_iters = num_frames / batch_size;
+
+    for (uint32_t i = 0; i < num_iters; i++) {
         auto sync = cmd_stream.render(envs);
         sync.cpuWait();
     }
@@ -47,5 +54,6 @@ int main(int argc, char *argv[]) {
     auto end = chrono::steady_clock::now();
 
     auto diff = chrono::duration_cast<chrono::milliseconds>(end - start);
-    cout << "FPS: " << ((double)num_frames / (double)diff.count()) * 1000.0 << endl;
+    cout << "FPS: " << ((double)num_iters * (double)batch_size /
+            (double)diff.count()) * 1000.0 << endl;
 }
