@@ -35,8 +35,10 @@ public:
     uint32_t width;
     uint32_t height;
 
-    uint64_t colorLinearBytes;
-    uint64_t depthLinearBytes;
+    uint64_t colorLinearBytesPerStream;
+    uint64_t depthLinearBytesPerStream;
+    uint64_t linearBytesPerStream;
+
     uint64_t totalLinearBytes;
 };
 

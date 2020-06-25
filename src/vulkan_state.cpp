@@ -66,20 +66,28 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
     uint32_t batch_fb_images_tall = (cfg.batchSize / batch_fb_images_wide);
     assert(batch_fb_images_wide * batch_fb_images_tall == cfg.batchSize);
 
-    uint32_t fb_width = cfg.imgWidth * batch_fb_images_wide * cfg.numStreams;
-    uint32_t fb_height = cfg.imgHeight * batch_fb_images_tall;
+    uint32_t stream_fb_width = cfg.imgWidth * batch_fb_images_wide;
+    uint32_t stream_fb_height = cfg.imgHeight * batch_fb_images_tall;
 
-    uint64_t color_bytes = 4 * sizeof(uint8_t) * fb_width * fb_height;
-    uint64_t depth_bytes = sizeof(float) * fb_width * fb_height;
+    uint32_t total_fb_width = stream_fb_width * cfg.numStreams;
+    uint32_t total_fb_height = stream_fb_height;
+
+    uint64_t stream_color_bytes = 4 * sizeof(uint8_t) * stream_fb_width *
+            stream_fb_height;
+    uint64_t stream_depth_bytes = sizeof(float) * stream_fb_width *
+            stream_fb_height;
+
+    uint32_t stream_linear_bytes = stream_color_bytes + stream_depth_bytes;
 
     return FramebufferConfig {
         batch_fb_images_wide,
         batch_fb_images_tall,
-        fb_width,
-        fb_height,
-        color_bytes,
-        depth_bytes,
-        color_bytes + depth_bytes
+        total_fb_width,
+        total_fb_height,
+        stream_color_bytes,
+        stream_depth_bytes,
+        stream_linear_bytes,
+        stream_linear_bytes * cfg.numStreams
     };
 }
 
@@ -564,8 +572,9 @@ CommandStreamState::CommandStreamState(
       render_size_(render_width, render_height),
       render_extent_(render_width * fb_cfg.numImagesWidePerBatch,
                      render_height * fb_cfg.numImagesTallPerBatch),
-      color_buffer_offset_(stream_idx * fb_cfg.totalLinearBytes),
-      depth_buffer_offset_(color_buffer_offset_ + fb_cfg.colorLinearBytes),
+      color_buffer_offset_(stream_idx * fb_cfg.linearBytesPerStream),
+      depth_buffer_offset_(color_buffer_offset_ +
+                           fb_cfg.colorLinearBytesPerStream),
       batch_offsets_()
 {
     VkDescriptorBufferInfo transform_buffer_info;
