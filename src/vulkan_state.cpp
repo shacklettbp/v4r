@@ -518,7 +518,9 @@ static PipelineState makePipeline(const DeviceState &dev,
     };
 }
 
-static glm::u32vec2 computeFBPosition(uint32_t batch_idx, const FramebufferConfig &cfg, const glm::u32vec2 &render_size)
+static glm::u32vec2 computeFBPosition(uint32_t batch_idx,
+                                      const FramebufferConfig &cfg,
+                                      const glm::u32vec2 &render_size)
 {
     return glm::u32vec2((batch_idx % cfg.numImagesWidePerBatch) * render_size.x,
                         (batch_idx / cfg.numImagesWidePerBatch) * render_size.y);
@@ -655,6 +657,8 @@ CommandStreamState::CommandStreamState(
                               static_cast<uint32_t>(barriers.size()),
                               barriers.data());
 
+    DynArray<VkBufferImageCopy> copy_regions(batch_size * 2);
+
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         glm::u32vec2 cur_pos = batch_offsets_[batch_idx];
 
@@ -666,41 +670,43 @@ CommandStreamState::CommandStreamState(
                 batch_idx * render_width * render_height *
                 sizeof(float);
 
-        VkBufferImageCopy copy_info;
-        copy_info.bufferOffset = cur_color_offset;
-        copy_info.bufferRowLength = 0;
-        copy_info.bufferImageHeight = 0;
-        copy_info.imageSubresource = {
+        VkBufferImageCopy &color_region = copy_regions[batch_idx];
+        color_region.bufferOffset = cur_color_offset;
+        color_region.bufferRowLength = 0;
+        color_region.bufferImageHeight = 0;
+        color_region.imageSubresource = {
             VK_IMAGE_ASPECT_COLOR_BIT,
             0, 0, 1
         };
-        copy_info.imageOffset = {
+        color_region.imageOffset = {
             static_cast<int32_t>(cur_pos.x),
             static_cast<int32_t>(cur_pos.y),
             0
         };
-        copy_info.imageExtent = {
+        color_region.imageExtent = {
             render_width,
             render_height,
             1
         };
 
-        dev.dt.cmdCopyImageToBuffer(copy_cmd_,
-                                    fb.color.image,
-                                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                    fb.resultBuffer.buffer,
-                                    1,
-                                    &copy_info);
-
-        copy_info.bufferOffset = cur_depth_offset;
-
-        dev.dt.cmdCopyImageToBuffer(copy_cmd_,
-                                    fb.linearDepth.image,
-                                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                    fb.resultBuffer.buffer,
-                                    1,
-                                    &copy_info);
+        VkBufferImageCopy &depth_region = copy_regions[batch_size + batch_idx];
+        depth_region = color_region;
+        depth_region.bufferOffset = cur_depth_offset;
     }
+
+    dev.dt.cmdCopyImageToBuffer(copy_cmd_,
+                                fb.color.image,
+                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                fb.resultBuffer.buffer,
+                                batch_size,
+                                &copy_regions[0]);
+
+    dev.dt.cmdCopyImageToBuffer(copy_cmd_,
+                                fb.linearDepth.image,
+                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                fb.resultBuffer.buffer,
+                                batch_size,
+                                &copy_regions[batch_size]);
 
     REQ_VK(dev.dt.endCommandBuffer(copy_cmd_));
 }
