@@ -126,10 +126,10 @@ static StagedMeshes copyMeshesToStaging(
 }
 
 template <typename VertexType>
-VertexMesh<VertexType>::VertexMesh(vector<VertexType> vertices,
-                                   vector<uint32_t> indices)
-    : Mesh { move(indices) },
-      vertices(move(vertices))
+VertexMesh<VertexType>::VertexMesh(vector<VertexType> v,
+                                   vector<uint32_t> i)
+    : Mesh { move(i) },
+      vertices(move(v))
 {}
 
 template <typename VertexType>
@@ -184,7 +184,7 @@ shared_ptr<Material> makeSharedMaterial(
         LitRendererInputs::MaterialDescription description)
 {
     (void)description;
-    assert(false);
+    unreachable();
 }
 
 template <typename VertexType, typename MaterialDescType>
@@ -252,7 +252,7 @@ LoaderHelper getVertexType(const RenderFeatures &features)
                 return makeHelperPointers<typename InputsType::ColoredVertex,
                                           MatDescType>();
             } else {
-                assert(false);
+                unreachable();
             }
         }
         case RenderFeatures::MeshColor::Texture: {
@@ -260,6 +260,8 @@ LoaderHelper getVertexType(const RenderFeatures &features)
                                       MatDescType>();
         }
     }
+
+    unreachable();
 }
 
 LoaderHelper makeLoaderHelper(const RenderFeatures &features)
@@ -271,6 +273,8 @@ LoaderHelper makeLoaderHelper(const RenderFeatures &features)
         case RenderFeatures::Pipeline::Shadowed:
             return getVertexType<LitRendererInputs>(features);
     }
+
+    unreachable();
 }
 
 LoaderState::LoaderState(const DeviceState &d,

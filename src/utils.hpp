@@ -3,11 +3,20 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <memory>
 
 namespace v4r {
 
 [[noreturn]] void fatalExit() noexcept;
+[[noreturn]] inline void unreachable() noexcept
+{
+#if defined(__GNUC__) || defined(__clang__)
+    __builtin_unreachable();
+#else
+    asm("");
+#endif
+}
 
 template <typename>
 struct ArraySize {};

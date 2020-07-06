@@ -4,7 +4,7 @@ namespace v4r {
 
 [[noreturn]] void fatalExit() noexcept
 {
-    abort();
+    exit(EXIT_FAILURE);
 }
 
 }

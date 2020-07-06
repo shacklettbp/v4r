@@ -1,0 +1,21 @@
+{
+    "outputs" : [
+        "color",
+        "depth"
+    ],
+    "pipelines" : {
+        "unlit" : {
+            "supported_color_sources": [
+                "vertex",
+                "texture",
+                "none"
+            ]
+        },
+        "lit": {
+            "supported_color_sources": [
+                "texture",
+                "none"
+            ]
+        }
+    }
+}

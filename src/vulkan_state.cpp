@@ -403,7 +403,9 @@ getVertexFormat(const RenderConfig &cfg)
                 default:
                     return {{}, 0};
             }
-    };
+    }
+
+    unreachable();
 }
 
 static pair<const string, const string> getShaderNames(const RenderConfig &cfg)
@@ -413,20 +415,26 @@ static pair<const string, const string> getShaderNames(const RenderConfig &cfg)
     switch (cfg.features.pipeline) {
         case RenderFeatures::Pipeline::Unlit:
             pipeline = "unlit";
+            break;
         case RenderFeatures::Pipeline::Lit:
             pipeline = "lit";
+            break;
         case RenderFeatures::Pipeline::Shadowed:
             pipeline = "shadowed";
+            break;
     };
 
     string color;
     switch (cfg.features.colorSrc) {
         case RenderFeatures::MeshColor::None:
             color = "none";
+            break;
         case RenderFeatures::MeshColor::Vertex:
             color = "vertex";
+            break;
         case RenderFeatures::MeshColor::Texture: 
             color = "texture";
+            break;
     };
 
     string outputs = "";
