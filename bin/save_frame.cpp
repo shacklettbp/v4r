@@ -12,13 +12,20 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    Unlit::BatchRenderer renderer({0, 1, 1, 1, 256, 256,
+    BatchRenderer renderer({0, 1, 1, 1, 256, 256,
         glm::mat4(
             1, 0, 0, 0,
             0, -1.19209e-07, -1, 0,
             0, 1, -1.19209e-07, 0,
             0, 0, 0, 1
-        )
+        ),
+        {
+            RenderFeatures::MeshColor::Texture,
+            RenderFeatures::Pipeline::Unlit,
+            RenderFeatures::Outputs::Color |
+                RenderFeatures::Outputs::Depth,
+            RenderFeatures::Options::CpuSynchronization
+        }
     });
 
     RenderDoc rdoc {};
@@ -28,7 +35,7 @@ int main(int argc, char *argv[]) {
     auto scene = loader.loadScene(argv[1]);
     auto cmd_stream = renderer.makeCommandStream();
     vector<Environment> envs;
-    envs.emplace_back(move(cmd_stream.makeEnvironment(scene, 90, 0.01, 1000)));
+    envs.emplace_back(cmd_stream.makeEnvironment(scene, 90, 0.01, 1000));
     envs[0].setCameraView(glm::inverse(glm::mat4(
         -1.19209e-07, 0, 1, 0,
         0, 1, 0, 0,

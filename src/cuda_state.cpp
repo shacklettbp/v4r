@@ -127,22 +127,4 @@ DeviceUUID getUUIDFromCudaID(int cuda_id)
     return uuid;
 }
 
-
-void cudaGPUWait(cudaExternalSemaphore_t sem, cudaStream_t strm)
-{
-    cudaExternalSemaphoreWaitParams params {};
-    cudaError_t res =
-        cudaWaitExternalSemaphoresAsync(&sem, &params, 1, strm);
-    if (res != cudaSuccess) {
-        cerr << "CUDA failed to wait on vulkan semaphore" << endl;
-        fatalExit();
-    }
-}
-
-void cudaCPUWait(cudaExternalSemaphore_t sem)
-{
-    cudaGPUWait(sem, 0);
-    cudaDeviceSynchronize();
-}
-
 }

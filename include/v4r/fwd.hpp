@@ -8,30 +8,26 @@ class CommandStreamState;
 
 class LoaderState;
 
-template <typename VertexType>
-class Mesh;
+struct Mesh;
 
-template <typename DescriptionType>
-class Material;
+struct Material;
 
-class Texture;
+struct Texture;
 
-template <typename PipelineType>
 class SceneDescription;
 
-class Scene;
+struct Scene;
 class EnvironmentState;
 class Environment;
 
 class CudaStreamState;
 class CudaState;
 
-template <typename PipelineType>
+struct SyncState;
+
 class CommandStream;
 
-template <typename PipelineType>
 class BatchRenderer;
-
 
 }
 

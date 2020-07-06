@@ -35,20 +35,19 @@ public:
     uint32_t width;
     uint32_t height;
 
-    uint64_t colorLinearBytesPerStream;
-    uint64_t depthLinearBytesPerStream;
-    uint64_t linearBytesPerStream;
+    uint64_t colorLinearBytesPerFrame;
+    uint64_t depthLinearBytesPerFrame;
+    uint64_t linearBytesPerFrame;
 
     uint64_t totalLinearBytes;
+
+    std::vector<VkClearValue> clearValues;
 };
 
 struct FramebufferState {
 public:
-    LocalImage color;
-    LocalImage depth;
-    LocalImage linearDepth;
-
-    std::array<VkImageView, 3> attachmentViews; 
+    std::vector<LocalImage> attachments;
+    std::vector<VkImageView> attachmentViews; 
 
     VkFramebuffer hdl;
 
@@ -56,57 +55,45 @@ public:
     VkDeviceMemory resultMem;
 };
 
-template <size_t NumInputs, size_t NumAttrs,
-          size_t NumShaders, size_t NumDescriptorLayouts>
 struct PipelineConfig {
 public:
-    std::array<VkVertexInputBindingDescription, NumInputs> inputBindings;
-    std::array<VkVertexInputAttributeDescription, NumAttrs> inputAttrs;
+    std::vector<VkVertexInputBindingDescription> inputBindings;
+    std::vector<VkVertexInputAttributeDescription> inputAttrs;
 
-    std::array<std::pair<const char *, VkShaderStageFlagBits>, NumShaders>
-        shaders;
-    std::array<VkDescriptorSetLayout, NumDescriptorLayouts> descLayouts;
-
-    PipelineConfig(
-            typename std::add_rvalue_reference<decltype(inputBindings)>::type
-                input_bindings,
-            typename std::add_rvalue_reference<decltype(inputAttrs)>::type
-                input_attrs,
-            typename std::add_rvalue_reference<decltype(shaders)>::type
-                s,
-            typename std::add_rvalue_reference<decltype(descLayouts)>::type
-                desc_layouts)
-        : inputBindings(std::move(input_bindings)), 
-          inputAttrs(std::move(input_attrs)),
-          shaders(std::move(s)),
-          descLayouts(std::move(desc_layouts))
-    {}
+    std::vector<std::pair<const std::string, VkShaderStageFlagBits>> shaders;
+    std::vector<VkDescriptorSetLayout> descLayouts;
 };
-
-// Deduction guide!
-template<typename B, typename A, typename S, typename D>
-PipelineConfig(B, A, S, D) ->
-    PipelineConfig<ArraySize<B>::value, ArraySize<A>::value,
-                   ArraySize<S>::value, ArraySize<D>::value>;
 
 // FIXME separate out things like the layout, cache (maybe renderpass)
 // into PipelineManager
 struct PipelineState {
-    std::array<VkShaderModule, 2> shaders;
+    std::vector<VkShaderModule> shaders;
 
     VkPipelineCache pipelineCache;
     VkPipelineLayout gfxLayout;
     VkPipeline gfxPipeline;
 };
 
+struct PerFrameState {
+    VkSemaphore semaphore;
+    VkFence fence;
+    std::array<VkCommandBuffer, 2> commands;
+    
+    glm::u32vec2 baseFBOffset;
+    DynArray<glm::u32vec2> batchFBOffsets;
+
+    VkDeviceSize colorBufferOffset;
+    VkDeviceSize depthBufferOffset;
+};
+
 class CommandStreamState {
 public:
-    CommandStreamState(const InstanceState &inst,
+    CommandStreamState(const RenderFeatures &features,
+                       const InstanceState &inst,
                        const DeviceState &dev,
-                       const PerRenderDescriptorConfig &desc_cfg,
+                       VkDescriptorSet per_render_descriptor,
                        VkRenderPass render_pass,
-                       const PipelineState &textured_pipeline,
-                       const PipelineState &vertex_color_pipeline,
+                       const PipelineState &pipeline,
                        const FramebufferConfig &fb_cfg,
                        const FramebufferState &fb,
                        MemoryAllocator &alc,
@@ -114,44 +101,53 @@ public:
                        uint32_t batch_size,
                        uint32_t render_width,
                        uint32_t render_height,
-                       uint32_t stream_idx);
+                       uint32_t stream_idx,
+                       uint32_t num_frames_inflight);
+
     CommandStreamState(const CommandStreamState &) = delete;
     CommandStreamState(CommandStreamState &&) = default;
 
     void render(const std::vector<Environment> &envs);
 
-    VkDeviceSize getColorOffset() const { return color_buffer_offset_; }
-    VkDeviceSize getDepthOffset() const { return depth_buffer_offset_; }
-    int getSemaphoreFD() const;
+    VkDeviceSize getColorOffset(uint32_t frame_idx) const
+    {
+        return frame_states_[frame_idx].colorBufferOffset; 
+    }
+
+    VkDeviceSize getDepthOffset(uint32_t frame_idx) const
+    { 
+        return frame_states_[frame_idx].depthBufferOffset;
+    }
+
+    VkFence getFence(uint32_t frame_idx) const
+    {
+        return frame_states_[frame_idx].fence;
+    }
+
+    int getSemaphoreFD(uint32_t frame_idx) const;
 
     const InstanceState &inst;
     const DeviceState &dev;
 
-    VkRenderPass renderPass;
-    const PipelineState &texturedPipeline;
-    const PipelineState &vertexColorPipeline;
-    const FramebufferState &fb;
+    const PipelineState &pipeline;
 
-    const VkCommandPool gfxPool;
+    VkCommandPool gfxPool; // FIXME move all command pools into VulkanState
     const QueueState &gfxQueue;
 
     MemoryAllocator &alloc;
-    const VkSemaphore semaphore;
 
 private:
-    VkCommandBuffer render_cmd_;
-    VkCommandBuffer copy_cmd_;
-    VkDescriptorPool per_render_pool_;
+    const FramebufferConfig &fb_cfg_;
+    const FramebufferState &fb_;
+    VkRenderPass render_pass_;
     VkDescriptorSet per_render_descriptor_;
     HostBuffer transform_ssbo_;
     HostBuffer material_params_ssbo_;
 
-    glm::u32vec2 fb_pos_;
     glm::u32vec2 render_size_;
     glm::u32vec2 render_extent_;
-    VkDeviceSize color_buffer_offset_;
-    VkDeviceSize depth_buffer_offset_;
-    std::vector<glm::u32vec2> batch_offsets_;
+    std::vector<PerFrameState> frame_states_;
+    uint32_t cur_frame_;
 };
 
 class VulkanState {
@@ -177,9 +173,9 @@ public:
     const FramebufferConfig fbCfg;
     const PerRenderDescriptorConfig streamDescCfg;
     const PerSceneDescriptorConfig sceneDescCfg;
+    VkDescriptorPool renderDescriptorPool;
     VkRenderPass renderPass;
-    const PipelineState texturedPipeline;
-    const PipelineState vertexColorPipeline;
+    const PipelineState pipeline;
     const FramebufferState fb;
 
     std::atomic_uint32_t numLoaders;

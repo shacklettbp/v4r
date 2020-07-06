@@ -5,7 +5,6 @@
 #include <v4r/config.hpp>
 #include <v4r/environment.hpp>
 #include <v4r/fwd.hpp>
-#include <v4r/pipelines.hpp>
 #include <v4r/utils.hpp>
 
 #include <cuda.h>
@@ -16,28 +15,24 @@
 
 namespace v4r {
 
-template <typename PipelineType>
 class AssetLoader {
 public:
-    using VertexType = typename PipelineType::VertexType;
-    using MeshType = Mesh<VertexType>;
-    using MaterialDescType = typename PipelineType::MaterialDescType;
-    using MaterialType = Material<MaterialDescType>;
-
-    std::shared_ptr<MeshType> loadMesh(
+    std::shared_ptr<Mesh> loadMesh(
             const std::string &geometry_path);
 
-    std::shared_ptr<MeshType> loadMesh(
+    template <typename VertexType>
+    std::shared_ptr<Mesh> loadMesh(
             std::vector<VertexType> vertices,
             std::vector<uint32_t> indices);
 
     std::shared_ptr<Texture> loadTexture(const std::string &texture_path);
 
-    std::shared_ptr<MaterialType> makeMaterial(
+    template <typename MaterialDescType>
+    std::shared_ptr<Material> makeMaterial(
             MaterialDescType params);
 
     std::shared_ptr<Scene> makeScene(
-            const SceneDescription<PipelineType> &desc);
+            const SceneDescription &desc);
 
     // Shortcut for Gibson style scene files
     std::shared_ptr<Scene> loadScene(const std::string &scene_path);
@@ -47,24 +42,25 @@ private:
 
     Handle<LoaderState> state_;
 
-friend class BatchRenderer<PipelineType>;
+friend class BatchRenderer;
 };
 
 class RenderSync {
 public:
+    RenderSync(RenderSync &&) = default;
+    RenderSync & operator=(RenderSync &&) = default;
+
     void gpuWait(cudaStream_t strm);
     void cpuWait();
 
 private:
-    RenderSync(cudaExternalSemaphore_t sem);
+    RenderSync(const SyncState *state);
 
-    cudaExternalSemaphore_t ext_sem_;
+    const SyncState *state_;
 
-template <typename PipelineType>
 friend class CommandStream;
 };
 
-template <typename PipelineType>
 class CommandStream {
 public:
     Environment makeEnvironment(const std::shared_ptr<Scene> &scene,
@@ -74,54 +70,37 @@ public:
     RenderSync render(const std::vector<Environment> &elems);
 
     // Fixed CUDA device pointers to result buffers
-    uint8_t * getColorDevPtr() const;
-    float * getDepthDevPtr() const;
+    uint8_t * getColorDevPtr(bool alternate_buffer = false) const;
+    float * getDepthDevPtr(bool alternate_buffer = false) const;
 
 private:
     CommandStream(Handle<CommandStreamState> &&state,
-                  uint8_t *color_ptr,
-                  float *depth_ptr,
+                  const CudaState &cuda_global,
                   uint32_t render_width,
-                  uint32_t render_height);
+                  uint32_t render_height,
+                  bool double_buffered);
 
     Handle<CommandStreamState> state_;
-    Handle<CudaStreamState> cuda_;
+    Handle<CudaStreamState[]> cuda_;
+    Handle<SyncState[]> sync_;
 
     uint32_t render_width_;
     uint32_t render_height_;
 
-friend class BatchRenderer<PipelineType>;
+friend class BatchRenderer;
 };
 
-template <typename PipelineType>
 class BatchRenderer {
 public:
     BatchRenderer(const RenderConfig &cfg);
 
-    using MeshType = Mesh<typename PipelineType::VertexType>;
-    using MaterialType = Material<typename PipelineType::MaterialDescType>;
-    using LoaderType = AssetLoader<PipelineType>;
-    using CommandStreamType = CommandStream<PipelineType>;
-    using SceneDescriptionType = SceneDescription<PipelineType>;
-
-    LoaderType makeLoader();
-    CommandStreamType makeCommandStream();
+    AssetLoader makeLoader();
+    CommandStream makeCommandStream();
 
 private:
     Handle<VulkanState> state_;
     Handle<CudaState> cuda_;
 };
-
-namespace Unlit {
-    using BatchRenderer = BatchRenderer<UnlitPipeline>;
-    using AssetLoader = BatchRenderer::LoaderType;
-    using CommandStream = BatchRenderer::CommandStreamType;
-    using SceneDescription = BatchRenderer::SceneDescriptionType;
-    using Mesh = BatchRenderer::MeshType;
-    using Material = BatchRenderer::MaterialType;
-    using Vertex = UnlitPipeline::VertexType;
-    using MaterialDescription = UnlitPipeline::MaterialDescType;
-}
 
 }
 

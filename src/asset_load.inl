@@ -1,3 +1,6 @@
+#ifndef ASSET_LOAD_INL_INCLUDED
+#define ASSET_LOAD_INL_INCLUDED
+
 #include "asset_load.hpp"
 
 #include <assimp/Importer.hpp>
@@ -81,7 +84,7 @@ static const std::shared_ptr<Texture> assimpLoadTexture(
 }
 
 template <typename MaterialParamsType>
-static std::vector<MaterialParamsType> assimpParseMaterials(
+std::vector<MaterialParamsType> assimpParseMaterials(
         const aiScene *raw_scene)
 {
     std::vector<MaterialParamsType> materials;
@@ -126,10 +129,10 @@ static std::vector<MaterialParamsType> assimpParseMaterials(
         float shininess = 0.f;
         raw_mat->Get(AI_MATKEY_SHININESS, shininess);
 
-        if constexpr (std::is_same_v<MaterialParamsType,
-                                     UnlitMaterialDescription>) {
+        if constexpr (std::is_same_v<MaterialParamsType, 
+                UnlitRendererInputs::MaterialDescription>) {
             if (diffuse_tex) {
-                materials.emplace_back(UnlitMaterialDescription {
+                materials.push_back({
                     diffuse_tex
                 });
             }
@@ -144,50 +147,104 @@ static std::vector<MaterialParamsType> assimpParseMaterials(
 }
 
 template <typename VertexType>
+static VertexType assimpParseVertex(const aiMesh *raw_mesh, uint32_t vert_idx);
+
+static glm::vec3 readPosition(const aiMesh *raw_mesh, uint32_t vert_idx)
+{
+    return glm::make_vec3(&raw_mesh->mVertices[vert_idx].x);
+}
+
+static glm::vec3 readColor(const aiMesh *raw_mesh, uint32_t vert_idx)
+{
+    if (raw_mesh->HasVertexColors(0)) {
+        const auto raw_color = &raw_mesh->mColors[0][vert_idx];
+        return glm::u8vec3(raw_color->r * 255, raw_color->g * 255,
+                           raw_color->b * 255);
+    } else {
+        return glm::u8vec3(255);
+    }
+}
+
+static glm::vec2 readUV(const aiMesh *raw_mesh, uint32_t vert_idx)
+{
+    if (raw_mesh->HasTextureCoords(0)) {
+        const auto &raw_uv = raw_mesh->mTextureCoords[0][vert_idx];
+        return glm::vec2(raw_uv.x, 1.f - raw_uv.y);
+    } else {
+        return glm::vec2(0.f);
+    }
+}
+
+static glm::vec3 readNormal(const aiMesh *raw_mesh, uint32_t vert_idx)
+{
+    if (raw_mesh->HasNormals()) {
+        return glm::make_vec3(&raw_mesh->mNormals[vert_idx].x);
+    } else {
+        return glm::vec3(1.f, 0.f, 0.f);
+    }
+}
+
+template <>
+UnlitRendererInputs::NoColorVertex assimpParseVertex(
+        const aiMesh *raw_mesh, uint32_t vert_idx)
+{
+    return {
+        readPosition(raw_mesh, vert_idx)
+    };
+}
+
+template <>
+UnlitRendererInputs::ColoredVertex assimpParseVertex(
+        const aiMesh *raw_mesh, uint32_t vert_idx)
+{
+    return {
+        readPosition(raw_mesh, vert_idx),
+        readColor(raw_mesh, vert_idx)
+    };
+}
+
+template <>
+UnlitRendererInputs::TexturedVertex assimpParseVertex(
+        const aiMesh *raw_mesh, uint32_t vert_idx)
+{
+    return {
+        readPosition(raw_mesh, vert_idx),
+        readUV(raw_mesh, vert_idx)
+    };
+}
+
+template <>
+LitRendererInputs::NoColorVertex assimpParseVertex(
+        const aiMesh *raw_mesh, uint32_t vert_idx)
+{
+    return {
+        readPosition(raw_mesh, vert_idx),
+        readNormal(raw_mesh, vert_idx)
+    };
+}
+
+template <>
+LitRendererInputs::TexturedVertex assimpParseVertex(
+        const aiMesh *raw_mesh, uint32_t vert_idx)
+{
+    return {
+        readPosition(raw_mesh, vert_idx),
+        readNormal(raw_mesh, vert_idx),
+        readUV(raw_mesh, vert_idx)
+    };
+}
+
+template <typename VertexType>
 std::pair<std::vector<VertexType>, std::vector<uint32_t>> assimpParseMesh(
         const aiMesh *raw_mesh)
 {
     std::vector<VertexType> vertices;
     std::vector<uint32_t> indices;
 
-    bool has_uv = raw_mesh->HasTextureCoords(0);
-    bool has_color = raw_mesh->HasVertexColors(0);
-
     for (uint32_t vert_idx = 0; vert_idx < raw_mesh->mNumVertices;
             vert_idx++) {
-        glm::vec3 pos = glm::make_vec3(&raw_mesh->mVertices[vert_idx].x);
-
-        if constexpr (std::is_same_v<VertexType, UnlitVertex>) {
-            glm::vec2 uv;
-            if (has_uv) {
-                const auto &raw_uv = raw_mesh->mTextureCoords[0][vert_idx];
-                uv = glm::vec2(raw_uv.x, 1.f - raw_uv.y);
-            } else {
-                uv = glm::vec2(0.f);
-            }
-
-            vertices.emplace_back(UnlitVertex {
-                pos,
-                uv
-            });
-        } else if constexpr (std::is_same_v<VertexType, ColoredVertex>) {
-            glm::u8vec3 color;
-            if (has_color) {
-                const auto raw_color = &raw_mesh->mColors[0][vert_idx];
-                color = glm::u8vec3(raw_color->r * 255, raw_color->g * 255,
-                                    raw_color->b * 255);
-            } else {
-                color = glm::u8vec3(255);
-            }
-
-            vertices.emplace_back(ColoredVertex {
-                pos,
-                color
-            });
-        } else {
-            std::cerr << "No assimp loader for vertex type" << std::endl;
-            fatalExit();
-        }
+        vertices.emplace_back(assimpParseVertex<VertexType>(
+            raw_mesh, vert_idx));
     }
 
     for (uint32_t face_idx = 0; face_idx < raw_mesh->mNumFaces;
@@ -200,8 +257,7 @@ std::pair<std::vector<VertexType>, std::vector<uint32_t>> assimpParseMesh(
     return make_pair(vertices, indices);
 }
 
-template <typename PipelineType>
-void assimpParseInstances(SceneDescription<PipelineType> &desc,
+void assimpParseInstances(SceneDescription &desc,
         const aiScene *raw_scene,
         const std::vector<uint32_t> &mesh_materials,
         const glm::mat4 &coordinate_txfm)
@@ -240,3 +296,5 @@ void assimpParseInstances(SceneDescription<PipelineType> &desc,
 }
 
 }
+
+#endif

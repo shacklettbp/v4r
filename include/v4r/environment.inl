@@ -1,3 +1,8 @@
+#ifndef V4R_ENVIRONMENT_INL_INCLUDED
+#define V4R_ENVIRONMENT_INL_INCLUDED
+
+#include <v4r/environment.hpp>
+
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace v4r {
@@ -45,3 +50,5 @@ void Environment::translateCamera(const glm::vec3 &v)
 }
 
 }
+
+#endif

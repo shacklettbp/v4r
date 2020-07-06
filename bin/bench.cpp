@@ -47,13 +47,20 @@ int main(int argc, char *argv[]) {
 
     RenderDoc rdoc;
 
-    Unlit::BatchRenderer renderer({0, 1, num_threads, 1, 256, 256,
+    BatchRenderer renderer({0, 1, num_threads, 1, 256, 256,
         glm::mat4(
             1, 0, 0, 0,
             0, -1.19209e-07, -1, 0,
             0, 1, -1.19209e-07, 0,
             0, 0, 0, 1
-        )
+        ),
+        {
+            RenderFeatures::MeshColor::Texture,
+            RenderFeatures::Pipeline::Unlit,
+            RenderFeatures::Outputs::Color |
+                RenderFeatures::Outputs::Depth,
+            RenderFeatures::Options::CpuSynchronization
+        }
     });
 
     vector<glm::mat4> init_views = readViews(argv[2]);
@@ -79,7 +86,7 @@ int main(int argc, char *argv[]) {
             {
                 auto cmd_stream = renderer.makeCommandStream();
                 vector<Environment> envs;
-                envs.emplace_back(move(cmd_stream.makeEnvironment(scene, 90, 0.01, 1000)));
+                envs.emplace_back(cmd_stream.makeEnvironment(scene, 90, 0.01, 1000));
 
                 random_device rd;
                 mt19937 g(rd());

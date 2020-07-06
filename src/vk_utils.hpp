@@ -69,6 +69,8 @@ inline VkFence makeFence(const DeviceState &dev, bool pre_signal=false);
 
 inline void waitForFenceInfinitely(const DeviceState &dev, VkFence fence);
 
+inline void resetFence(const DeviceState &dev, VkFence fence);
+
 void printVkError(VkResult res, const char *msg);
 
 static inline VkResult checkVk(VkResult res, const char *msg,
@@ -93,6 +95,8 @@ static inline VkResult checkVk(VkResult res, const char *msg,
 
 }
 
+#ifndef VK_UTILS_INL_INCLUDED
 #include "vk_utils.inl"
+#endif
 
 #endif

@@ -56,7 +56,7 @@ add_library(v4r SHARED
     ../include/v4r.hpp v4r.cpp
     ../include/v4r/environment.hpp ../include/v4r/environment.inl
     ../include/v4r/assets.hpp ../include/v4r/assets.inl
-    ../include/v4r/config.hpp  ../include/v4r/pipelines.hpp
+    ../include/v4r/config.hpp
     ../include/v4r/fwd.hpp ../include/v4r/utils.hpp
 )
 
@@ -69,8 +69,10 @@ target_link_libraries(v4r Vulkan::Vulkan CUDA::cudart Threads::Threads assimp::a
 add_library(v4r_debug SHARED
     ../include/v4r/debug.hpp
     renderdoc_interop.cpp
-    save_frame.cu
+    save_frame.cpp
 )
+
+target_link_libraries(v4r_debug CUDA::cudart)
 
 list(APPEND V4R_HEADLESS_LIBS v4r) 
 

@@ -196,12 +196,11 @@ DeviceState InstanceState::makeDevice(
     dev_create_info.enabledExtensionCount = num_device_extensions;
     dev_create_info.ppEnabledExtensionNames = device_extensions;
 
-    // Would enable sampler anisotropy here but current habitat
-    // does not use it
     dev_create_info.pEnabledFeatures = nullptr;
 
     VkPhysicalDeviceDescriptorIndexingFeatures desc_idx_features {};
-    desc_idx_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+    desc_idx_features.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
     desc_idx_features.runtimeDescriptorArray = true;
     desc_idx_features.shaderStorageBufferArrayNonUniformIndexing = true;
     desc_idx_features.shaderSampledImageArrayNonUniformIndexing = true;

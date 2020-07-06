@@ -19,14 +19,15 @@ template <typename VertexType>
 std::pair<std::vector<VertexType>, std::vector<uint32_t>> assimpParseMesh(
         const aiMesh *mesh);
 
-template <typename PipelineType>
-void assimpParseInstances(SceneDescription<PipelineType> &desc,
+void assimpParseInstances(SceneDescription &desc,
         const aiScene *scene,
         const std::vector<uint32_t> &mesh_materials,
         const glm::mat4 &coordinate_txfm);
 
 }
 
+#ifndef ASSET_LOAD_INL_INCLUDED
 #include "asset_load.inl"
+#endif
 
 #endif

@@ -1,4 +1,8 @@
 #include <v4r/debug.hpp>
+
+#include <cuda.h>
+#include <cuda_runtime.h>
+
 #include <vector> 
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION

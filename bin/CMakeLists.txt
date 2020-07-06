@@ -17,3 +17,8 @@ add_executable(singlebench
     singlebench.cpp
 )
 target_link_libraries(singlebench ${V4R_HEADLESS_LIBS})
+
+add_executable(double_buffer
+    double_buffer.cpp
+)
+target_link_libraries(double_buffer ${V4R_HEADLESS_LIBS})

@@ -1,14 +1,9 @@
 #include <v4r.hpp>
 
-#include "asset_load.hpp"
 #include "cuda_state.hpp"
 #include "dispatch.hpp"
 #include "vulkan_state.hpp"
 #include "scene.hpp"
-
-#include <assimp/Importer.hpp>
-#include <assimp/postprocess.h>
-#include <assimp/scene.h>
 
 #include <cassert>
 #include <fstream>
@@ -19,6 +14,12 @@ using namespace std;
 
 namespace v4r {
 
+struct SyncState {
+    const DeviceState &dev;
+    const VkFence fence;
+    cudaExternalSemaphore_t cudaSemaphore;
+};
+
 template <typename T, typename... Args>
 static inline Handle<T> make_handle(Args&&... args)
 {
@@ -26,13 +27,19 @@ static inline Handle<T> make_handle(Args&&... args)
 };
 
 template <typename T>
-void HandleDeleter<T>::operator()(T *ptr) const
+void HandleDeleter<T>::operator()(remove_extent_t<T> *ptr) const
 {
-    delete ptr;
+    if constexpr (is_array_v<T>) {
+        delete[] ptr;
+    } else {
+        delete ptr;
+    }
 }
+
 template struct HandleDeleter<LoaderState>;
 template struct HandleDeleter<CommandStreamState>;
-template struct HandleDeleter<CudaStreamState>;
+template struct HandleDeleter<CudaStreamState[]>;
+template struct HandleDeleter<SyncState[]>;
 template struct HandleDeleter<VulkanState>;
 template struct HandleDeleter<CudaState>;
 template struct HandleDeleter<EnvironmentState>;
@@ -49,47 +56,35 @@ static glm::mat4 makePerspectiveMatrix(float hfov, uint32_t width,
                      0.f, 0.f, far * near / (near - far), 0.f);
 }
 
-template <typename PipelineType>
-AssetLoader<PipelineType>::AssetLoader(Handle<LoaderState> &&state)
+AssetLoader::AssetLoader(Handle<LoaderState> &&state)
     : state_(move(state))
 {}
 
-template <typename PipelineType>
-shared_ptr<Mesh<typename PipelineType::VertexType>>
-AssetLoader<PipelineType>::loadMesh(const string &geometry_path)
+shared_ptr<Mesh>
+AssetLoader::loadMesh(const string &geometry_path)
 {
-    Assimp::Importer importer;
-    int flags = aiProcess_PreTransformVertices | aiProcess_Triangulate;
-    const aiScene *raw_scene = importer.ReadFile(geometry_path.c_str(), flags);
-    if (!raw_scene) {
-        cerr << "Failed to load geometry file " << geometry_path << ": " <<
-            importer.GetErrorString() << endl;
-        fatalExit();
-    }
-
-    if (raw_scene->mNumMeshes == 0) {
-        cerr << "No meshes in file " << geometry_path << endl;
-        fatalExit();
-    }
-
-    // FIXME probably should just union all meshes into one mesh here
-    aiMesh *raw_mesh = raw_scene->mMeshes[0];
-
-    auto [vertices, indices] = assimpParseMesh<VertexType>(raw_mesh);
-
-    return loadMesh(move(vertices), move(indices));
+    return state_->assetHelper.loadMesh(geometry_path);
 }
 
-template <typename PipelineType>
-shared_ptr<Mesh<typename PipelineType::VertexType>>
-AssetLoader<PipelineType>::loadMesh(vector<VertexType> vertices,
-                                    vector<uint32_t> indices)
+template <typename VertexType>
+shared_ptr<Mesh> AssetLoader::loadMesh(
+        vector<VertexType> vertices, vector<uint32_t> indices)
 {
-    return make_shared<MeshType>(move(vertices), move(indices));
+    return state_->makeMesh(move(vertices), move(indices));
 }
 
-template <typename PipelineType>
-shared_ptr<Texture> AssetLoader<PipelineType>::loadTexture(
+template shared_ptr<Mesh> AssetLoader::loadMesh(
+        vector<UnlitRendererInputs::NoColorVertex>, vector<uint32_t>);
+template shared_ptr<Mesh> AssetLoader::loadMesh(
+        vector<UnlitRendererInputs::ColoredVertex>, vector<uint32_t>);
+template shared_ptr<Mesh> AssetLoader::loadMesh(
+        vector<UnlitRendererInputs::TexturedVertex>, vector<uint32_t>);
+template shared_ptr<Mesh> AssetLoader::loadMesh(
+        vector<LitRendererInputs::NoColorVertex>, vector<uint32_t>);
+template shared_ptr<Mesh> AssetLoader::loadMesh(
+        vector<LitRendererInputs::TexturedVertex>, vector<uint32_t>);
+
+shared_ptr<Texture> AssetLoader::loadTexture(
         const string &texture_path)
 {
     ifstream texture_file(texture_path, ios::in | ios::binary);
@@ -106,98 +101,132 @@ shared_ptr<Texture> AssetLoader<PipelineType>::loadTexture(
     texture_file.read(reinterpret_cast<char *>(raw.data()), raw.size());
     texture_file.close();
 
-    return readSDRTexture(raw.data(), raw.size());
+    return state_->loadTexture(raw);
 }
 
-template <typename PipelineType>
-shared_ptr<Material<typename PipelineType::MaterialDescType>>
-AssetLoader<PipelineType>::makeMaterial(
-        typename PipelineType::MaterialDescType params)
+template <typename MaterialDescType>
+shared_ptr<Material> AssetLoader::makeMaterial(
+        MaterialDescType params)
 {
-    return make_shared<MaterialType>(MaterialType {
-        move(params)
-    });
+    return state_->makeMaterial(params);
 }
 
-template <typename PipelineType>
-shared_ptr<Scene> AssetLoader<PipelineType>::makeScene(
-        const SceneDescription<PipelineType> &desc)
+template shared_ptr<Material> AssetLoader::makeMaterial(
+        UnlitRendererInputs::MaterialDescription);
+template shared_ptr<Material> AssetLoader::makeMaterial(
+        LitRendererInputs::MaterialDescription);
+
+shared_ptr<Scene> AssetLoader::makeScene(
+        const SceneDescription &desc)
 {
     return state_->loadScene(desc);
 }
 
-template <typename PipelineType>
-shared_ptr<Scene> AssetLoader<PipelineType>::loadScene(
+shared_ptr<Scene> AssetLoader::loadScene(
         const string &scene_path)
 {
-    Assimp::Importer importer;
-    int flags = aiProcess_PreTransformVertices | aiProcess_Triangulate;
-    const aiScene *raw_scene = importer.ReadFile(scene_path.c_str(), flags);
-    if (!raw_scene) {
-        cerr << "Failed to load scene " << scene_path << ": " <<
-            importer.GetErrorString() << endl;
-        fatalExit();
-    }
-
-    vector<shared_ptr<MaterialType>> materials;
-    vector<shared_ptr<MeshType>> geometry;
-    vector<uint32_t> mesh_materials;
-
-    auto material_params = assimpParseMaterials<MaterialDescType>(raw_scene);
-    materials.reserve(material_params.size());
-    for (auto &&params : material_params) {
-        materials.emplace_back(makeMaterial(move(params)));
-    }
-
-    geometry.reserve(raw_scene->mNumMeshes);
-    mesh_materials.reserve(raw_scene->mNumMeshes);
-    for (uint32_t mesh_idx = 0; mesh_idx < raw_scene->mNumMeshes; mesh_idx++) {
-        aiMesh *raw_mesh = raw_scene->mMeshes[mesh_idx];
-        mesh_materials.push_back(raw_mesh->mMaterialIndex);
-
-        auto [vertices, indices] = assimpParseMesh<VertexType>(raw_mesh);
-        geometry.emplace_back(loadMesh(move(vertices), move(indices)));
-    }
-
-    SceneDescription<PipelineType> scene_desc(move(geometry), move(materials));
-
-    assimpParseInstances<PipelineType>(scene_desc, raw_scene, mesh_materials,
+    SceneDescription desc =
+        state_->assetHelper.parseScene(scene_path,
                                        state_->coordinateTransform);
 
-    return makeScene(scene_desc);
+    return makeScene(desc);
 }
 
-RenderSync::RenderSync(cudaExternalSemaphore_t sem)
-    : ext_sem_(sem)
+RenderSync::RenderSync(const SyncState *state)
+    : state_(state)
 {}
 
 void RenderSync::gpuWait(cudaStream_t strm)
 {
-    cudaGPUWait(ext_sem_, strm);
+    cudaGPUWait(state_->cudaSemaphore, strm);
 }
 
 void RenderSync::cpuWait()
 {
-    cudaCPUWait(ext_sem_);
+    assert(state_->fence != VK_NULL_HANDLE);
+    waitForFenceInfinitely(state_->dev, state_->fence);
+    resetFence(state_->dev, state_->fence);
 }
 
-template <typename PipelineType>
-CommandStream<PipelineType>::CommandStream(Handle<CommandStreamState> &&state,
-                                           uint8_t *color_ptr,
-                                           float *depth_ptr,
-                                           uint32_t render_width,
-                                           uint32_t render_height)
+static CudaStreamState * makeCudaStreamStates(
+        const CommandStreamState &cmd_stream,
+        const CudaState &cuda_global,
+        bool double_buffered)
+{
+    cuda_global.setActiveDevice();
+
+    if (double_buffered) {
+        return new CudaStreamState[2] {
+            CudaStreamState {
+                (uint8_t *)cuda_global.getPointer(
+                        cmd_stream.getColorOffset(0)),
+                (float *)cuda_global.getPointer(
+                        cmd_stream.getDepthOffset(0)),
+                cmd_stream.getSemaphoreFD(0)
+            },
+            CudaStreamState {
+                (uint8_t *)cuda_global.getPointer(
+                        cmd_stream.getColorOffset(1)),
+                (float *)cuda_global.getPointer(
+                        cmd_stream.getDepthOffset(1)),
+                cmd_stream.getSemaphoreFD(1)
+            }
+        };
+    } else {
+        return new CudaStreamState[1] {
+            CudaStreamState {
+                (uint8_t *)cuda_global.getPointer(
+                        cmd_stream.getColorOffset(0)),
+                (float *)cuda_global.getPointer(
+                        cmd_stream.getDepthOffset(0)),
+                cmd_stream.getSemaphoreFD(0)
+            }
+        };
+    }
+}
+
+static SyncState * makeSyncs(const CommandStreamState &cmd_stream,
+                             const Handle<CudaStreamState[]> &cuda_states,
+                             bool double_buffered)
+{
+    if (double_buffered) {
+        return new SyncState[2] {
+            SyncState {
+                cmd_stream.dev,
+                cmd_stream.getFence(0),
+                cuda_states[0].getSemaphore()
+            }, 
+            SyncState {
+                cmd_stream.dev,
+                cmd_stream.getFence(1),
+                cuda_states[1].getSemaphore()
+            }
+        };
+    } else {
+        return new SyncState[1] {
+            SyncState {
+                cmd_stream.dev,
+                cmd_stream.getFence(0),
+                cuda_states[0].getSemaphore()
+            }
+        };
+    }
+}
+
+CommandStream::CommandStream(Handle<CommandStreamState> &&state,
+                             const CudaState &cuda_global,
+                             uint32_t render_width,
+                             uint32_t render_height,
+                             bool double_buffered)
     : state_(move(state)),
-      cuda_(make_handle<CudaStreamState>(color_ptr, depth_ptr,
-                                         state_->getSemaphoreFD())),
+      cuda_(makeCudaStreamStates(*state_, cuda_global, double_buffered)),
+      sync_(makeSyncs(*state_, cuda_, double_buffered)),
       render_width_(render_width),
       render_height_(render_height)
 {}
 
-template <typename PipelineType>
-Environment CommandStream<PipelineType>::makeEnvironment(
-        const shared_ptr<Scene> &scene,
-        float hfov, float near, float far)
+Environment CommandStream::makeEnvironment(const shared_ptr<Scene> &scene,
+                                           float hfov, float near, float far)
 {
     glm::mat4 perspective =
         makePerspectiveMatrix(hfov, render_width_, render_height_,
@@ -206,55 +235,43 @@ Environment CommandStream<PipelineType>::makeEnvironment(
     return Environment(make_handle<EnvironmentState>(scene, perspective));
 }
 
-template <typename PipelineType>
-uint8_t * CommandStream<PipelineType>::getColorDevPtr() const
+uint8_t * CommandStream::getColorDevPtr(bool alternate_buffer) const
 {
-    return cuda_->getColor();
+    return cuda_[alternate_buffer].getColor();
 }
 
-template <typename PipelineType>
-float * CommandStream<PipelineType>::getDepthDevPtr() const
+float * CommandStream::getDepthDevPtr(bool alternate_buffer) const
 {
-    return cuda_->getDepth();
+    return cuda_[alternate_buffer].getDepth();
 }
 
-template <typename PipelineType>
-RenderSync CommandStream<PipelineType>::render(
-        const std::vector<Environment> &elems)
+RenderSync CommandStream::render(const std::vector<Environment> &elems)
 {
     state_->render(elems);
 
-    return RenderSync(cuda_->getSemaphore());
+    return RenderSync(sync_.get());
 }
 
-template <typename PipelineType>
-BatchRenderer<PipelineType>::BatchRenderer(const RenderConfig &cfg)
+BatchRenderer::BatchRenderer(const RenderConfig &cfg)
     : state_(make_handle<VulkanState>(cfg, getUUIDFromCudaID(cfg.gpuID))),
       cuda_(make_handle<CudaState>(cfg.gpuID, state_->getFramebufferFD(),
                                    state_->getFramebufferBytes()))
 {}
 
-template <typename PipelineType>
-AssetLoader<PipelineType> BatchRenderer<PipelineType>::makeLoader()
+AssetLoader BatchRenderer::makeLoader()
 {
-    return AssetLoader<PipelineType>(make_handle<LoaderState>(
+    return AssetLoader(make_handle<LoaderState>(
             state_->makeLoader()));
 }
 
-template <typename PipelineType>
-CommandStream<PipelineType> BatchRenderer<PipelineType>::makeCommandStream()
+CommandStream BatchRenderer::makeCommandStream()
 {
     auto stream_state = make_handle<CommandStreamState>(state_->makeStream());
 
-    cuda_->setActiveDevice();
-    auto color_ptr =
-        (uint8_t *)cuda_->getPointer(stream_state->getColorOffset());
-    auto depth_ptr =
-        (float *)cuda_->getPointer(stream_state->getDepthOffset());
-
-    return CommandStream<PipelineType>(move(stream_state),
-            color_ptr, depth_ptr,
-            state_->cfg.imgWidth, state_->cfg.imgHeight);
+    return CommandStream(move(stream_state), *cuda_,
+                         state_->cfg.imgWidth, state_->cfg.imgHeight,
+                         state_->cfg.features.options &
+                             RenderFeatures::Options::DoubleBuffered);
 }
 
 Environment::Environment(Handle<EnvironmentState> &&state)
@@ -315,9 +332,5 @@ void Environment::deleteInstance(uint32_t inst_id)
 
     state_->freeIDs.push_back(inst_id);
 }
-
-template class AssetLoader<UnlitPipeline>;
-template class CommandStream<UnlitPipeline>;
-template class BatchRenderer<UnlitPipeline>;
 
 }

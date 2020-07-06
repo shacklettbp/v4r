@@ -16,7 +16,7 @@ int main(int argc, char *argv[]) {
 
     uint32_t batch_size = stoul(argv[2]);
 
-    BatchRenderer renderer({0, 1, 1, batch_size, 256, 256,
+    BatchRenderer renderer({0, 1, 2, batch_size, 256, 256,
         glm::mat4(
             1, 0, 0, 0,
             0, -1.19209e-07, -1, 0,
@@ -28,18 +28,21 @@ int main(int argc, char *argv[]) {
             RenderFeatures::Pipeline::Unlit,
             RenderFeatures::Outputs::Color |
                 RenderFeatures::Outputs::Depth,
-            RenderFeatures::Options::CpuSynchronization
+            RenderFeatures::Options::CpuSynchronization |
+                RenderFeatures::Options::DoubleBuffered
         }
     });
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
 
-    auto cmd_stream = renderer.makeCommandStream();
+    vector<CommandStream> streams;
+    streams.emplace_back(renderer.makeCommandStream());
+    streams.emplace_back(renderer.makeCommandStream());
     vector<Environment> envs;
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
-        envs.emplace_back(cmd_stream.makeEnvironment(scene, 90)); 
+        envs.emplace_back(streams[0].makeEnvironment(scene, 90));
 
         envs[batch_idx].setCameraView(
             glm::inverse(glm::mat4(
@@ -53,9 +56,12 @@ int main(int argc, char *argv[]) {
 
     uint32_t num_iters = num_frames / batch_size;
 
-    for (uint32_t i = 0; i < num_iters; i++) {
-        auto sync = cmd_stream.render(envs);
-        sync.cpuWait();
+    RenderSync prevsync = streams[0].render(envs);
+
+    for (uint32_t i = 1; i < num_iters; i++) {
+        RenderSync newsync = streams[i % 2].render(envs);
+        prevsync.cpuWait();
+        prevsync = move(newsync);
     }
 
     auto end = chrono::steady_clock::now();

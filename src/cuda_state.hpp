@@ -40,9 +40,13 @@ private:
 
 DeviceUUID getUUIDFromCudaID(int cuda_id);
 
-void cudaGPUWait(cudaExternalSemaphore_t sem, cudaStream_t strm);
-void cudaCPUWait(cudaExternalSemaphore_t sem);
+inline void cudaGPUWait(cudaExternalSemaphore_t sem, cudaStream_t strm);
+inline void cudaCPUWait(cudaExternalSemaphore_t sem);
 
 }
+
+#ifndef CUDA_STATE_INL_INCLUDED
+#include "cuda_state.inl"
+#endif
 
 #endif

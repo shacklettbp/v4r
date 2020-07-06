@@ -10,18 +10,41 @@
 
 namespace v4r {
 
-struct UnlitVertex {
-    glm::vec3 position;
-    glm::vec2 uv;
+struct UnlitRendererInputs {
+    struct NoColorVertex {
+        glm::vec3 position;
+    };
+
+    struct ColoredVertex {
+        glm::vec3 position;
+        glm::u8vec3 color;
+    };
+    
+    struct TexturedVertex {
+        glm::vec3 position;
+        glm::vec2 uv;
+    };
+
+    struct MaterialDescription {
+        std::shared_ptr<Texture> texture;
+    };
 };
 
-struct ColoredVertex {
-    glm::vec3 position;
-    glm::u8vec3 color;
-};
+struct LitRendererInputs {
+    struct NoColorVertex {
+        glm::vec3 position;
+        glm::vec3 normal;
+    };
+    
+    struct TexturedVertex {
+        glm::vec3 position;
+        glm::vec3 normal;
+        glm::vec2 uv;
+    };
 
-struct UnlitMaterialDescription {
-    std::shared_ptr<Texture> texture;
+    struct MaterialDescription {
+        std::shared_ptr<Texture> texture;
+    };
 };
 
 struct InstanceProperties {
@@ -31,27 +54,23 @@ struct InstanceProperties {
     inline InstanceProperties(const glm::mat4 &model_txfm, uint32_t mat_idx);
 };
 
-template <typename PipelineType>
 class SceneDescription {
 public:
-    using MeshType = Mesh<typename PipelineType::VertexType>;
-    using MaterialType = Material<typename PipelineType::MaterialDescType>;
-
-    SceneDescription(
-            std::vector<std::shared_ptr<MeshType>> geometry,
-            std::vector<std::shared_ptr<MaterialType>> materials);
+    inline SceneDescription(
+            std::vector<std::shared_ptr<Mesh>> geometry,
+            std::vector<std::shared_ptr<Material>> materials);
 
     inline void addInstance(uint32_t model_idx, uint32_t material_idx,
                             const glm::mat4 &model_transform);
 
-    const std::vector<std::shared_ptr<MeshType>> & getMeshes() const;
-    const std::vector<std::shared_ptr<MaterialType>> & getMaterials() const;
-    const std::vector<std::vector<InstanceProperties>> &
+    inline const std::vector<std::shared_ptr<Mesh>> & getMeshes() const;
+    inline const std::vector<std::shared_ptr<Material>> & getMaterials() const;
+    inline const std::vector<std::vector<InstanceProperties>> &
         getDefaultInstances() const;
 
 private:
-    std::vector<std::shared_ptr<MeshType>> meshes_;
-    std::vector<std::shared_ptr<MaterialType>> materials_;
+    std::vector<std::shared_ptr<Mesh>> meshes_;
+    std::vector<std::shared_ptr<Material>> materials_;
 
     std::vector<std::vector<InstanceProperties>>
         default_instances_;
@@ -59,6 +78,9 @@ private:
 
 }
 
+// See comment in environment.hpp
+#ifndef V4R_ASSETS_INL_INCLUDED
 #include <v4r/assets.inl>
+#endif
 
 #endif

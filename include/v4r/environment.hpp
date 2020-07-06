@@ -44,14 +44,18 @@ private:
     std::vector<std::vector<glm::mat4>> transforms_;
     std::vector<std::vector<uint32_t>> materials_;
 
-template <typename PipelineType>
 friend class CommandStream;
-
 friend class CommandStreamState;
 };
 
 }
 
+// This include guard isn't necessary for compilation, but clang static
+// analysis tools will complain about recursive inclusion otherwise when
+// processing the inl file on its own, because the inl file needs to also
+// include this file for Environment's definition
+#ifndef V4R_ENVIRONMENT_INL_INCLUDED
 #include <v4r/environment.inl>
+#endif
 
 #endif

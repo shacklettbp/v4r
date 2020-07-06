@@ -5,6 +5,7 @@
 #include <mutex>
 #include <unordered_map>
 
+#include <v4r/config.hpp>
 #include <v4r/assets.hpp>
 
 #include "descriptors.hpp"
@@ -19,18 +20,16 @@ struct PerSceneDescriptorConfig {
     VkDescriptorSetLayout layout;
 };
 
-template <typename VertexT>
 struct Mesh {
-    using VertexType = VertexT;
-
-    std::vector<VertexType> vertices;
     std::vector<uint32_t> indices;
+};
 
-    Mesh(std::vector<VertexType> &&verts,
-             std::vector<uint32_t> &&idxs)
-        : vertices(move(verts)),
-          indices(move(idxs))
-    {}
+template <typename VertexType>
+struct VertexMesh : public Mesh {
+    std::vector<VertexType> vertices;
+
+    VertexMesh(std::vector<VertexType> vertices,
+               std::vector<uint32_t> indices);
 };
 
 struct InlineMesh {
@@ -47,9 +46,12 @@ struct Texture {
     ManagedArray<uint8_t> raw_image;
 };
 
-template <typename ParamsType>
 struct Material {
-    ParamsType params;
+    std::vector<std::shared_ptr<Texture>> textures;
+};
+
+struct BlinnPhongMaterial : Material {
+    float shininess;
 };
 
 struct EnvironmentInit {
@@ -82,17 +84,50 @@ public:
     std::vector<uint32_t> freeIDs;
 };
 
+struct StagedMeshes {
+    HostBuffer buffer;
+    std::vector<InlineMesh> meshPositions;
+    VkDeviceSize indexBufferOffset;
+    VkDeviceSize totalBytes;
+};
+
+struct LoaderHelper {
+    std::add_pointer_t<
+        StagedMeshes(const std::vector<std::shared_ptr<Mesh>> &,
+                     const DeviceState &,
+                     MemoryAllocator &)>
+            stageGeometry;
+
+    std::add_pointer_t<
+        SceneDescription(const std::string &, const glm::mat4 &)>
+            parseScene;
+
+    std::add_pointer_t<
+        std::shared_ptr<Mesh>(const std::string &)>
+            loadMesh;
+};
+
 class LoaderState {
 public:
     LoaderState(const DeviceState &dev,
+                const RenderFeatures &features,
                 const PerSceneDescriptorConfig &scene_desc_cfg,
                 MemoryAllocator &alc,
                 QueueManager &queue_manager,
                 const glm::mat4 &coordinateTransform);
 
-    template <typename PipelineType>
     std::shared_ptr<Scene> loadScene(
-            const SceneDescription<PipelineType> &scene_desc);
+            const SceneDescription &scene_desc);
+
+    std::shared_ptr<Texture> loadTexture(
+            const std::vector<uint8_t> &raw);
+
+    template <typename MatDescType>
+    std::shared_ptr<Material> makeMaterial(MatDescType description);
+
+    template <typename VertexType>
+    std::shared_ptr<Mesh> makeMesh(std::vector<VertexType> vertices,
+                                   std::vector<uint32_t> indices);
                 
     const DeviceState &dev;
 
@@ -111,6 +146,8 @@ public:
     DescriptorManager descriptorManager;
 
     glm::mat4 coordinateTransform;
+
+    LoaderHelper assetHelper;
 };
 
 }

@@ -1,3 +1,8 @@
+#ifndef VK_UTILS_INL_INCLUDED
+#define VK_UTILS_INL_INCLUDED
+
+#include "vk_utils.hpp"
+
 namespace v4r {
 
 QueueState::QueueState(VkQueue queue_hdl)
@@ -141,4 +146,11 @@ void waitForFenceInfinitely(const DeviceState &dev, VkFence fence)
     }
 }
 
+void resetFence(const DeviceState &dev, VkFence fence)
+{
+    dev.dt.resetFences(dev.hdl, 1, &fence);
 }
+
+}
+
+#endif

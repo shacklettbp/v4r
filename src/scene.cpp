@@ -1,8 +1,11 @@
 #include "scene.hpp"
 
+#include "asset_load.hpp"
 #include "utils.hpp"
 
-#include <v4r/pipelines.hpp>
+#include <assimp/Importer.hpp>
+#include <assimp/postprocess.h>
+#include <assimp/scene.h>
 
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/string_cast.hpp>
@@ -43,7 +46,7 @@ EnvironmentInit::EnvironmentInit(
     }
 }
 
-EnvironmentState::EnvironmentState(const std::shared_ptr<Scene> &s,
+EnvironmentState::EnvironmentState(const shared_ptr<Scene> &s,
                                    const glm::mat4 &proj)
     : scene(s),
       projection(proj),
@@ -52,7 +55,226 @@ EnvironmentState::EnvironmentState(const std::shared_ptr<Scene> &s,
 {
 }
 
+template <typename VertexType>
+static StagedMeshes copyMeshesToStaging(
+        const vector<shared_ptr<Mesh>> &meshes,
+        const DeviceState &dev,
+        MemoryAllocator &alloc)
+{
+    using MeshT = VertexMesh<VertexType>;
+
+    VkDeviceSize total_vertex_bytes = 0;
+    VkDeviceSize total_index_bytes = 0;
+    
+    for (const auto &generic_mesh : meshes) {
+        auto mesh = static_cast<const MeshT *>(generic_mesh.get());
+        total_vertex_bytes += sizeof(VertexType) * mesh->vertices.size();
+        total_index_bytes += sizeof(uint32_t) * mesh->indices.size();
+    }
+
+    VkDeviceSize total_geometry_bytes = total_vertex_bytes + total_index_bytes;
+
+    HostBuffer geo_staging = alloc.makeStagingBuffer(total_geometry_bytes);
+
+    vector<InlineMesh> inline_meshes;
+    inline_meshes.reserve(meshes.size());
+
+    // Copy all vertices
+    uint32_t vertex_offset = 0;
+    uint8_t *cur_ptr = reinterpret_cast<uint8_t *>(geo_staging.ptr);
+
+    for (const auto &generic_mesh : meshes) {
+        auto mesh = static_cast<const MeshT *>(generic_mesh.get());
+        VkDeviceSize vertex_bytes = sizeof(VertexType) * mesh->vertices.size();
+        memcpy(cur_ptr, mesh->vertices.data(), vertex_bytes);
+
+        inline_meshes.emplace_back(InlineMesh {
+            vertex_offset,
+            0,
+            0
+        });
+
+        cur_ptr += vertex_bytes;
+        vertex_offset += mesh->vertices.size();
+    }
+
+    // Copy all indices
+    uint32_t cur_mesh_index = 0;
+    for (uint32_t mesh_idx = 0; mesh_idx < meshes.size(); mesh_idx++) {
+        auto mesh = static_cast<const MeshT *>(meshes[mesh_idx].get());
+
+        VkDeviceSize index_bytes =
+            sizeof(uint32_t) * mesh->indices.size();
+        memcpy(cur_ptr, mesh->indices.data(), index_bytes);
+
+        inline_meshes[mesh_idx].startIndex = cur_mesh_index;
+        inline_meshes[mesh_idx].numIndices = 
+            static_cast<uint32_t>(mesh->indices.size());
+
+        cur_ptr += index_bytes;
+        cur_mesh_index += mesh->indices.size();
+    }
+
+    geo_staging.flush(dev);
+
+    return { 
+        move(geo_staging), 
+        move(inline_meshes),
+        total_vertex_bytes,
+        total_geometry_bytes
+    };
+}
+
+template <typename VertexType>
+VertexMesh<VertexType>::VertexMesh(vector<VertexType> vertices,
+                                   vector<uint32_t> indices)
+    : Mesh { move(indices) },
+      vertices(move(vertices))
+{}
+
+template <typename VertexType>
+static shared_ptr<Mesh> makeSharedMesh(vector<VertexType> vertices,
+                                       vector<uint32_t> indices)
+{
+    return shared_ptr<VertexMesh<VertexType>>(new VertexMesh(
+        move(vertices),
+        move(indices)
+    ));
+}
+
+template <typename VertexType>
+static shared_ptr<Mesh> loadMesh(const string &geometry_path)
+{
+    Assimp::Importer importer;
+    int flags = aiProcess_PreTransformVertices | aiProcess_Triangulate;
+    const aiScene *raw_scene = importer.ReadFile(geometry_path.c_str(), flags);
+    if (!raw_scene) {
+        cerr << "Failed to load geometry file " << geometry_path << ": " <<
+            importer.GetErrorString() << endl;
+        fatalExit();
+    }
+
+    if (raw_scene->mNumMeshes == 0) {
+        cerr << "No meshes in file " << geometry_path << endl;
+        fatalExit();
+    }
+
+    // FIXME probably should just union all meshes into one mesh here
+    aiMesh *raw_mesh = raw_scene->mMeshes[0];
+
+    auto [vertices, indices] = assimpParseMesh<VertexType>(raw_mesh);
+
+    return makeSharedMesh(move(vertices), move(indices));
+}
+
+template <typename MatDescType>
+static shared_ptr<Material> makeSharedMaterial(MatDescType description);
+
+template <>
+shared_ptr<Material> makeSharedMaterial(
+        UnlitRendererInputs::MaterialDescription description)
+{
+    return shared_ptr<Material>(new Material {
+        { move(description.texture) }
+    });
+}
+
+template <>
+shared_ptr<Material> makeSharedMaterial(
+        LitRendererInputs::MaterialDescription description)
+{
+    (void)description;
+    assert(false);
+}
+
+template <typename VertexType, typename MaterialDescType>
+static SceneDescription parseAssimpScene(const string &scene_path,
+                                         const glm::mat4 &coordinate_txfm)
+{
+    Assimp::Importer importer;
+    int flags = aiProcess_PreTransformVertices | aiProcess_Triangulate;
+    const aiScene *raw_scene = importer.ReadFile(scene_path.c_str(), flags);
+    if (!raw_scene) {
+        cerr << "Failed to load scene " << scene_path << ": " <<
+            importer.GetErrorString() << endl;
+        fatalExit();
+    }
+
+    vector<shared_ptr<Material>> materials;
+    vector<shared_ptr<Mesh>> geometry;
+    vector<uint32_t> mesh_materials;
+
+    auto material_params = assimpParseMaterials<MaterialDescType>(raw_scene);
+    materials.reserve(material_params.size());
+    for (auto &&params : material_params) {
+        materials.emplace_back(makeSharedMaterial(move(params)));
+    }
+
+    geometry.reserve(raw_scene->mNumMeshes);
+    mesh_materials.reserve(raw_scene->mNumMeshes);
+    for (uint32_t mesh_idx = 0; mesh_idx < raw_scene->mNumMeshes; mesh_idx++) {
+        aiMesh *raw_mesh = raw_scene->mMeshes[mesh_idx];
+        mesh_materials.push_back(raw_mesh->mMaterialIndex);
+
+        auto [vertices, indices] = assimpParseMesh<VertexType>(raw_mesh);
+        geometry.emplace_back(makeSharedMesh(move(vertices), move(indices)));
+    }
+
+    SceneDescription scene_desc(move(geometry), move(materials));
+
+    assimpParseInstances(scene_desc, raw_scene, mesh_materials,
+                         coordinate_txfm);
+
+    return scene_desc;
+}
+
+template <typename VertexType, typename MatDescType>
+LoaderHelper makeHelperPointers()
+{
+    return {
+        copyMeshesToStaging<VertexType>,
+        parseAssimpScene<VertexType, MatDescType>,
+        loadMesh<VertexType>
+    };
+}
+
+template <typename InputsType>
+LoaderHelper getVertexType(const RenderFeatures &features)
+{
+    using MatDescType = typename InputsType::MaterialDescription;
+    switch (features.colorSrc) {
+        case RenderFeatures::MeshColor::None: {
+            return makeHelperPointers<typename InputsType::NoColorVertex,
+                                      MatDescType>();
+        }
+        case RenderFeatures::MeshColor::Vertex: {
+            if constexpr (is_same_v<InputsType, UnlitRendererInputs>) {
+                return makeHelperPointers<typename InputsType::ColoredVertex,
+                                          MatDescType>();
+            } else {
+                assert(false);
+            }
+        }
+        case RenderFeatures::MeshColor::Texture: {
+            return makeHelperPointers<typename InputsType::TexturedVertex,
+                                      MatDescType>();
+        }
+    }
+}
+
+LoaderHelper makeLoaderHelper(const RenderFeatures &features)
+{
+    switch (features.pipeline) {
+        case RenderFeatures::Pipeline::Unlit:
+            return getVertexType<UnlitRendererInputs>(features);
+        case RenderFeatures::Pipeline::Lit:
+        case RenderFeatures::Pipeline::Shadowed:
+            return getVertexType<LitRendererInputs>(features);
+    }
+}
+
 LoaderState::LoaderState(const DeviceState &d,
+                         const RenderFeatures &features,
                          const PerSceneDescriptorConfig &scene_desc_cfg,
                          MemoryAllocator &alc,
                          QueueManager &queue_manager,
@@ -68,7 +290,8 @@ LoaderState::LoaderState(const DeviceState &d,
       fence(makeFence(dev)),
       alloc(alc),
       descriptorManager(dev, scene_desc_cfg.layout),
-      coordinateTransform(coordinate_transform)
+      coordinateTransform(coordinate_transform),
+      assetHelper(makeLoaderHelper(features))
 {}
 
 static uint32_t getMipLevels(const Texture &texture)
@@ -146,9 +369,8 @@ static void generateMips(const DeviceState &dev,
     }
 }
 
-template <typename PipelineType>
 shared_ptr<Scene> LoaderState::loadScene(
-        const SceneDescription<PipelineType> &scene_desc)
+        const SceneDescription &scene_desc)
 {
     vector<HostBuffer> texture_stagings;
     vector<LocalImage> gpu_textures;
@@ -156,11 +378,12 @@ shared_ptr<Scene> LoaderState::loadScene(
     // Gather textures
     vector<shared_ptr<Texture>> cpu_textures;
     for (const auto &material : scene_desc.getMaterials()) {
-        // FIXME make this type generic
-        // FIXME pack textures?
-        cpu_textures.push_back(material->params.texture);
+        for (const auto & texture : material->textures) {
+            cpu_textures.push_back(texture);
+        }
     }
 
+    // FIXME pack textures
     for (const shared_ptr<Texture> &texture : cpu_textures) {
         uint64_t texture_bytes = texture->width * texture->height *
             texture->num_channels * sizeof(uint8_t);
@@ -179,62 +402,10 @@ shared_ptr<Scene> LoaderState::loadScene(
 
     // Copy all geometry into single buffer
     const auto &cpu_meshes = scene_desc.getMeshes();
+    
+    auto staged = assetHelper.stageGeometry(cpu_meshes, dev, alloc);
 
-    VkDeviceSize total_vertex_bytes = 0;
-    VkDeviceSize total_index_bytes = 0;
-    for (const auto &mesh : cpu_meshes) {
-        total_vertex_bytes +=
-            sizeof(typename PipelineType::VertexType) * mesh->vertices.size();
-        total_index_bytes +=
-            sizeof(uint32_t) * mesh->indices.size();
-    }
-
-    VkDeviceSize total_geometry_bytes = total_vertex_bytes + total_index_bytes;
-
-    HostBuffer geo_staging = alloc.makeStagingBuffer(total_geometry_bytes);
-
-    vector<InlineMesh> inline_meshes;
-    inline_meshes.reserve(cpu_meshes.size());
-
-
-    // Copy all vertices
-    uint32_t vertex_offset = 0;
-    uint8_t *cur_ptr = reinterpret_cast<uint8_t *>(geo_staging.ptr);
-    for (const auto &mesh : cpu_meshes) {
-        VkDeviceSize vertex_bytes =
-            sizeof(typename PipelineType::VertexType) * mesh->vertices.size();
-        memcpy(cur_ptr, mesh->vertices.data(), vertex_bytes);
-
-        inline_meshes.emplace_back(InlineMesh {
-            vertex_offset,
-            0,
-            0
-        });
-
-        cur_ptr += vertex_bytes;
-        vertex_offset += mesh->vertices.size();
-    }
-
-    // Copy all indices
-    uint32_t cur_mesh_idx = 0;
-    for (uint32_t mesh_idx = 0; mesh_idx < cpu_meshes.size(); mesh_idx++) {
-        const auto &mesh = cpu_meshes[mesh_idx];
-
-        VkDeviceSize index_bytes =
-            sizeof(uint32_t) * mesh->indices.size();
-        memcpy(cur_ptr, mesh->indices.data(), index_bytes);
-
-        inline_meshes[mesh_idx].startIndex = cur_mesh_idx;
-        inline_meshes[mesh_idx].numIndices = 
-            static_cast<uint32_t>(mesh->indices.size());
-
-        cur_ptr += index_bytes;
-        cur_mesh_idx += mesh->indices.size();
-    }
-
-    geo_staging.flush(dev);
-
-    LocalBuffer geometry = alloc.makeGeometryBuffer(total_geometry_bytes);
+    LocalBuffer geometry = alloc.makeGeometryBuffer(staged.totalBytes);
 
     // Start recording for transfer queue
     VkCommandBufferBeginInfo begin_info {};
@@ -243,8 +414,8 @@ shared_ptr<Scene> LoaderState::loadScene(
 
     // Copy vertex/index buffer onto GPU
     VkBufferCopy copy_settings {};
-    copy_settings.size = total_geometry_bytes;
-    dev.dt.cmdCopyBuffer(transferStageCommand, geo_staging.buffer,
+    copy_settings.size = staged.totalBytes;
+    dev.dt.cmdCopyBuffer(transferStageCommand, staged.buffer.buffer,
                          geometry.buffer, 1, &copy_settings);
 
     // Set initial texture layouts
@@ -314,7 +485,7 @@ shared_ptr<Scene> LoaderState::loadScene(
     geometry_barrier.dstQueueFamilyIndex = dev.gfxQF;
     geometry_barrier.buffer = geometry.buffer;
     geometry_barrier.offset = 0;
-    geometry_barrier.size = total_geometry_bytes;
+    geometry_barrier.size = staged.totalBytes;
 
     // Geometry & texture barrier execute.
     dev.dt.cmdPipelineBarrier(transferStageCommand,
@@ -405,7 +576,7 @@ shared_ptr<Scene> LoaderState::loadScene(
     gfxQueue.submit(dev, 1, &gfx_submit, fence);
 
     waitForFenceInfinitely(dev, fence);
-    REQ_VK(dev.dt.resetFences(dev.hdl, 1, &fence));
+    resetFence(dev, fence);
 
     vector<VkImageView> texture_views;
     vector<VkDescriptorImageInfo> view_infos;
@@ -461,19 +632,50 @@ shared_ptr<Scene> LoaderState::loadScene(
         dev.dt.updateDescriptorSets(dev.hdl, 1, &desc_update, 0, nullptr);
     }
 
-
     return make_shared<Scene>(Scene {
         move(gpu_textures),
         move(texture_views),
         move(texture_set),
         move(geometry),
-        total_vertex_bytes,
-        move(inline_meshes),
+        staged.indexBufferOffset,
+        move(staged.meshPositions),
         EnvironmentInit(scene_desc.getDefaultInstances())
     });
 }
 
-template shared_ptr<Scene> LoaderState::loadScene(
-        const SceneDescription<UnlitPipeline> &scene_desc);
+shared_ptr<Texture> LoaderState::loadTexture(const vector<uint8_t> &raw)
+{
+    return readSDRTexture(raw.data(), raw.size());
+}
+
+
+template <typename MatDescType>
+shared_ptr<Material> LoaderState::makeMaterial(MatDescType description)
+{
+    return makeSharedMaterial(move(description));
+}
+
+template shared_ptr<Material> LoaderState::makeMaterial(
+        UnlitRendererInputs::MaterialDescription);
+template shared_ptr<Material> LoaderState::makeMaterial(
+        LitRendererInputs::MaterialDescription);
+
+template <typename VertexType>
+shared_ptr<Mesh> LoaderState::makeMesh(vector<VertexType> vertices,
+                                       vector<uint32_t> indices)
+{
+    return makeSharedMesh(move(vertices), move(indices));
+}
+
+template shared_ptr<Mesh> LoaderState::makeMesh(
+        vector<UnlitRendererInputs::NoColorVertex>, vector<uint32_t>);
+template shared_ptr<Mesh> LoaderState::makeMesh(
+        vector<UnlitRendererInputs::ColoredVertex>, vector<uint32_t>);
+template shared_ptr<Mesh> LoaderState::makeMesh(
+        vector<UnlitRendererInputs::TexturedVertex>, vector<uint32_t>);
+template shared_ptr<Mesh> LoaderState::makeMesh(
+        vector<LitRendererInputs::NoColorVertex>, vector<uint32_t>);
+template shared_ptr<Mesh> LoaderState::makeMesh(
+        vector<LitRendererInputs::TexturedVertex>, vector<uint32_t>);
 
 }

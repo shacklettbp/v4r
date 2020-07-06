@@ -8,7 +8,7 @@ namespace v4r {
 template <typename T>
 struct HandleDeleter {
     constexpr HandleDeleter() noexcept = default;
-    void operator()(T *ptr) const;
+    void operator()(std::remove_extent_t<T> *ptr) const;
 };
 
 template <typename T>

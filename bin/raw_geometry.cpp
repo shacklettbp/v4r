@@ -14,34 +14,44 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    Unlit::BatchRenderer renderer({0, 1, 1, 1, 256, 256,
-        glm::mat4(1.f) // global transform is just identity
+    BatchRenderer renderer({0, 1, 1, 1, 256, 256,
+        glm::mat4(1.f), // global transform is just identity
+        {
+            RenderFeatures::MeshColor::Texture,
+            RenderFeatures::Pipeline::Unlit,
+            RenderFeatures::Outputs::Color |
+                RenderFeatures::Outputs::Depth,
+            RenderFeatures::Options::CpuSynchronization
+        }
     });
 
-    Unlit::AssetLoader loader = renderer.makeLoader();
-    Unlit::CommandStream cmd_stream = renderer.makeCommandStream();
+    AssetLoader loader = renderer.makeLoader();
+    CommandStream cmd_stream = renderer.makeCommandStream();
 
     // Renderdoc entry points (ignore)
     RenderDoc rdoc {};
     rdoc.startFrame();
 
-    vector<shared_ptr<Unlit::Mesh>> meshes;
-    vector<shared_ptr<Unlit::Material>> materials;
+    vector<shared_ptr<Mesh>> meshes;
+    vector<shared_ptr<Material>> materials;
+
+    using Vertex = UnlitRendererInputs::TexturedVertex;
+    using MaterialDescription = UnlitRendererInputs::MaterialDescription;
 
     // This block populates the above vectors with meshes
     // and a material
     {
         // Construct geometry
-        vector<Unlit::Vertex> single_tri_verts {
-            Unlit::Vertex {
+        vector<Vertex> single_tri_verts {
+            Vertex {
                 glm::vec3(0.f, 0.f, -1.5f),
                 glm::vec2(0.f, 0.f)
             },
-            Unlit::Vertex {
+            Vertex {
                 glm::vec3(0.f, 1.f, -1.5f),
                 glm::vec2(0.f, 1.f)
             },
-            Unlit::Vertex {
+            Vertex {
                 glm::vec3(1.f, 1.f, -1.5f),
                 glm::vec2(1.f, 1.f)
             },
@@ -51,20 +61,20 @@ int main(int argc, char *argv[]) {
             2, 1, 0
         };
 
-        vector<Unlit::Vertex> quad_verts {
-            Unlit::Vertex {
+        vector<Vertex> quad_verts {
+            Vertex {
                 glm::vec3(0.f, 0.f, -1.6f),
                 glm::vec2(0.f, 0.f)
             },
-            Unlit::Vertex {
+            Vertex {
                 glm::vec3(0.f, 1.f, -1.6f),
                 glm::vec2(0.f, 1.f)
             },
-            Unlit::Vertex {
+            Vertex {
                 glm::vec3(1.f, 1.f, -1.6f),
                 glm::vec2(1.f, 1.f)
             },
-            Unlit::Vertex {
+            Vertex {
                 glm::vec3(1.f, 0.f, -1.6f),
                 glm::vec2(1.f, 0.f)
             }
@@ -86,7 +96,7 @@ int main(int argc, char *argv[]) {
         shared_ptr<Texture> texture = loader.loadTexture(argv[1]);
 
         materials.emplace_back(loader.makeMaterial(
-                    Unlit::MaterialDescription { texture }));
+                    MaterialDescription { texture }));
     }
 
     // Get a opaque handle to the scene (collection of meshes and materials).
@@ -95,7 +105,7 @@ int main(int argc, char *argv[]) {
     // so this block drops the description after the call to makeScene.
     shared_ptr<Scene> scene;
     {
-        Unlit::SceneDescription scene_desc(move(meshes), move(materials));
+        SceneDescription scene_desc(move(meshes), move(materials));
         // Add the triangle (mesh_idx 0) as a default instance in all
         // environments derived from this scene
         scene_desc.addInstance(0, 0, glm::mat4(1.f));
@@ -105,7 +115,7 @@ int main(int argc, char *argv[]) {
 
     // Batch size of 1, so this vector has one element in this example
     vector<Environment> envs;
-    envs.emplace_back(move(cmd_stream.makeEnvironment(scene, 90, 0.01, 1000)));
+    envs.emplace_back(cmd_stream.makeEnvironment(scene, 90, 0.01, 1000));
     envs[0].setCameraView(glm::mat4(1.f)); // Set view matrix to identity
 
     // Render the environment (unchanged from default)
