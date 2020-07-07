@@ -36,13 +36,11 @@ int main(int argc, char *argv[]) {
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
 
-    vector<CommandStream> streams;
-    streams.emplace_back(renderer.makeCommandStream());
-    streams.emplace_back(renderer.makeCommandStream());
+    CommandStream cmd_stream = renderer.makeCommandStream();
     vector<Environment> envs;
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
-        envs.emplace_back(streams[0].makeEnvironment(scene, 90));
+        envs.emplace_back(cmd_stream.makeEnvironment(scene, 90));
 
         envs[batch_idx].setCameraView(
             glm::inverse(glm::mat4(
@@ -56,10 +54,10 @@ int main(int argc, char *argv[]) {
 
     uint32_t num_iters = num_frames / batch_size;
 
-    RenderSync prevsync = streams[0].render(envs);
+    RenderSync prevsync = cmd_stream.render(envs);
 
     for (uint32_t i = 1; i < num_iters; i++) {
-        RenderSync newsync = streams[i % 2].render(envs);
+        RenderSync newsync = cmd_stream.render(envs);
         prevsync.cpuWait();
         prevsync = move(newsync);
     }

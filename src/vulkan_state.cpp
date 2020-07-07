@@ -275,6 +275,8 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
                                   nullptr, &depth_view));
 
+    attachment_views.push_back(depth_view);
+
     VkFramebufferCreateInfo fb_info;
     fb_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     fb_info.pNext = nullptr;
@@ -925,9 +927,9 @@ CommandStreamState::CommandStreamState(
     }
 }
 
-void CommandStreamState::render(const vector<Environment> &envs)
+uint32_t CommandStreamState::render(const vector<Environment> &envs)
 {
-    const PerFrameState &frame_state = frame_states_[cur_frame_++];
+    const PerFrameState &frame_state = frame_states_[cur_frame_];
 
     VkCommandBuffer render_cmd = frame_state.commands[0];
 
@@ -1047,6 +1049,11 @@ void CommandStreamState::render(const vector<Environment> &envs)
     };
 
     gfxQueue.submit(dev, 1, &gfx_submit, frame_state.fence);
+
+    uint32_t rendered_frame_idx = cur_frame_;
+    cur_frame_ = (cur_frame_ + 1) % frame_states_.size();
+
+    return rendered_frame_idx;
 }
 
 int CommandStreamState::getSemaphoreFD(uint32_t frame_idx) const

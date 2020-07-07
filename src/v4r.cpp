@@ -247,9 +247,9 @@ float * CommandStream::getDepthDevPtr(bool alternate_buffer) const
 
 RenderSync CommandStream::render(const std::vector<Environment> &elems)
 {
-    state_->render(elems);
+    uint32_t frame_idx = state_->render(elems);
 
-    return RenderSync(sync_.get());
+    return RenderSync(&sync_[frame_idx]);
 }
 
 BatchRenderer::BatchRenderer(const RenderConfig &cfg)

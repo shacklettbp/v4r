@@ -107,7 +107,7 @@ public:
     CommandStreamState(const CommandStreamState &) = delete;
     CommandStreamState(CommandStreamState &&) = default;
 
-    void render(const std::vector<Environment> &envs);
+    uint32_t render(const std::vector<Environment> &envs);
 
     VkDeviceSize getColorOffset(uint32_t frame_idx) const
     {
