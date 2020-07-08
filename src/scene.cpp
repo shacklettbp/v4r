@@ -144,7 +144,7 @@ template <typename VertexType>
 static shared_ptr<Mesh> makeSharedMesh(vector<VertexType> vertices,
                                        vector<uint32_t> indices)
 {
-    return shared_ptr<VertexMesh<VertexType>>(new VertexMesh(
+    return shared_ptr<VertexMesh<VertexType>>(new VertexMesh<VertexType>(
         move(vertices),
         move(indices)
     ));

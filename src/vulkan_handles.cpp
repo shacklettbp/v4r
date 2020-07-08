@@ -6,6 +6,7 @@
 
 #include <csignal>
 #include <iostream>
+#include <optional>
 #include <vector>
 
 using namespace std;
