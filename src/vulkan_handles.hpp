@@ -40,6 +40,10 @@ public:
                            uint32_t desired_compute_queues,
                            uint32_t desired_transfer_queues) const;
 private:
+    const VkDebugUtilsMessengerEXT debug_;
+
+    InstanceState(bool enable_validation);
+
     VkPhysicalDevice findPhysicalDevice(const DeviceUUID &uuid) const;
 };
 

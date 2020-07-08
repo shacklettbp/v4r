@@ -57,11 +57,74 @@ static PerSceneDescriptorConfig getSceneDescriptorConfig(
 }
 
 static PerRenderDescriptorConfig getRenderDescriptorConfig(
+        const RenderFeatures &features, 
+        const MemoryAllocator &alloc,
         const DeviceState &dev)
 {
-    return PerRenderDescriptorConfig {
-        PerRenderDescriptorLayout::makeSetLayout(dev, nullptr, nullptr)
-    };
+    PerRenderDescriptorConfig cfg {};
+    cfg.bytesPerTransform = sizeof(glm::mat4);
+    cfg.totalTransformBytes = cfg.bytesPerTransform *
+        VulkanConfig::max_instances;
+
+    cfg.viewOffset = alloc.alignUniformBufferOffset(cfg.totalTransformBytes);
+
+    bool need_material = false;
+    bool need_lighting = false;
+
+    switch (features.pipeline) {
+        case RenderFeatures::Pipeline::Unlit: {
+            if (features.colorSrc == RenderFeatures::MeshColor::Texture) {
+                need_material = true;
+                cfg.layout = UnlitMaterialPerRenderLayout::makeSetLayout(
+                        dev, nullptr, nullptr, nullptr);
+                cfg.makePool = UnlitMaterialPerRenderLayout::makePool;
+            } else {
+                cfg.layout = UnlitNoMaterialPerRenderLayout::makeSetLayout(
+                        dev, nullptr, nullptr);
+                cfg.makePool = UnlitNoMaterialPerRenderLayout::makePool;
+            }
+            break;
+        }
+        case RenderFeatures::Pipeline::Lit: {
+            need_material = true;
+            need_lighting = true;
+
+            cfg.layout = LitPerRenderLayout::makeSetLayout(
+                    dev, nullptr, nullptr, nullptr, nullptr);
+            cfg.makePool = LitPerRenderLayout::makePool;
+            break;
+        }
+        case RenderFeatures::Pipeline::Shadowed: {
+            cerr << "Shadowed pipeline unimplemented" << endl;
+            fatalExit();
+            
+            break;
+        }
+    }
+
+    VkDeviceSize cur_offset = cfg.viewOffset + sizeof(ViewInfo);
+
+    if (need_material) {
+        cfg.materialIndicesOffset =
+            alloc.alignStorageBufferOffset(cur_offset);
+
+        cfg.totalMaterialIndexBytes = sizeof(uint32_t) *
+            VulkanConfig::max_instances;
+
+        cur_offset = cfg.materialIndicesOffset + cfg.totalMaterialIndexBytes;
+    }
+
+    if (need_lighting) {
+        cfg.lightsOffset = alloc.alignUniformBufferOffset(cur_offset);
+        cfg.totalLightParamBytes = sizeof(LightProperties) *
+            VulkanConfig::max_lights + sizeof(uint32_t);
+
+        cur_offset = cfg.lightsOffset + cfg.totalLightParamBytes;
+    }
+
+    cfg.totalParamBytes = cur_offset;
+
+    return cfg;
 }
 
 static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
@@ -121,10 +184,7 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
     return FramebufferConfig {
         batch_fb_images_wide,
         batch_fb_images_tall,
-        total_fb_width,
-        total_fb_height,
-        frame_color_bytes,
-        frame_depth_bytes,
+        total_fb_width, total_fb_height, frame_color_bytes, frame_depth_bytes,
         frame_linear_bytes,
         frame_linear_bytes * cfg.numStreams * num_frames_per_stream,
         move(clear_vals)
@@ -592,13 +652,20 @@ static PipelineState makePipeline(const DeviceState &dev,
     // Blend
     VkPipelineColorBlendAttachmentState blend_attach {};
     blend_attach.blendEnable = VK_FALSE;
-    blend_attach.colorWriteMask = 
+    blend_attach.colorWriteMask =
         VK_COLOR_COMPONENT_R_BIT |
         VK_COLOR_COMPONENT_G_BIT |
         VK_COLOR_COMPONENT_B_BIT |
         VK_COLOR_COMPONENT_A_BIT;
 
-    array blend_attachments { blend_attach, blend_attach };
+    vector<VkPipelineColorBlendAttachmentState> blend_attachments;
+    if (fb_cfg.colorLinearBytesPerFrame > 0) {
+        blend_attachments.push_back(blend_attach);
+    }
+
+    if (fb_cfg.depthLinearBytesPerFrame > 0) {
+        blend_attachments.push_back(blend_attach);
+    }
 
     VkPipelineColorBlendStateCreateInfo blend_info {};
     blend_info.sType =
@@ -837,6 +904,7 @@ CommandStreamState::CommandStreamState(
         const RenderFeatures &features,
         const InstanceState &i,
         const DeviceState &d,
+        const PerRenderDescriptorConfig &per_render_cfg,
         VkDescriptorSet per_render_descriptor,
         VkRenderPass render_pass,
         const PipelineState &pl,
@@ -859,52 +927,91 @@ CommandStreamState::CommandStreamState(
       fb_(framebuffer),
       render_pass_(render_pass),
       per_render_descriptor_(per_render_descriptor),
-      transform_ssbo_(alloc.makeShaderBuffer(sizeof(glm::mat4) * 
-                                             VulkanConfig::max_instances)), // FIXME
-      material_params_ssbo_(
-              alloc.makeShaderBuffer(sizeof(uint32_t) *
-                                     VulkanConfig::max_instances)), // FIXME
+      per_render_buffer_(
+              alloc.makeShaderBuffer(per_render_cfg.totalParamBytes)),
+      transform_ptr_(reinterpret_cast<glm::mat4 *>(
+          per_render_buffer_.ptr)),
+      bytes_per_txfm_(per_render_cfg.bytesPerTransform),
+      view_ptr_(reinterpret_cast<ViewInfo *>(
+          reinterpret_cast<uint8_t *>(per_render_buffer_.ptr) +
+              per_render_cfg.viewOffset)),
+      material_ptr_(per_render_cfg.totalMaterialIndexBytes == 0 ? nullptr :
+          reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(
+              per_render_buffer_.ptr) + per_render_cfg.materialIndicesOffset)),
+      light_ptr_(per_render_cfg.totalLightParamBytes == 0 ? nullptr :
+          reinterpret_cast<LightProperties *>(reinterpret_cast<uint8_t *>(
+              per_render_buffer_.ptr) + per_render_cfg.lightsOffset)),
+      num_lights_ptr_(light_ptr_ == nullptr ? nullptr :
+          reinterpret_cast<uint32_t *>(
+              light_ptr_ + VulkanConfig::max_lights)),
       render_size_(render_width, render_height),
       render_extent_(render_width * fb_cfg.numImagesWidePerBatch,
                      render_height * fb_cfg.numImagesTallPerBatch),
       frame_states_(),
       cur_frame_(0)
-      
 {
-    VkDescriptorBufferInfo transform_buffer_info;
-    transform_buffer_info.buffer = transform_ssbo_.buffer;
-    transform_buffer_info.offset = 0;
-    transform_buffer_info.range = sizeof(glm::mat4) *
-                                  VulkanConfig::max_instances;
+    vector<VkWriteDescriptorSet> render_desc_update;
 
-    array<VkWriteDescriptorSet, 2> render_desc_update;
-    render_desc_update[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    render_desc_update[0].pNext = nullptr;
-    render_desc_update[0].dstSet = per_render_descriptor_;
-    render_desc_update[0].dstBinding = 0;
-    render_desc_update[0].dstArrayElement = 0;
-    render_desc_update[0].descriptorCount = 1;
-    render_desc_update[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    render_desc_update[0].pImageInfo = nullptr;
-    render_desc_update[0].pBufferInfo = &transform_buffer_info;
-    render_desc_update[0].pTexelBufferView = nullptr;
+    auto makeBufferInfo = [this](
+            VkDeviceSize offset, VkDeviceSize num_bytes) {
+        VkDescriptorBufferInfo buffer_info;
+        buffer_info.buffer = per_render_buffer_.buffer;
+        buffer_info.offset = offset;
+        buffer_info.range = num_bytes;
 
-    VkDescriptorBufferInfo material_buffer_info;
-    material_buffer_info.buffer = material_params_ssbo_.buffer;
-    material_buffer_info.offset = 0;
-    material_buffer_info.range = sizeof(uint32_t) *
-                                  VulkanConfig::max_instances;
+        return buffer_info;
+    };
 
-    render_desc_update[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    render_desc_update[1].pNext = nullptr;
-    render_desc_update[1].dstSet = per_render_descriptor_;
-    render_desc_update[1].dstBinding = 1;
-    render_desc_update[1].dstArrayElement = 0;
-    render_desc_update[1].descriptorCount = 1;
-    render_desc_update[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    render_desc_update[1].pImageInfo = nullptr;
-    render_desc_update[1].pBufferInfo = &material_buffer_info;
-    render_desc_update[1].pTexelBufferView = nullptr;
+    VkDescriptorBufferInfo transform_info =
+        makeBufferInfo(0, per_render_cfg.totalTransformBytes);
+    VkDescriptorBufferInfo view_info =
+        makeBufferInfo(per_render_cfg.totalTransformBytes, sizeof(ViewInfo));
+
+    // Define these outside if blocks so pointers remain valid if used
+    VkDescriptorBufferInfo material_info;
+    VkDescriptorBufferInfo light_info;
+
+    uint32_t cur_binding = 0;
+    VkWriteDescriptorSet binding_update;
+    binding_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    binding_update.pNext = nullptr;
+    binding_update.dstSet = per_render_descriptor_;
+    binding_update.dstBinding = cur_binding++;
+    binding_update.dstArrayElement = 0;
+    binding_update.descriptorCount = 1;
+    binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    binding_update.pImageInfo = nullptr;
+    binding_update.pBufferInfo = &transform_info;
+    binding_update.pTexelBufferView = nullptr;
+    render_desc_update.push_back(binding_update);
+
+    binding_update.dstBinding = cur_binding++;
+    binding_update.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    binding_update.pBufferInfo = &view_info;
+    render_desc_update.push_back(binding_update);
+
+    if (per_render_cfg.totalMaterialIndexBytes > 0) {
+        material_info = makeBufferInfo(
+                per_render_cfg.materialIndicesOffset,
+                per_render_cfg.totalMaterialIndexBytes);
+
+        binding_update.dstBinding = cur_binding++;
+        binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        binding_update.pBufferInfo = &material_info;
+        render_desc_update.push_back(binding_update);
+    }
+
+    if (per_render_cfg.totalLightParamBytes > 0) {
+        light_info = makeBufferInfo(
+                per_render_cfg.lightsOffset,
+                per_render_cfg.totalLightParamBytes);
+
+        binding_update.dstBinding = cur_binding++;
+        binding_update.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        binding_update.pBufferInfo = &light_info;
+        render_desc_update.push_back(binding_update);
+    }
+
     dev.dt.updateDescriptorSets(dev.hdl,
             static_cast<uint32_t>(render_desc_update.size()),
             render_desc_update.data(), 0, nullptr);
@@ -937,8 +1044,6 @@ uint32_t CommandStreamState::render(const vector<Environment> &envs)
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     REQ_VK(dev.dt.beginCommandBuffer(render_cmd, &begin_info));
 
-    // FIXME this linkage is super fragile (0 is hardcoded as the
-    // the vertex shader's per command stream binding for example)
     dev.dt.cmdBindDescriptorSets(render_cmd,
                                  VK_PIPELINE_BIND_POINT_GRAPHICS,
                                  pipeline.gfxLayout, 0,
@@ -973,19 +1078,23 @@ uint32_t CommandStreamState::render(const vector<Environment> &envs)
                               VK_SUBPASS_CONTENTS_INLINE);
 
     uint32_t cur_instance = 0;
-    glm::mat4 *transform_ptr = (glm::mat4 *)transform_ssbo_.ptr;
-    uint32_t *material_ptr = (uint32_t *)material_params_ssbo_.ptr;
+    glm::mat4 *transform_ptr = transform_ptr_;
+    uint32_t *material_ptr = material_ptr_;
+    LightProperties *light_ptr = light_ptr_;
     for (uint32_t batch_idx = 0; batch_idx < envs.size(); batch_idx++) {
         const Environment &env = envs[batch_idx];
 
         const Scene &scene = *(envs[batch_idx].state_->scene);
-        if (scene.textures.size() > 0) {
+        if (scene.textureSet.hdl != VK_NULL_HANDLE) {
             dev.dt.cmdBindDescriptorSets(render_cmd,
                                          VK_PIPELINE_BIND_POINT_GRAPHICS,
                                          pipeline.gfxLayout, 1,
                                          1, &scene.textureSet.hdl,
                                          0, nullptr);
         }
+
+        view_ptr_->view = env.view_;
+        view_ptr_->projection = env.state_->projection;
 
         glm::u32vec2 batch_offset = frame_state.batchFBOffsets[batch_idx];
 
@@ -1016,17 +1125,29 @@ uint32_t CommandStreamState::render(const vector<Environment> &envs)
                                   mesh.startIndex, mesh.vertexOffset,
                                   cur_instance);
 
-            memcpy(material_ptr, env.materials_[mesh_idx].data(),
-                   num_instances * sizeof(uint32_t));
-
-            for (uint32_t inst_idx = 0; inst_idx < num_instances; inst_idx++) {
-                transform_ptr[inst_idx] = env.state_->projection * env.view_ *
-                    env.transforms_[mesh_idx][inst_idx];
-            }
+            memcpy(transform_ptr, env.transforms_[mesh_idx].data(),
+                   bytes_per_txfm_ * num_instances);
 
             cur_instance += num_instances;
             transform_ptr += num_instances;
-            material_ptr += num_instances;
+
+            if (material_ptr) {
+                memcpy(material_ptr, env.materials_[mesh_idx].data(),
+                       num_instances * sizeof(uint32_t));
+
+                material_ptr += num_instances;
+            }
+        }
+
+        if (light_ptr) {
+            uint32_t num_lights = env.state_->lights.size();
+
+            memcpy(light_ptr, env.state_->lights.data(),
+                   num_lights * sizeof(LightProperties));
+
+            *num_lights_ptr_ = num_lights;
+
+            light_ptr += num_lights;
         }
     }
 
@@ -1036,8 +1157,8 @@ uint32_t CommandStreamState::render(const vector<Environment> &envs)
 
     assert(cur_instance < VulkanConfig::max_instances);
 
-    transform_ssbo_.flush(dev);
-    material_params_ssbo_.flush(dev);
+    // FIXME 
+    per_render_buffer_.flush(dev);
 
     VkSubmitInfo gfx_submit {
         VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -1078,10 +1199,9 @@ VulkanState::VulkanState(const RenderConfig &config, const DeviceUUID &uuid)
       queueMgr(dev),
       alloc(dev, inst),
       fbCfg(getFramebufferConfig(cfg)),
-      streamDescCfg(getRenderDescriptorConfig(dev)),
+      streamDescCfg(getRenderDescriptorConfig(cfg.features, alloc, dev)),
       sceneDescCfg(getSceneDescriptorConfig(cfg.features, dev)),
-      renderDescriptorPool(
-              PerRenderDescriptorLayout::makePool(dev, cfg.numStreams)),
+      renderDescriptorPool(streamDescCfg.makePool(dev, cfg.numStreams)),
       renderPass(makeRenderPass(fbCfg, dev, alloc.getFormats())),
       pipeline(makePipeline(dev, fbCfg, renderPass,
                             getPipelineConfig(config,
@@ -1114,6 +1234,7 @@ CommandStreamState VulkanState::makeStream()
     return CommandStreamState(cfg.features,
                               inst,
                               dev,
+                              streamDescCfg,
                               makeDescriptorSet(dev, renderDescriptorPool,
                                                 streamDescCfg.layout),
                               renderPass,

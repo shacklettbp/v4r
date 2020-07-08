@@ -10,8 +10,7 @@ namespace v4r {
 DescriptorManager::DescriptorManager(const DeviceState &d,
                                      const VkDescriptorSetLayout &layout)
     : dev(d), layout_(layout),
-      free_pools_(), used_pools_(),
-      empty_pool_(new PoolState(VK_NULL_HANDLE)) // Null pool for null descs
+      free_pools_(), used_pools_()
 {}
 
 DescriptorManager::~DescriptorManager()
@@ -29,6 +28,10 @@ DescriptorManager::~DescriptorManager()
 
 DescriptorSet DescriptorManager::makeSet()
 {
+    if (layout_ == VK_NULL_HANDLE) {
+        return DescriptorSet(VK_NULL_HANDLE, nullptr);
+    }
+
     if (free_pools_.empty()) {
         auto iter = used_pools_.begin();
         while (iter != used_pools_.end()) {
@@ -59,15 +62,8 @@ DescriptorSet DescriptorManager::makeSet()
 
     return DescriptorSet(
         desc_set,
-        cur_pool
+        &cur_pool
     );
-}
-
-// Bit of a hack for untextured scenes to avoid allocating a real
-// descriptor set for them
-DescriptorSet DescriptorManager::emptySet()
-{
-    return DescriptorSet(VK_NULL_HANDLE, *empty_pool_);
 }
 
 }

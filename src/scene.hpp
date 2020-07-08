@@ -55,12 +55,20 @@ struct BlinnPhongMaterial : Material {
 };
 
 struct EnvironmentInit {
-    EnvironmentInit(const std::vector<std::vector<InstanceProperties>> &insts);
+    EnvironmentInit(
+            const std::vector<std::pair<uint32_t, InstanceProperties>>
+                &instances,
+            const std::vector<LightProperties> &lights,
+            uint32_t num_meshes);
 
     std::vector<std::vector<glm::mat4>> transforms;
     std::vector<std::vector<uint32_t>> materials;
     std::vector<std::pair<uint32_t, uint32_t>> indexMap;
     std::vector<std::vector<uint32_t>> reverseIDMap;
+
+    std::vector<LightProperties> lights;
+    std::vector<uint32_t> lightIDs;
+    std::vector<uint32_t> lightReverseIDs;
 };
 
 struct Scene {
@@ -82,6 +90,11 @@ public:
 
     std::vector<std::vector<uint32_t>> reverseIDMap;
     std::vector<uint32_t> freeIDs;
+
+    std::vector<LightProperties> lights;
+    std::vector<uint32_t> freeLightIDs;
+    std::vector<uint32_t> lightIDs;
+    std::vector<uint32_t> lightReverseIDs;
 };
 
 struct StagedMeshes {

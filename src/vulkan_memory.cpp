@@ -119,6 +119,16 @@ void HostBuffer::flush(const DeviceState &dev)
     dev.dt.flushMappedMemoryRanges(dev.hdl, 1, &mem_range_);
 }
 
+void HostBuffer::flush(const DeviceState &dev,
+                       VkDeviceSize offset,
+                       VkDeviceSize num_bytes)
+{
+    VkMappedMemoryRange sub_range = mem_range_;
+    sub_range.offset = offset;
+    sub_range.size = num_bytes;
+    dev.dt.flushMappedMemoryRanges(dev.hdl, 1, &sub_range);
+}
+
 LocalBuffer::LocalBuffer(VkBuffer buf,
                          AllocDeleter<false> deleter)
     : buffer(buf),
@@ -370,6 +380,19 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
     };
 }
 
+static Alignments getMemoryAlignments(const InstanceState &inst,
+                                      VkPhysicalDevice phy)
+{
+    VkPhysicalDeviceProperties2 props {};
+    props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    inst.dt.getPhysicalDeviceProperties2(phy, &props);
+
+    return Alignments {
+        props.properties.limits.minUniformBufferOffsetAlignment,
+        props.properties.limits.minStorageBufferOffsetAlignment
+    };
+}
+
 MemoryAllocator::MemoryAllocator(const DeviceState &d,
                                  const InstanceState &inst)
     : dev(d),
@@ -391,7 +414,8 @@ MemoryAllocator::MemoryAllocator(const DeviceState &d,
                        ImageFlags::colorAttachmentReqs,
                        array { VK_FORMAT_R32_SFLOAT })
       },
-      type_indices_(findTypeIndices(dev, inst, formats_))
+      type_indices_(findTypeIndices(dev, inst, formats_)),
+      alignments_(getMemoryAlignments(inst, dev.phy))
 {}
 
 HostBuffer MemoryAllocator::makeHostBuffer(VkDeviceSize num_bytes,
@@ -558,6 +582,23 @@ LocalImage MemoryAllocator::makeLinearDepthAttachment(uint32_t width,
     return makeDedicatedImage(width, height, 1, formats_.linearDepthAttachment,
                               ImageFlags::colorAttachmentUsage,
                               type_indices_.colorAttachment);
+}
+
+static VkDeviceSize alignOffset(VkDeviceSize offset, VkDeviceSize alignment)
+{
+    return ((offset + alignment - 1) / alignment) * alignment;
+}
+
+VkDeviceSize MemoryAllocator::alignUniformBufferOffset(
+        VkDeviceSize offset) const
+{
+    return alignOffset(offset, alignments_.uniformBuffer);
+}
+
+VkDeviceSize MemoryAllocator::alignStorageBufferOffset(
+        VkDeviceSize offset) const
+{
+    return alignOffset(offset, alignments_.storageBuffer);
 }
 
 }

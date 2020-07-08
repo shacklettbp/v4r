@@ -333,4 +333,49 @@ void Environment::deleteInstance(uint32_t inst_id)
     state_->freeIDs.push_back(inst_id);
 }
 
+uint32_t Environment::addLight(const glm::vec3 &position,
+                               const glm::vec3 &color)
+{
+    state_->lights.push_back({
+        glm::vec4(position, 1.f),
+        glm::vec4(color, 1.f)
+    });
+
+    uint32_t light_idx = state_->lights.size() - 1;
+
+    uint32_t light_id;
+    if (state_->freeLightIDs.size() > 0) {
+        uint32_t free_id = state_->freeLightIDs.back();
+        state_->freeLightIDs.pop_back();
+        state_->lightIDs[free_id] = light_idx;
+
+        light_id = free_id;
+    } else {
+        state_->lightIDs.push_back(light_idx);
+        light_id = state_->lightIDs.size() - 1;
+    }
+
+    state_->lightReverseIDs[light_id] = light_idx;
+    return light_id;
+}
+
+void Environment::deleteLight(uint32_t light_id)
+{
+    uint32_t light_idx = state_->lightIDs[light_id];
+    if (state_->lights.size() == 1) {
+        state_->lights.clear();
+        state_->lightIDs.clear();
+        state_->lightReverseIDs.clear();
+    } else {
+        state_->lights[light_idx] = state_->lights.back();
+        state_->lightReverseIDs[light_idx] = state_->lightReverseIDs.back();
+        state_->lightIDs[state_->lightReverseIDs[light_idx]] = light_idx;
+
+        state_->lights.pop_back();
+        state_->lightReverseIDs.pop_back();
+    }
+
+    state_->freeLightIDs.push_back(light_id);
+}
+
 }

@@ -74,6 +74,7 @@ instance:
 - vkGetPhysicalDeviceFormatProperties2
 - vkGetPhysicalDeviceMemoryProperties2
 - vkGetPhysicalDeviceQueueFamilyProperties2
+- vkGetInstanceProcAddr
 - vkCreateDevice
 #ifdef VK_USE_PLATFORM_XCB_KHR
 - vkCreateXcbSurfaceKHR

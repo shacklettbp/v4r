@@ -10,7 +10,7 @@ using namespace v4r;
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        cerr << "Specify scene" << endl;
+        cerr << "Specify texture" << endl;
         exit(EXIT_FAILURE);
     }
 

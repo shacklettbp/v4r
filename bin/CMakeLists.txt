@@ -22,3 +22,8 @@ add_executable(double_buffer
     double_buffer.cpp
 )
 target_link_libraries(double_buffer ${V4R_HEADLESS_LIBS})
+
+add_executable(lighting
+    lighting.cpp
+)
+target_link_libraries(lighting ${V4R_HEADLESS_LIBS} v4r_debug)

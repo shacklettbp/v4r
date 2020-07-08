@@ -19,30 +19,35 @@ using namespace std;
 namespace v4r {
 
 EnvironmentInit::EnvironmentInit(
-        const std::vector<std::vector<InstanceProperties>> &instances)
-    : transforms(instances.size()),
-      materials(instances.size()),
+        const vector<pair<uint32_t, InstanceProperties>> &instances,
+        const vector<LightProperties> &l,
+        uint32_t num_meshes)
+    : transforms(num_meshes),
+      materials(num_meshes),
       indexMap(),
-      reverseIDMap(instances.size())
+      reverseIDMap(num_meshes),
+      lights(l),
+      lightIDs(),
+      lightReverseIDs()
 {
-    uint32_t cur_id = 0;
-    for (uint32_t mesh_idx = 0; mesh_idx < instances.size(); mesh_idx++) {
-        const auto &mesh_instances = instances[mesh_idx];
-        transforms[mesh_idx].reserve(mesh_instances.size());
-        materials[mesh_idx].reserve(mesh_instances.size());
-        reverseIDMap[mesh_idx].reserve(mesh_instances.size());
+    indexMap.reserve(instances.size());
 
-        for (uint32_t instance_idx = 0; instance_idx < mesh_instances.size();
-                instance_idx++) {
-            const InstanceProperties &inst = mesh_instances[instance_idx];
+    for (uint32_t cur_id = 0; cur_id < instances.size(); cur_id++) {
+        auto &[mesh_idx, inst] = instances[cur_id];
 
-            transforms[mesh_idx].emplace_back(inst.modelTransform);
-            materials[mesh_idx].emplace_back(inst.materialIndex);
-            reverseIDMap[mesh_idx].emplace_back(cur_id);
-            indexMap.emplace_back(mesh_idx, instance_idx);
+        uint32_t inst_idx = transforms[mesh_idx].size();
 
-            cur_id++;
-        }
+        transforms[mesh_idx].push_back(inst.modelTransform);
+        materials[mesh_idx].push_back(inst.materialIndex);
+        reverseIDMap[mesh_idx].push_back(cur_id);
+        indexMap.emplace_back(mesh_idx, inst_idx);
+    }
+
+    lightIDs.reserve(lights.size());
+    lightReverseIDs.reserve(lights.size());
+    for (uint32_t light_idx = 0; light_idx < lights.size(); light_idx++) {
+        lightIDs.push_back(light_idx);
+        lightReverseIDs.push_back(light_idx);
     }
 }
 
@@ -51,9 +56,12 @@ EnvironmentState::EnvironmentState(const shared_ptr<Scene> &s,
     : scene(s),
       projection(proj),
       reverseIDMap(scene->envDefaults.reverseIDMap),
-      freeIDs()
-{
-}
+      freeIDs(),
+      lights(s->envDefaults.lights),
+      freeLightIDs(),
+      lightIDs(s->envDefaults.lightIDs),
+      lightReverseIDs(s->envDefaults.lightReverseIDs)
+{}
 
 template <typename VertexType>
 static StagedMeshes copyMeshesToStaging(
@@ -183,8 +191,9 @@ template <>
 shared_ptr<Material> makeSharedMaterial(
         LitRendererInputs::MaterialDescription description)
 {
-    (void)description;
-    unreachable();
+    return shared_ptr<Material>(new Material {
+        { move(description.texture) }
+    });
 }
 
 template <typename VertexType, typename MaterialDescType>
@@ -381,6 +390,7 @@ shared_ptr<Scene> LoaderState::loadScene(
 
     // Gather textures
     vector<shared_ptr<Texture>> cpu_textures;
+
     for (const auto &material : scene_desc.getMaterials()) {
         for (const auto & texture : material->textures) {
             cpu_textures.push_back(texture);
@@ -617,11 +627,10 @@ shared_ptr<Scene> LoaderState::loadScene(
 
     assert(gpu_textures.size() <= VulkanConfig::max_textures);
 
-    DescriptorSet texture_set = gpu_textures.size() > 0 ?
-        descriptorManager.makeSet() :
-        descriptorManager.emptySet();
+    DescriptorSet texture_set = descriptorManager.makeSet();
 
-    if (gpu_textures.size() > 0) {
+    // FIXME null descriptorManager feels a bit indirect
+    if (texture_set.hdl != VK_NULL_HANDLE) {
         VkWriteDescriptorSet desc_update;
         desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         desc_update.pNext = nullptr;
@@ -643,7 +652,9 @@ shared_ptr<Scene> LoaderState::loadScene(
         move(geometry),
         staged.indexBufferOffset,
         move(staged.meshPositions),
-        EnvironmentInit(scene_desc.getDefaultInstances())
+        EnvironmentInit(scene_desc.getDefaultInstances(),
+                        scene_desc.getDefaultLights(),
+                        cpu_meshes.size())
     });
 }
 

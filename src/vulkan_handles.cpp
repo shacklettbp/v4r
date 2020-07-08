@@ -4,6 +4,7 @@
 #include "vulkan_config.hpp"
 #include "vk_utils.hpp"
 
+#include <csignal>
 #include <iostream>
 #include <vector>
 
@@ -13,12 +14,12 @@ extern "C" {
     VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(
             const VkInstanceCreateInfo *, const VkAllocationCallbacks *,
             VkInstance *);
+
+    VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceLayerProperties(
+            uint32_t *, VkLayerProperties *);
 }
 
 namespace v4r {
-
-static const char *instance_extensions[] = {
-};
 
 static const char *device_extensions[] = {
     VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
@@ -26,13 +27,36 @@ static const char *device_extensions[] = {
     VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME
 };
 
-static constexpr uint32_t num_instance_extensions =
-    sizeof(instance_extensions) / sizeof(const char *);
-
 static constexpr uint32_t num_device_extensions =
     sizeof(device_extensions) / sizeof(const char *);
 
-static VkInstance createInstance()
+static bool enableValidation()
+{
+    char *enable_env = getenv("V4R_VALIDATE");
+    if (!enable_env || enable_env[0] == '0')
+        return false;
+
+    uint32_t num_layers;
+    REQ_VK(vkEnumerateInstanceLayerProperties(&num_layers, nullptr));
+
+    DynArray<VkLayerProperties> layers(num_layers);
+
+    REQ_VK(vkEnumerateInstanceLayerProperties(&num_layers, layers.data()));
+
+    for (uint32_t layer_idx = 0; layer_idx < num_layers; layer_idx++) {
+        const auto &layer_prop = layers[layer_idx];
+        if (!strcmp("VK_LAYER_KHRONOS_validation", layer_prop.layerName)) {
+            return true;
+        }
+    }
+
+    // FIXME check for VK_EXT_debug_utils
+
+    cerr << "Validation layers unavailable" << endl;
+    return false;
+}
+
+static VkInstance createInstance(bool enable_validation)
 {
     VkApplicationInfo app_info {};
     app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -40,13 +64,26 @@ static VkInstance createInstance()
     app_info.pEngineName = "v4r";
     app_info.apiVersion = VK_API_VERSION_1_2;
 
+    vector<const char *> layers;
+    vector<const char *> extensions;
+
+    if (enable_validation) {
+        layers.push_back("VK_LAYER_KHRONOS_validation");
+        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    }
+
     VkInstanceCreateInfo inst_info {};
     inst_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     inst_info.pApplicationInfo = &app_info;
 
-    if (num_instance_extensions > 0) {
-        inst_info.enabledExtensionCount = num_instance_extensions;
-        inst_info.ppEnabledExtensionNames = instance_extensions;
+    if (layers.size() > 0) {
+        inst_info.enabledLayerCount = layers.size();
+        inst_info.ppEnabledLayerNames = layers.data();
+    }
+
+    if (extensions.size() > 0) {
+        inst_info.enabledExtensionCount = extensions.size();
+        inst_info.ppEnabledExtensionNames = extensions.data();
     }
 
     VkInstance inst;
@@ -55,9 +92,56 @@ static VkInstance createInstance()
     return inst;
 }
 
+static VKAPI_ATTR VkBool32 VKAPI_CALL validationDebug(
+        VkDebugUtilsMessageSeverityFlagBitsEXT,
+        VkDebugUtilsMessageTypeFlagsEXT,
+        const VkDebugUtilsMessengerCallbackDataEXT *data,
+        void *)
+{
+    cerr << data->pMessage << endl;
+
+    signal(SIGTRAP, SIG_IGN);
+    raise(SIGTRAP);
+    signal(SIGTRAP, SIG_DFL);
+
+    return VK_FALSE;
+}
+
+static VkDebugUtilsMessengerEXT makeDebugCallback(VkInstance hdl,
+                                                  const InstanceDispatch &dt)
+{
+    auto makeMessenger = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
+            dt.getInstanceProcAddr(hdl, "vkCreateDebugUtilsMessengerEXT"));
+
+    assert(makeMessenger != nullptr);
+
+    VkDebugUtilsMessengerEXT messenger;
+
+    VkDebugUtilsMessengerCreateInfoEXT create_info {};
+    create_info.sType =
+        VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    create_info.messageSeverity =
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    create_info.messageType =
+        VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    create_info.pfnUserCallback = validationDebug;
+
+    REQ_VK(makeMessenger(hdl, &create_info, nullptr, &messenger));
+
+    return messenger;
+}
+
 InstanceState::InstanceState()
-    : hdl(createInstance()),
-      dt(hdl)
+    : InstanceState(enableValidation())
+{}
+
+InstanceState::InstanceState(bool enable_validation)
+    : hdl(createInstance(enable_validation)),
+      dt(hdl),
+      debug_(enable_validation ? makeDebugCallback(hdl, dt) : VK_NULL_HANDLE)
 {}
 
 static void fillQueueInfo(VkDeviceQueueCreateInfo &info, uint32_t idx,

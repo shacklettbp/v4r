@@ -1,6 +1,7 @@
 #include <v4r.hpp>
 #include <iostream>
 #include <cstdlib>
+#include <cstring>
 #include <chrono>
 
 using namespace std;
@@ -10,13 +11,26 @@ constexpr uint32_t num_frames = 10000;
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
-        cerr << argv[0] << " scene batch_size" << endl;
+        cerr << argv[0] << " scene batch_size [output]" << endl;
         exit(EXIT_FAILURE);
+    }
+
+    RenderFeatures::Outputs outputs =
+        RenderFeatures::Outputs::Color | RenderFeatures::Outputs::Depth;
+    RenderFeatures::MeshColor color_src = RenderFeatures::MeshColor::Texture;
+
+    if (argc > 3) {
+        if (!strcmp(argv[3], "color")) {
+            outputs = RenderFeatures::Outputs::Color;
+        } else if (!strcmp(argv[3], "depth")) {
+            outputs = RenderFeatures::Outputs::Depth;
+            color_src = RenderFeatures::MeshColor::None;
+        }
     }
 
     uint32_t batch_size = stoul(argv[2]);
 
-    BatchRenderer renderer({0, 1, 2, batch_size, 256, 256,
+    BatchRenderer renderer({0, 1, 1, batch_size, 256, 256,
         glm::mat4(
             1, 0, 0, 0,
             0, -1.19209e-07, -1, 0,
@@ -24,10 +38,9 @@ int main(int argc, char *argv[]) {
             0, 0, 0, 1
         ),
         {
-            RenderFeatures::MeshColor::Texture,
+            color_src,
             RenderFeatures::Pipeline::Unlit,
-            RenderFeatures::Outputs::Color |
-                RenderFeatures::Outputs::Depth,
+            outputs,
             RenderFeatures::Options::CpuSynchronization |
                 RenderFeatures::Options::DoubleBuffered
         }

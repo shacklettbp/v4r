@@ -3,6 +3,7 @@
 import sys
 import itertools
 import json
+from collections import defaultdict
 
 def get_combos(arr):
     combos = []
@@ -14,9 +15,10 @@ def get_combos(arr):
 
 class InterfaceTracker:
     def __init__(self):
-        self.cur_vert_in_idx = 1 # Vertex shader input 0 is always position
+        self.cur_vert_in_idx = 0
         self.cur_vert_out_idx = 0
         self.cur_frag_out_idx = 0
+        self.cur_binding_idx = defaultdict(lambda: 0)
 
     def vert_in(self):
         cur = self.cur_vert_in_idx
@@ -31,6 +33,11 @@ class InterfaceTracker:
     def frag_out(self):
         cur = self.cur_frag_out_idx
         self.cur_frag_out_idx += 1
+        return cur
+
+    def bind(self, set_idx):
+        cur = self.cur_binding_idx[set_idx]
+        self.cur_binding_idx[set_idx] += 1
         return cur
 
 def generate_defines(cfg_file, cmake):
@@ -48,15 +55,31 @@ def generate_defines(cfg_file, cmake):
                 need_color = "color" in outputs
                 need_depth = "depth" in outputs
 
-                # Skip any shaders that read color but don't output it
-                if not need_color and color_src != "none":
+                need_lighting = pipeline_name == "lit"
+                need_materials = color_src == "texture" or need_lighting
+
+                # Skip any shaders that involve color but don't output it
+                if not need_color and (color_src != "none" or
+                        need_lighting):
                     continue
 
                 flags = []
 
-                need_materials = color_src == "texture"
-
                 iface = InterfaceTracker()
+                iface.vert_in() # Vertex shader input 0 is always position
+                iface.bind(0) # set 0 binding 0 is transforms
+                iface.bind(0) # set 0 binding 1 is ViewInfo
+
+                if need_materials:
+                    flags.append("FRAG_NEED_MATERIAL")
+                    flags.append(f"MATERIAL_BIND={iface.bind(0)}")
+
+                if need_lighting:
+                    flags.append("LIT_PIPELINE")
+                    flags.append(f"LIGHT_BIND={iface.bind(0)}")
+                    flags.append(f"NORMAL_IN_LOC={iface.vert_in()}")
+                    flags.append(f"NORMAL_LOC={iface.vert_out()}")
+                    flags.append(f"CAMERA_POS_LOC={iface.vert_out()}")
 
                 if color_src == "vertex":
                     flags.append("VERTEX_COLOR")
@@ -77,7 +100,6 @@ def generate_defines(cfg_file, cmake):
                     flags.append(f"DEPTH_OUT_LOC={iface.frag_out()}")
 
                 if need_materials:
-                    flags.append("FRAG_NEED_MATERIAL")
                     flags.append(f"INSTANCE_LOC={iface.vert_out()}")
 
                 defines_str = " ".join([f"-D{flag}" for flag in flags])

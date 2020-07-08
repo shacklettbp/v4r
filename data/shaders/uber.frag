@@ -1,13 +1,51 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_scalar_block_layout : require
 
 #ifdef FRAG_NEED_MATERIAL
-layout (set = 0, binding = 1) readonly buffer MaterialParams
-{
-    uint textureIdx[];
+#ifdef TEXTURE_COLOR // FIXME
+
+struct Material {
+#ifdef TEXTURE_COLOR
+    uint textureIdx;
+#endif
+};
+
+layout (set = 0, binding = MATERIAL_BIND, scalar) readonly buffer
+MaterialParams {
+    Material materials[];
 };
 
 layout (location = INSTANCE_LOC) flat in uint instance_id;
+
+#endif
+#endif
+
+#ifdef LIT_PIPELINE
+
+layout (set = 0, binding = 1, std430) uniform
+ViewInfo {
+    mat4 projection;
+    mat4 view;
+} view_info;
+
+#include "brdf.glsl"
+
+// FIXME
+#define MAX_LIGHTS 500
+struct LightProperties {
+    vec4 position;
+    vec4 color;
+};
+
+layout (set = 0, binding = LIGHT_BIND, scalar) uniform LightingInfo {
+    LightProperties lights[MAX_LIGHTS];
+    uint numLights;
+} lighting_info;
+
+layout (location = NORMAL_LOC) in vec3 in_normal;
+layout (location = CAMERA_POS_LOC) in vec3 in_camera_pos;
+
 #endif
 
 #if defined(TEXTURE_COLOR)
@@ -31,11 +69,45 @@ layout (location = COLOR_OUT_LOC) out vec4 out_color;
 void main() 
 {
 #if defined(TEXTURE_COLOR)
-    uint tex_idx = textureIdx[instance_id];
-    out_color = texture(sampler2D(textures[tex_idx],
-                                  texture_sampler), in_uv, 0.f);
+    uint tex_idx = materials[instance_id].textureIdx;
+    vec4 albedo = texture(sampler2D(textures[tex_idx], texture_sampler),
+                          in_uv, 0.f);
 #elif defined(VERTEX_COLOR)
-    out_color = vec4(in_vertex_color, 1.f);
+    vec4 albedo = vec4(in_vertex_color, 1.f);
+
+#elif defined(OUTPUT_COLOR)
+    // No vertex color, no textures, but still want color...
+    // Make it white
+
+    vec4 albedo = vec4(1.f);
+#endif
+
+#ifdef OUTPUT_COLOR
+
+#if defined(LIT_PIPELINE)
+
+    vec3 Lo = vec3(0.0);
+    for (int light_idx = 0; light_idx < lighting_info.numLights; light_idx++) {
+        vec3 world_light_position =
+            lighting_info.lights[light_idx].position.xyz;
+        vec3 light_position = (
+                view_info.view * vec4(world_light_position, 1.f)).xyz;
+        vec3 light_color = lighting_info.lights[light_idx].color.xyz;
+        BRDFParams params = makeBRDFParams(light_position, in_camera_pos,
+                                           in_normal, light_color,
+                                           albedo.xyz);
+
+        Lo += blinnPhong(params);
+    }
+
+    out_color = vec4(Lo, 1.f);
+
+#else
+
+    out_color = albedo;
+
+#endif
+
 #endif
 
 #ifdef OUTPUT_DEPTH

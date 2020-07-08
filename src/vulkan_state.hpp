@@ -23,8 +23,30 @@
 
 namespace v4r {
 
+// FIXME unify with shader
+struct ViewInfo {
+    glm::mat4 projection;
+    glm::mat4 view;
+};
+
 struct PerRenderDescriptorConfig {
     VkDescriptorSetLayout layout;
+
+    VkDeviceSize bytesPerTransform;
+    VkDeviceSize totalTransformBytes;
+
+    VkDeviceSize viewOffset;
+
+    VkDeviceSize materialIndicesOffset;
+    VkDeviceSize totalMaterialIndexBytes;
+
+    VkDeviceSize lightsOffset;
+    VkDeviceSize totalLightParamBytes;
+
+    VkDeviceSize totalParamBytes;
+
+    std::add_pointer_t<
+        VkDescriptorPool(const DeviceState &, uint32_t)> makePool;
 };
 
 struct FramebufferConfig {
@@ -91,6 +113,7 @@ public:
     CommandStreamState(const RenderFeatures &features,
                        const InstanceState &inst,
                        const DeviceState &dev,
+                       const PerRenderDescriptorConfig &per_render_cfg,
                        VkDescriptorSet per_render_descriptor,
                        VkRenderPass render_pass,
                        const PipelineState &pipeline,
@@ -141,8 +164,13 @@ private:
     const FramebufferState &fb_;
     VkRenderPass render_pass_;
     VkDescriptorSet per_render_descriptor_;
-    HostBuffer transform_ssbo_;
-    HostBuffer material_params_ssbo_;
+    HostBuffer per_render_buffer_;
+    glm::mat4 *transform_ptr_;
+    VkDeviceSize bytes_per_txfm_;
+    ViewInfo *view_ptr_;
+    uint32_t *material_ptr_;
+    LightProperties *light_ptr_;
+    uint32_t *num_lights_ptr_;
 
     glm::u32vec2 render_size_;
     glm::u32vec2 render_extent_;

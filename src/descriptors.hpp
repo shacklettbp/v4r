@@ -105,11 +105,32 @@ using PerSceneDescriptorLayout = DescriptorLayout<
                   VK_SHADER_STAGE_FRAGMENT_BIT>
 >;
 
-using PerRenderDescriptorLayout = DescriptorLayout<
+using UnlitNoMaterialPerRenderLayout = DescriptorLayout<
     BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                  VK_SHADER_STAGE_VERTEX_BIT>,
-    BindingConfig<1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                  VK_SHADER_STAGE_FRAGMENT_BIT>
+                  VK_SHADER_STAGE_VERTEX_BIT>, // Transforms
+    BindingConfig<1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+                  VK_SHADER_STAGE_VERTEX_BIT> // View Info
+>;
+
+using UnlitMaterialPerRenderLayout = DescriptorLayout<
+    BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                  VK_SHADER_STAGE_VERTEX_BIT>, // Transforms
+    BindingConfig<1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+                  VK_SHADER_STAGE_VERTEX_BIT>, // View Info
+    BindingConfig<2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                  VK_SHADER_STAGE_FRAGMENT_BIT> // Material Info
+>;
+
+using LitPerRenderLayout = DescriptorLayout<
+    BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                  VK_SHADER_STAGE_VERTEX_BIT>, // Transforms
+    BindingConfig<1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+                  VK_SHADER_STAGE_VERTEX_BIT |
+                    VK_SHADER_STAGE_FRAGMENT_BIT>, // View Info
+    BindingConfig<2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                  VK_SHADER_STAGE_FRAGMENT_BIT>, // Material Info
+    BindingConfig<3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+                  VK_SHADER_STAGE_FRAGMENT_BIT> // Light Info
 >;
 
 struct PoolState {
@@ -122,7 +143,7 @@ struct PoolState {
 };
 
 struct DescriptorSet {
-    DescriptorSet(VkDescriptorSet d, PoolState &p) 
+    DescriptorSet(VkDescriptorSet d, PoolState *p)
         : hdl(d), pool(p)
     {}
 
@@ -138,11 +159,11 @@ struct DescriptorSet {
     ~DescriptorSet()
     {
         if (hdl == VK_NULL_HANDLE) return;
-        pool.numActive--;
+        pool->numActive--;
     };
 
     VkDescriptorSet hdl;
-    PoolState &pool;
+    PoolState *pool;
 };
 
 template<typename... LayoutType>
@@ -179,7 +200,6 @@ public:
     ~DescriptorManager();
 
     DescriptorSet makeSet();
-    DescriptorSet emptySet();
 
 private:
     const DeviceState &dev;
@@ -187,8 +207,6 @@ private:
 
     std::list<PoolState> free_pools_;
     std::list<PoolState> used_pools_;
-
-    std::unique_ptr<PoolState> empty_pool_;
 };
 
 }

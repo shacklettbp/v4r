@@ -1,5 +1,7 @@
 set(VERTEX_SHADER uber.vert)
 set(FRAGMENT_SHADER uber.frag)
+set(COMMON_SHADERS
+    brdf.glsl)
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
              shaders_cfg.json)
@@ -35,7 +37,7 @@ function(add_shader SHADER_NAME SHADER_SRC COMPILER_ARGS)
         COMMAND
             ${GLSLC} -c ${SHADER_SRC} -o ${COMPILED_SHADER} ${COMPILER_ARGS}
         DEPENDS
-            ${SHADER_SRC}
+            ${SHADER_SRC} ${COMMON_SHADERS}
     )
 endfunction()
 

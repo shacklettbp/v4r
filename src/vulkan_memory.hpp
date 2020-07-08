@@ -34,6 +34,8 @@ public:
     ~HostBuffer();
 
     void flush(const DeviceState &dev);
+    void flush(const DeviceState &dev, VkDeviceSize offset,
+               VkDeviceSize num_bytes);
 
     VkBuffer buffer;
     void *ptr;
@@ -99,6 +101,11 @@ struct ResourceFormats {
     VkFormat linearDepthAttachment;
 };
 
+struct Alignments {
+    VkDeviceSize uniformBuffer;
+    VkDeviceSize storageBuffer;
+};
+
 class MemoryAllocator {
 public:
     MemoryAllocator(const DeviceState &dev, const InstanceState &inst);
@@ -122,6 +129,9 @@ public:
 
     const ResourceFormats &getFormats() const { return formats_; }
 
+    VkDeviceSize alignUniformBufferOffset(VkDeviceSize offset) const;
+    VkDeviceSize alignStorageBufferOffset(VkDeviceSize offset) const;
+
 private:
     HostBuffer makeHostBuffer(VkDeviceSize num_bytes,
                               VkBufferUsageFlags usage,
@@ -134,6 +144,7 @@ private:
     const DeviceState &dev;
     ResourceFormats formats_;
     MemoryTypeIndices type_indices_;
+    Alignments alignments_;
 
     template<bool> friend class AllocDeleter;
 };

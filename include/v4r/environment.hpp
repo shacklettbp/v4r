@@ -35,6 +35,9 @@ public:
 
     inline void translateCamera(const glm::vec3 &v);
 
+    uint32_t addLight(const glm::vec3 &position, const glm::vec3 &color);
+    void deleteLight(uint32_t light_id);
+
 private:
     Environment(Handle<EnvironmentState> &&env);
 
