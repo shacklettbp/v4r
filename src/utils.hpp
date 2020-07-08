@@ -71,7 +71,7 @@ template <typename T>
 class DynArray {
 public:
     DynArray(size_t num_elems)
-        : data_(std::unique_ptr<T>(new T[num_elems])),
+        : data_(std::unique_ptr<T[]>(new T[num_elems])),
           num_elems_(num_elems)
     {}
 
@@ -194,7 +194,7 @@ public:
     const_iterator end() const { return const_iterator(data_.get() + num_elems_); }
 
 private:
-    std::unique_ptr<T> data_;
+    std::unique_ptr<T[]> data_;
     size_t num_elems_;
 };
 
