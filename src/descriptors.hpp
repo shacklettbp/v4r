@@ -115,7 +115,7 @@ using UnlitNoMaterialPerRenderLayout = DescriptorLayout<
 using UnlitMaterialPerRenderLayout = DescriptorLayout<
     BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
                   VK_SHADER_STAGE_VERTEX_BIT>, // Transforms
-    BindingConfig<1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+    BindingConfig<1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
                   VK_SHADER_STAGE_VERTEX_BIT>, // View Info
     BindingConfig<2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
                   VK_SHADER_STAGE_FRAGMENT_BIT> // Material Info
@@ -124,7 +124,7 @@ using UnlitMaterialPerRenderLayout = DescriptorLayout<
 using LitPerRenderLayout = DescriptorLayout<
     BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
                   VK_SHADER_STAGE_VERTEX_BIT>, // Transforms
-    BindingConfig<1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+    BindingConfig<1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
                   VK_SHADER_STAGE_VERTEX_BIT |
                     VK_SHADER_STAGE_FRAGMENT_BIT>, // View Info
     BindingConfig<2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,

@@ -84,6 +84,35 @@ static const std::shared_ptr<Texture> assimpLoadTexture(
 }
 
 template <typename MaterialParamsType>
+MaterialParamsType makeMaterialParams(
+        std::shared_ptr<Texture> &&)
+{
+    std::cerr << typeid(MaterialParamsType).name() << std::endl;
+    std::cerr << "No assimp load support for pipeline type" <<
+        std::endl;
+
+    fatalExit();
+}
+
+template <>
+UnlitRendererInputs::MaterialDescription makeMaterialParams(
+        std::shared_ptr<Texture> &&texture)
+{
+    return {
+        move(texture)
+    };
+}
+
+template <>
+LitRendererInputs::MaterialDescription makeMaterialParams(
+        std::shared_ptr<Texture> &&texture)
+{
+    return {
+        move(texture)
+    };
+}
+
+template <typename MaterialParamsType>
 std::vector<MaterialParamsType> assimpParseMaterials(
         const aiScene *raw_scene)
 {
@@ -129,17 +158,9 @@ std::vector<MaterialParamsType> assimpParseMaterials(
         float shininess = 0.f;
         raw_mat->Get(AI_MATKEY_SHININESS, shininess);
 
-        if constexpr (std::is_same_v<MaterialParamsType, 
-                UnlitRendererInputs::MaterialDescription>) {
-            if (diffuse_tex) {
-                materials.push_back({
-                    diffuse_tex
-                });
-            }
-        } else {
-            std::cerr << "No assimp load support for pipeline type" << 
-                std::endl;
-            fatalExit();
+        if (diffuse_tex) {
+            materials.emplace_back(
+                    makeMaterialParams<MaterialParamsType>(move(diffuse_tex)));
         }
     }
 

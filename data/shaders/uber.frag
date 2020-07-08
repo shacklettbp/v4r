@@ -23,11 +23,19 @@ layout (location = INSTANCE_LOC) flat in uint instance_id;
 
 #ifdef LIT_PIPELINE
 
-layout (set = 0, binding = 1, std430) uniform
-ViewInfo {
+struct ViewInfo {
     mat4 projection;
     mat4 view;
-} view_info;
+};
+
+layout (set = 0, binding = 1) readonly buffer ViewInfos {
+    ViewInfo view_info[];
+};
+
+layout (push_constant) uniform
+RenderPushConstant {
+    uint batchIdx;
+} render_const;
 
 #include "brdf.glsl"
 
@@ -90,8 +98,9 @@ void main()
     for (int light_idx = 0; light_idx < lighting_info.numLights; light_idx++) {
         vec3 world_light_position =
             lighting_info.lights[light_idx].position.xyz;
-        vec3 light_position = (
-                view_info.view * vec4(world_light_position, 1.f)).xyz;
+        vec3 light_position =
+                (view_info[render_const.batchIdx].view *
+                    vec4(world_light_position, 1.f)).xyz;
         vec3 light_color = lighting_info.lights[light_idx].color.xyz;
         BRDFParams params = makeBRDFParams(light_position, in_camera_pos,
                                            in_normal, light_color,

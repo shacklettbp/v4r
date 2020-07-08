@@ -36,6 +36,7 @@ struct PerRenderDescriptorConfig {
     VkDeviceSize totalTransformBytes;
 
     VkDeviceSize viewOffset;
+    VkDeviceSize totalViewBytes;
 
     VkDeviceSize materialIndicesOffset;
     VkDeviceSize totalMaterialIndexBytes;

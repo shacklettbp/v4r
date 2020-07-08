@@ -16,6 +16,10 @@ using namespace std;
 
 namespace v4r {
 
+struct RenderPushConstant {
+    uint32_t batchIdx;
+};
+
 static PerSceneDescriptorConfig getSceneDescriptorConfig(
         const RenderFeatures &features,
         const DeviceState &dev)
@@ -58,6 +62,7 @@ static PerSceneDescriptorConfig getSceneDescriptorConfig(
 
 static PerRenderDescriptorConfig getRenderDescriptorConfig(
         const RenderFeatures &features, 
+        uint32_t batch_size,
         const MemoryAllocator &alloc,
         const DeviceState &dev)
 {
@@ -67,6 +72,7 @@ static PerRenderDescriptorConfig getRenderDescriptorConfig(
         VulkanConfig::max_instances;
 
     cfg.viewOffset = alloc.alignUniformBufferOffset(cfg.totalTransformBytes);
+    cfg.totalViewBytes = sizeof(ViewInfo) * batch_size;
 
     bool need_material = false;
     bool need_lighting = false;
@@ -102,7 +108,7 @@ static PerRenderDescriptorConfig getRenderDescriptorConfig(
         }
     }
 
-    VkDeviceSize cur_offset = cfg.viewOffset + sizeof(ViewInfo);
+    VkDeviceSize cur_offset = cfg.viewOffset + cfg.totalViewBytes;
 
     if (need_material) {
         cfg.materialIndicesOffset =
@@ -683,6 +689,14 @@ static PipelineState makePipeline(const DeviceState &dev,
     dyn_info.dynamicStateCount = 1;
     dyn_info.pDynamicStates = &dyn_viewport_enable;
 
+    // Push constant
+    VkPushConstantRange push_const {
+        VK_SHADER_STAGE_VERTEX_BIT |
+            VK_SHADER_STAGE_FRAGMENT_BIT, // FIXME this isn't necessary for all pipelines
+        0,
+        sizeof(RenderPushConstant)
+    };
+
     // Layout configuration
     VkPipelineLayoutCreateInfo pipeline_layout_info;
     pipeline_layout_info.sType =
@@ -692,8 +706,8 @@ static PipelineState makePipeline(const DeviceState &dev,
     pipeline_layout_info.setLayoutCount =
         static_cast<uint32_t>(cfg.descLayouts.size());
     pipeline_layout_info.pSetLayouts = cfg.descLayouts.data();
-    pipeline_layout_info.pushConstantRangeCount = 0;
-    pipeline_layout_info.pPushConstantRanges = nullptr;
+    pipeline_layout_info.pushConstantRangeCount = 1;
+    pipeline_layout_info.pPushConstantRanges = &push_const;
 
     VkPipelineLayout pipeline_layout;
     REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &pipeline_layout_info,
@@ -965,7 +979,8 @@ CommandStreamState::CommandStreamState(
     VkDescriptorBufferInfo transform_info =
         makeBufferInfo(0, per_render_cfg.totalTransformBytes);
     VkDescriptorBufferInfo view_info =
-        makeBufferInfo(per_render_cfg.totalTransformBytes, sizeof(ViewInfo));
+        makeBufferInfo(per_render_cfg.viewOffset,
+                       per_render_cfg.totalViewBytes);
 
     // Define these outside if blocks so pointers remain valid if used
     VkDescriptorBufferInfo material_info;
@@ -986,7 +1001,7 @@ CommandStreamState::CommandStreamState(
     render_desc_update.push_back(binding_update);
 
     binding_update.dstBinding = cur_binding++;
-    binding_update.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     binding_update.pBufferInfo = &view_info;
     render_desc_update.push_back(binding_update);
 
@@ -1081,6 +1096,7 @@ uint32_t CommandStreamState::render(const vector<Environment> &envs)
     glm::mat4 *transform_ptr = transform_ptr_;
     uint32_t *material_ptr = material_ptr_;
     LightProperties *light_ptr = light_ptr_;
+    ViewInfo *view_ptr = view_ptr_;
     for (uint32_t batch_idx = 0; batch_idx < envs.size(); batch_idx++) {
         const Environment &env = envs[batch_idx];
 
@@ -1093,8 +1109,20 @@ uint32_t CommandStreamState::render(const vector<Environment> &envs)
                                          0, nullptr);
         }
 
-        view_ptr_->view = env.view_;
-        view_ptr_->projection = env.state_->projection;
+        view_ptr->view = env.view_;
+        view_ptr->projection = env.state_->projection;
+        view_ptr++;
+
+        RenderPushConstant push_const {
+            batch_idx
+        };
+
+        dev.dt.cmdPushConstants(render_cmd, pipeline.gfxLayout,
+                                VK_SHADER_STAGE_VERTEX_BIT |
+                                    VK_SHADER_STAGE_FRAGMENT_BIT,
+                                0,
+                                sizeof(RenderPushConstant),
+                                &push_const);
 
         glm::u32vec2 batch_offset = frame_state.batchFBOffsets[batch_idx];
 
@@ -1199,7 +1227,8 @@ VulkanState::VulkanState(const RenderConfig &config, const DeviceUUID &uuid)
       queueMgr(dev),
       alloc(dev, inst),
       fbCfg(getFramebufferConfig(cfg)),
-      streamDescCfg(getRenderDescriptorConfig(cfg.features, alloc, dev)),
+      streamDescCfg(getRenderDescriptorConfig(cfg.features, cfg.batchSize,
+                                              alloc, dev)),
       sceneDescCfg(getSceneDescriptorConfig(cfg.features, dev)),
       renderDescriptorPool(streamDescCfg.makePool(dev, cfg.numStreams)),
       renderPass(makeRenderPass(fbCfg, dev, alloc.getFormats())),

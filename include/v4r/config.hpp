@@ -48,9 +48,9 @@ struct RenderConfig {
 inline RenderFeatures::Outputs & operator|=(RenderFeatures::Outputs &a,
                                             RenderFeatures::Outputs b)
 {
-    return a = RenderFeatures::Outputs {
-        static_cast<uint32_t>(a) | static_cast<uint32_t>(b)
-    };
+    return a = static_cast<RenderFeatures::Outputs>(
+                static_cast<uint32_t>(a) | static_cast<uint32_t>(b)
+    );
 }
 
 inline RenderFeatures::Outputs operator|(RenderFeatures::Outputs a,
@@ -69,9 +69,9 @@ inline bool operator&(RenderFeatures::Outputs flags,
 inline RenderFeatures::Options & operator|=(RenderFeatures::Options &a,
                                             RenderFeatures::Options b)
 {
-    return a = RenderFeatures::Options {
+    return a = static_cast<RenderFeatures::Options>(
         static_cast<uint32_t>(a) | static_cast<uint32_t>(b)
-    };
+    );
 }
 
 inline RenderFeatures::Options operator|(RenderFeatures::Options a,
