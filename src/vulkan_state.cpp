@@ -17,10 +17,6 @@ using namespace std;
 
 namespace v4r {
 
-struct RenderPushConstant {
-    uint32_t batchIdx;
-};
-
 static PerSceneDescriptorConfig getSceneDescriptorConfig(
         const RenderFeatures &features,
         const DeviceState &dev)
@@ -1059,158 +1055,21 @@ CommandStreamState::CommandStreamState(
 
 uint32_t CommandStreamState::render(const vector<Environment> &envs)
 {
-    const PerFrameState &frame_state = frame_states_[cur_frame_];
+    return render(envs, [this](uint32_t num_commands,
+                               const VkCommandBuffer *commands,
+                               VkSemaphore semaphore,
+                               VkFence fence) {
 
-    VkCommandBuffer render_cmd = frame_state.commands[0];
-
-    VkCommandBufferBeginInfo begin_info {};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    REQ_VK(dev.dt.beginCommandBuffer(render_cmd, &begin_info));
-
-    dev.dt.cmdBindDescriptorSets(render_cmd,
-                                 VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                 pipeline.gfxLayout, 0,
-                                 1, &per_render_descriptor_,
-                                 0, nullptr);
-
-    // FIXME
-    dev.dt.cmdBindPipeline(render_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                           pipeline.gfxPipeline);
-
-    VkRenderPassBeginInfo render_begin;
-    render_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    render_begin.pNext = nullptr;
-    render_begin.renderPass = render_pass_;
-    render_begin.framebuffer = fb_.hdl;
-    render_begin.renderArea.offset = {
-        static_cast<int32_t>(frame_state.baseFBOffset.x), 
-        static_cast<int32_t>(frame_state.baseFBOffset.y) 
-    };
-    render_begin.renderArea.extent = { render_extent_.x, 
-                                       render_extent_.y };
-    render_begin.clearValueCount =
-        static_cast<uint32_t>(fb_cfg_.clearValues.size());
-    render_begin.pClearValues = fb_cfg_.clearValues.data();
-
-    //render_begin.renderArea.offset = {
-    //    static_cast<int32_t>(fb_offset_.x),
-    //    static_cast<int32_t>(fb_offset_.y) };
-    //render_begin.renderArea.extent = { render_size_.x, render_size_.y };
-
-    dev.dt.cmdBeginRenderPass(render_cmd, &render_begin,
-                              VK_SUBPASS_CONTENTS_INLINE);
-
-    uint32_t cur_instance = 0;
-    glm::mat4 *transform_ptr = transform_ptr_;
-    uint32_t *material_ptr = material_ptr_;
-    LightProperties *light_ptr = light_ptr_;
-    ViewInfo *view_ptr = view_ptr_;
-    for (uint32_t batch_idx = 0; batch_idx < envs.size(); batch_idx++) {
-        const Environment &env = envs[batch_idx];
-
-        const Scene &scene = *(envs[batch_idx].state_->scene);
-        if (scene.textureSet.hdl != VK_NULL_HANDLE) {
-            dev.dt.cmdBindDescriptorSets(render_cmd,
-                                         VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                         pipeline.gfxLayout, 1,
-                                         1, &scene.textureSet.hdl,
-                                         0, nullptr);
-        }
-
-        view_ptr->view = env.view_;
-        view_ptr->projection = env.state_->projection;
-        view_ptr++;
-
-        RenderPushConstant push_const {
-            batch_idx
+        VkSubmitInfo gfx_submit {
+            VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            nullptr,
+            0, nullptr, nullptr,
+            num_commands, commands,
+            1, &semaphore
         };
 
-        dev.dt.cmdPushConstants(render_cmd, pipeline.gfxLayout,
-                                VK_SHADER_STAGE_VERTEX_BIT |
-                                    VK_SHADER_STAGE_FRAGMENT_BIT,
-                                0,
-                                sizeof(RenderPushConstant),
-                                &push_const);
-
-        glm::u32vec2 batch_offset = frame_state.batchFBOffsets[batch_idx];
-
-        VkViewport viewport;
-        viewport.x = batch_offset.x;
-        viewport.y = batch_offset.y;
-        viewport.width = render_size_.x;
-        viewport.height = render_size_.y;
-        viewport.minDepth = 0.f;
-        viewport.maxDepth = 1.f;
-
-        dev.dt.cmdSetViewport(render_cmd, 0, 1, &viewport);
-
-        VkDeviceSize vert_offset = 0;
-        dev.dt.cmdBindVertexBuffers(render_cmd, 0, 1, &scene.geometry.buffer,
-                                    &vert_offset);
-        dev.dt.cmdBindIndexBuffer(render_cmd, scene.geometry.buffer,
-                                  scene.indexOffset, VK_INDEX_TYPE_UINT32);
-
-        for (uint32_t mesh_idx = 0; mesh_idx < scene.meshes.size();
-                mesh_idx++) {
-            uint32_t num_instances = env.transforms_[mesh_idx].size();
-            if (num_instances == 0) continue;
-
-            auto &mesh = scene.meshes[mesh_idx];
-
-            dev.dt.cmdDrawIndexed(render_cmd, mesh.numIndices, num_instances,
-                                  mesh.startIndex, mesh.vertexOffset,
-                                  cur_instance);
-
-            memcpy(transform_ptr, env.transforms_[mesh_idx].data(),
-                   bytes_per_txfm_ * num_instances);
-
-            cur_instance += num_instances;
-            transform_ptr += num_instances;
-
-            if (material_ptr) {
-                memcpy(material_ptr, env.materials_[mesh_idx].data(),
-                       num_instances * sizeof(uint32_t));
-
-                material_ptr += num_instances;
-            }
-        }
-
-        if (light_ptr) {
-            uint32_t num_lights = env.state_->lights.size();
-
-            memcpy(light_ptr, env.state_->lights.data(),
-                   num_lights * sizeof(LightProperties));
-
-            *num_lights_ptr_ = num_lights;
-
-            light_ptr += num_lights;
-        }
-    }
-
-    dev.dt.cmdEndRenderPass(render_cmd);
-
-    REQ_VK(dev.dt.endCommandBuffer(render_cmd));
-
-    assert(cur_instance < VulkanConfig::max_instances);
-
-    // FIXME 
-    per_render_buffer_.flush(dev);
-
-    VkSubmitInfo gfx_submit {
-        VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        nullptr,
-        0, nullptr, nullptr,
-        static_cast<uint32_t>(frame_state.commands.size()),
-        frame_state.commands.data(),
-        1, &frame_state.semaphore
-    };
-
-    gfxQueue.submit(dev, 1, &gfx_submit, frame_state.fence);
-
-    uint32_t rendered_frame_idx = cur_frame_;
-    cur_frame_ = (cur_frame_ + 1) % frame_states_.size();
-
-    return rendered_frame_idx;
+        gfxQueue.submit(dev, 1, &gfx_submit, fence);
+    });
 }
 
 int CommandStreamState::getSemaphoreFD(uint32_t frame_idx) const

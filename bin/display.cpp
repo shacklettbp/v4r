@@ -1,13 +1,19 @@
 #include <v4r/display.hpp>
+#include <v4r/debug.hpp>
 #include <iostream>
 #include <cstdlib>
 #include <cstring>
+#include <unistd.h>
 #include <chrono>
+#include <fstream>
+#include <random>
+#include <algorithm>
 
 using namespace std;
 using namespace v4r;
 
-constexpr uint32_t num_frames = 10000;
+constexpr uint32_t num_frames = 30000;
+constexpr uint32_t max_load_frames = num_frames;
 
 static GLFWwindow * makeWindow(const glm::u32vec2 &dim)
 {
@@ -18,9 +24,28 @@ static GLFWwindow * makeWindow(const glm::u32vec2 &dim)
                             "V4R", NULL, NULL);
 }
 
+vector<glm::mat4> readViews(const char *dump_path)
+{
+    ifstream dump_file(dump_path, ios::binary);
+
+    vector<glm::mat4> views;
+
+    for (size_t i = 0; i < max_load_frames; i++) {
+        float raw[16];
+        dump_file.read((char *)raw, sizeof(float)*16);
+        views.emplace_back(glm::inverse(
+                glm::mat4(raw[0], raw[1], raw[2], raw[3],
+                          raw[4], raw[5], raw[6], raw[7],
+                          raw[8], raw[9], raw[10], raw[11],
+                          raw[12], raw[13], raw[14], raw[15])));
+    }
+
+    return views;
+}
+
 int main(int argc, char *argv[]) {
-    if (argc < 3) {
-        cerr << argv[0] << " scene batch_size [output]" << endl;
+    if (argc < 4) {
+        cerr << argv[0] << " scene views batch_size [output]" << endl;
         exit(EXIT_FAILURE);
     }
 
@@ -29,20 +54,26 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    RenderDoc rdoc;
+
     RenderFeatures::Outputs outputs =
         RenderFeatures::Outputs::Color | RenderFeatures::Outputs::Depth;
     RenderFeatures::MeshColor color_src = RenderFeatures::MeshColor::Texture;
 
-    if (argc > 3) {
-        if (!strcmp(argv[3], "color")) {
+    if (argc > 4) {
+        if (!strcmp(argv[4], "color")) {
             outputs = RenderFeatures::Outputs::Color;
-        } else if (!strcmp(argv[3], "depth")) {
+        } else if (!strcmp(argv[4], "depth")) {
             outputs = RenderFeatures::Outputs::Depth;
             color_src = RenderFeatures::MeshColor::None;
         }
     }
 
-    uint32_t batch_size = stoul(argv[2]);
+    vector<glm::mat4> views = readViews(argv[2]);
+    auto rng = default_random_engine {};
+    shuffle(begin(views), end(views), rng);
+
+    uint32_t batch_size = stoul(argv[3]);
 
     BatchPresentRenderer renderer({0, 1, 1, batch_size, 256, 256,
         glm::mat4(
@@ -55,9 +86,10 @@ int main(int argc, char *argv[]) {
             color_src,
             RenderFeatures::Pipeline::Unlit,
             outputs,
-            RenderFeatures::Options::DoubleBuffered
+            RenderFeatures::Options::DoubleBuffered |
+                RenderFeatures::Options::CpuSynchronization
         }
-    });
+    }, true);
 
     glm::u32vec2 frame_dim = renderer.getFrameDimensions();
     GLFWwindow *window = makeWindow(frame_dim);
@@ -83,10 +115,20 @@ int main(int argc, char *argv[]) {
 
     uint32_t num_iters = num_frames / batch_size;
 
+    rdoc.startFrame();
     RenderSync prevsync = cmd_stream.render(envs);
+    rdoc.endFrame();
 
-    for (uint32_t i = 1; i < num_iters; i++) {
+    uint32_t view_idx = 0;
+    while (true) {
+        for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
+            envs[batch_idx].setCameraView(views[view_idx]);
+            view_idx = (view_idx + 1) % views.size();
+        }
+
+        rdoc.startFrame();
         RenderSync newsync = cmd_stream.render(envs);
+        rdoc.endFrame();
         prevsync.cpuWait();
         prevsync = move(newsync);
     }

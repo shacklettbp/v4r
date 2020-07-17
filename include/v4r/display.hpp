@@ -12,21 +12,30 @@ struct PresentationState;
 class BatchPresentRenderer;
 
 class PresentCommandStream : public CommandStream {
+public:
+
+    RenderSync render(const std::vector<Environment> &elems);
 
 private:
-    PresentCommandStream(CommandStream &&base, GLFWwindow *window);
+    PresentCommandStream(CommandStream &&base, GLFWwindow *window,
+                         bool benchmark_mode);
+
     Handle<PresentationState> presentation_state_;
+    bool benchmark_mode_;
 friend class BatchPresentRenderer;
 };
 
 class BatchPresentRenderer : private BatchRenderer {
 public:
-    BatchPresentRenderer(const RenderConfig &cfg);
+    BatchPresentRenderer(const RenderConfig &cfg, bool benchmark_mode);
 
     using BatchRenderer::makeLoader;
     PresentCommandStream makeCommandStream(GLFWwindow *window);
 
     glm::u32vec2 getFrameDimensions() const;
+
+private:
+    bool benchmark_mode_;
 };
 
 }

@@ -28,6 +28,23 @@ void QueueState::submit(const DeviceState &dev, uint32_t submit_count,
     }
 }
 
+bool QueueState::presentSubmit(const DeviceState &dev,
+                               const VkPresentInfoKHR *present_info) const
+{
+    if (num_users_ > 1) {
+        mutex_.lock();
+    }
+
+    // FIXME resize
+    REQ_VK(dev.dt.queuePresentKHR(queue_hdl_, present_info));
+
+    if (num_users_ > 1) {
+        mutex_.unlock();
+    }
+
+    return true;
+}
+
 QueueState & QueueManager::allocateGraphicsQueue()
 
 {

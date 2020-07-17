@@ -47,6 +47,7 @@ friend class BatchRenderer;
 
 class RenderSync {
 public:
+    RenderSync(const SyncState *state);
     RenderSync(RenderSync &&) = default;
     RenderSync & operator=(RenderSync &&) = default;
 
@@ -54,11 +55,7 @@ public:
     void cpuWait();
 
 private:
-    RenderSync(const SyncState *state);
-
     const SyncState *state_;
-
-friend class CommandStream;
 };
 
 class CommandStream {
@@ -81,11 +78,10 @@ protected:
                   bool double_buffered);
 
     Handle<CommandStreamState> state_;
-
-private:
     Handle<CudaStreamState[]> cuda_;
     Handle<SyncState[]> sync_;
 
+private:
     uint32_t render_width_;
     uint32_t render_height_;
 

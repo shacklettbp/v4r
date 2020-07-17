@@ -23,6 +23,10 @@
 
 namespace v4r {
 
+struct RenderPushConstant {
+    uint32_t batchIdx;
+};
+
 // FIXME unify with shader
 struct ViewInfo {
     glm::mat4 projection;
@@ -133,7 +137,21 @@ public:
     CommandStreamState(const CommandStreamState &) = delete;
     CommandStreamState(CommandStreamState &&) = default;
 
+    template <typename Fn>
+    inline uint32_t render(const std::vector<Environment> &envs,
+                           Fn &&submit_func);
+
     uint32_t render(const std::vector<Environment> &envs);
+
+    VkImage getColorImage(uint32_t) const
+    {
+        return fb_.attachments[0].image;
+    }
+
+    glm::u32vec2 getFBOffset(uint32_t frame_idx) const
+    {
+        return frame_states_[frame_idx].baseFBOffset;
+    }
 
     VkDeviceSize getColorOffset(uint32_t frame_idx) const
     {
@@ -151,6 +169,18 @@ public:
     }
 
     int getSemaphoreFD(uint32_t frame_idx) const;
+
+    uint32_t getCurrentFrame() const {
+        return cur_frame_;
+    }
+
+    uint32_t getNumFrames() const {
+        return frame_states_.size();
+    }
+
+    glm::u32vec2 getFrameExtent() const {
+        return render_extent_;
+    }
 
     const InstanceState &inst;
     const DeviceState &dev;
@@ -218,5 +248,9 @@ public:
 };
 
 }
+
+#ifndef VULKAN_STATE_INL_INCLUDED
+#include "vulkan_state.inl"
+#endif
 
 #endif

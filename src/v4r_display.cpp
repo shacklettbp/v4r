@@ -10,10 +10,17 @@ using namespace std;
 
 namespace v4r {
 
+struct PresentationSync {
+    VkSemaphore swapchainReady;
+    VkSemaphore renderReady;
+};
+
 struct PresentationState {
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;
+    VkExtent2D swapchainSize;
     DynArray<VkImage> images;
+    DynArray<PresentationSync> syncs;
 };
 
 template struct HandleDeleter<PresentationState>;
@@ -97,7 +104,8 @@ VkPresentModeKHR selectSwapchainMode(const InstanceState &inst,
 
 PresentationState makePresentationState(const InstanceState &inst,
                                         const DeviceState &dev,
-                                        GLFWwindow *window)
+                                        GLFWwindow *window,
+                                        uint32_t num_frames_inflight)
 {
     VkSurfaceKHR surface = getWindowSurface(inst, window);
 
@@ -171,20 +179,263 @@ PresentationState makePresentationState(const InstanceState &inst,
     REQ_VK(dev.dt.getSwapchainImagesKHR(dev.hdl, swapchain, &num_images,
                                         swapchain_images.data()));
 
+    DynArray<PresentationSync> ready_semaphores(num_frames_inflight);
+
+    for (uint32_t sema_idx = 0; sema_idx < num_frames_inflight; sema_idx++) {
+        ready_semaphores[sema_idx] = {
+            makeBinarySemaphore(dev),
+            makeBinarySemaphore(dev)
+        };
+    }
+
     return PresentationState {
         surface,
         swapchain,
-        move(swapchain_images)
+        swapchain_size,
+        move(swapchain_images),
+        move(ready_semaphores)
     };
 }
 
 PresentCommandStream::PresentCommandStream(CommandStream &&base,
-                                           GLFWwindow *window)
+                                           GLFWwindow *window,
+                                           bool benchmark_mode)
     : CommandStream(move(base)),
       presentation_state_(Handle<PresentationState>(
             new PresentationState(
-                    makePresentationState(state_->inst, state_->dev, window))))
-{}
+                    makePresentationState(state_->inst, state_->dev, window,
+                                          state_->getNumFrames())))),
+      benchmark_mode_(benchmark_mode)
+{
+    if (benchmark_mode) {
+        const DeviceState &dev = state_->dev;
+        VkFence fence = state_->getFence(0);
+
+        VkCommandBuffer transition_cmd = makeCmdBuffer(dev,
+                                                       state_->gfxPool);
+
+        VkCommandBufferBeginInfo begin_info {};
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        REQ_VK(dev.dt.beginCommandBuffer(transition_cmd, &begin_info));
+
+        vector<VkImageMemoryBarrier> barriers;
+        for (VkImage image : presentation_state_->images) {
+            barriers.push_back({
+                VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                nullptr,
+                0,
+                0,
+                VK_IMAGE_LAYOUT_UNDEFINED,
+                VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                VK_QUEUE_FAMILY_IGNORED,
+                VK_QUEUE_FAMILY_IGNORED,
+                image,
+                {
+                    VK_IMAGE_ASPECT_COLOR_BIT,
+                    0, 1, 0, 1
+                }
+            });
+        }
+
+        dev.dt.cmdPipelineBarrier(transition_cmd, 
+                                  VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                  VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                  0,
+                                  0, nullptr, 0, nullptr,
+                                  static_cast<uint32_t>(barriers.size()),
+                                  barriers.data());
+
+        REQ_VK(dev.dt.endCommandBuffer(transition_cmd));
+
+        VkSubmitInfo transition_submit {
+            VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            nullptr,
+            0, nullptr, nullptr,
+            1u, &transition_cmd,
+            0, nullptr
+        };
+
+        state_->gfxQueue.submit(dev, 1, &transition_submit, fence);
+        waitForFenceInfinitely(dev, fence);
+        resetFence(dev, fence);
+
+        dev.dt.freeCommandBuffers(dev.hdl, state_->gfxPool,
+                                  1u, &transition_cmd);
+    }
+}
+
+RenderSync PresentCommandStream::render(const vector<Environment> &elems)
+{
+    uint32_t frame_idx = state_->getCurrentFrame();
+
+    auto present_sync = presentation_state_->syncs[frame_idx];
+    VkSemaphore swapchain_ready = present_sync.swapchainReady;
+    VkSemaphore render_ready = present_sync.renderReady;
+
+    uint32_t swapchain_idx;
+    REQ_VK(state_->dev.dt.acquireNextImageKHR(state_->dev.hdl,
+                                              presentation_state_->swapchain,
+                                              0, swapchain_ready,
+                                              VK_NULL_HANDLE,
+                                              &swapchain_idx));
+
+    VkImage swapchain_img = presentation_state_->images[swapchain_idx];
+
+    state_->render(elems, [&, dev=&state_->dev](
+                              uint32_t num_commands,
+                              const VkCommandBuffer *commands,
+                              VkSemaphore external_semaphore,
+                              VkFence fence) {
+        array render_signals { external_semaphore, render_ready };
+
+        if (benchmark_mode_) {
+            VkSubmitInfo gfx_submit {
+                VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                nullptr,
+                0, nullptr, nullptr,
+                num_commands, commands,
+                static_cast<uint32_t>(render_signals.size()), 
+                render_signals.data()
+            };
+
+            state_->gfxQueue.submit(*dev, 1, &gfx_submit, fence);
+            return;
+        }
+
+        VkCommandBuffer blit_cmd = makeCmdBuffer(*dev, state_->gfxPool);
+        VkCommandBufferBeginInfo begin_info {};
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        REQ_VK(dev->dt.beginCommandBuffer(blit_cmd, &begin_info));
+
+        VkImageMemoryBarrier barrier {
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            nullptr,
+            VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+            VK_ACCESS_TRANSFER_WRITE_BIT,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_QUEUE_FAMILY_IGNORED,
+            VK_QUEUE_FAMILY_IGNORED,
+            swapchain_img,
+            {
+                VK_IMAGE_ASPECT_COLOR_BIT,
+                0, 1, 0, 1
+            }
+        };
+
+        dev->dt.cmdPipelineBarrier(
+                blit_cmd,
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0,
+                0, nullptr, 0, nullptr,
+                1, &barrier);
+
+        glm::u32vec2 fb_offset = state_->getFBOffset(frame_idx);
+        glm::u32vec2 render_extent = state_->getFrameExtent();
+        VkImage render_img = state_->getColorImage(frame_idx);
+
+        VkImageBlit blit_region {
+            { VK_IMAGE_ASPECT_COLOR_BIT,
+              0, 0, 1 },
+            {
+                { 
+                    static_cast<int32_t>(
+                        fb_offset.x),
+                    static_cast<int32_t>(
+                        fb_offset.y),
+                    0,
+                },
+                {
+                    static_cast<int32_t>(
+                        fb_offset.x + render_extent.x),
+                    static_cast<int32_t>(
+                        fb_offset.y + render_extent.y),
+                    1
+                }
+            },
+            { VK_IMAGE_ASPECT_COLOR_BIT,
+              0, 0, 1 },
+            {
+                {
+                    0,
+                    0,
+                    0
+                },
+                {
+                    static_cast<int32_t>(
+                            presentation_state_->swapchainSize.width),
+                    static_cast<int32_t>(
+                        presentation_state_->swapchainSize.height),
+                    1
+                }
+            }
+        };
+
+        dev->dt.cmdBlitImage(blit_cmd, render_img,
+                             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                             swapchain_img,
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             1,
+                             &blit_region,
+                             VK_FILTER_NEAREST);
+
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = 0;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        dev->dt.cmdPipelineBarrier(blit_cmd,
+                                   VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                   VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                                   0,
+                                   0, nullptr, 0, nullptr,
+                                   1, &barrier);
+
+        REQ_VK(dev->dt.endCommandBuffer(blit_cmd));
+
+        VkPipelineStageFlags wait_flags =
+            VK_PIPELINE_STAGE_TRANSFER_BIT;
+
+        DynArray<VkCommandBuffer> extended_commands(num_commands + 1);
+        memcpy(extended_commands.data(), commands,
+               num_commands * sizeof(VkCommandBuffer));
+
+        extended_commands[num_commands] = blit_cmd;
+
+        VkSubmitInfo gfx_submit {
+            VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            nullptr,
+            1, &swapchain_ready, &wait_flags,
+            static_cast<uint32_t>(extended_commands.size()),
+            extended_commands.data(),
+            static_cast<uint32_t>(render_signals.size()), 
+            render_signals.data()
+        };
+
+        state_->gfxQueue.submit(*dev, 1, &gfx_submit, fence);
+    });
+
+    array present_waits { render_ready, swapchain_ready };
+
+    VkPresentInfoKHR present_info;
+    present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    present_info.pNext = nullptr;
+    // Hack to skip waiting on swapchain_ready if not in benchmark_mode
+    // The render submit will already have waited on it
+    present_info.waitSemaphoreCount =
+        static_cast<uint32_t>(
+                benchmark_mode_ ? present_waits.size() : 1);
+    present_info.pWaitSemaphores = present_waits.data();
+    present_info.swapchainCount = 1u;
+    present_info.pSwapchains = &presentation_state_->swapchain;
+    present_info.pImageIndices = &swapchain_idx;
+    present_info.pResults = nullptr;
+
+    state_->gfxQueue.presentSubmit(state_->dev, &present_info);
+
+    return RenderSync(&sync_[frame_idx]);
+}
 
 CoreVulkanHandles makeCoreHandles(const RenderConfig &config,
                                   const DeviceUUID &dev_id) {
@@ -200,16 +451,21 @@ CoreVulkanHandles makeCoreHandles(const RenderConfig &config,
     };
 }
 
-BatchPresentRenderer::BatchPresentRenderer(const RenderConfig &cfg)
+BatchPresentRenderer::BatchPresentRenderer(const RenderConfig &cfg,
+                                           bool benchmark_mode)
     : BatchRenderer(make_handle<VulkanState>(cfg, makeCoreHandles(
-            cfg, getUUIDFromCudaID(cfg.gpuID))))
-{}
+            cfg, getUUIDFromCudaID(cfg.gpuID)))),
+      benchmark_mode_(benchmark_mode)
+{
+    assert(benchmark_mode ||
+           cfg.features.outputs & RenderFeatures::Outputs::Color);
+}
 
 PresentCommandStream BatchPresentRenderer::makeCommandStream(
         GLFWwindow *window)
 {
     CommandStream base = BatchRenderer::makeCommandStream();
-    return PresentCommandStream(move(base), window);
+    return PresentCommandStream(move(base), window, benchmark_mode_);
 }
 
 glm::u32vec2 BatchPresentRenderer::getFrameDimensions() const

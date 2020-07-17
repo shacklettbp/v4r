@@ -23,6 +23,9 @@ public:
     inline void submit(const DeviceState &dev, uint32_t submit_count,
                        const VkSubmitInfo *pSubmits, VkFence fence) const;
 
+    inline bool presentSubmit(const DeviceState &dev,
+                              const VkPresentInfoKHR *present_info) const;
+
 private:
     VkQueue queue_hdl_;
     uint32_t num_users_;
