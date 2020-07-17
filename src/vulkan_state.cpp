@@ -8,6 +8,7 @@
 #include <iostream>
 #include <fstream>
 #include <optional>
+#include <tuple>
 #include <vector>
 
 #include <glm/gtx/string_cast.hpp>
@@ -190,7 +191,12 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
     return FramebufferConfig {
         batch_fb_images_wide,
         batch_fb_images_tall,
-        total_fb_width, total_fb_height, frame_color_bytes, frame_depth_bytes,
+        frame_fb_width,
+        frame_fb_height,
+        total_fb_width,
+        total_fb_height,
+        frame_color_bytes,
+        frame_depth_bytes,
         frame_linear_bytes,
         frame_linear_bytes * cfg.numStreams * num_frames_per_stream,
         move(clear_vals)
@@ -304,7 +310,8 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
 
     if (fb_cfg.colorLinearBytesPerFrame > 0) {
         attachments.emplace_back(
-                alloc.makeColorAttachment(fb_cfg.width, fb_cfg.height));
+                alloc.makeColorAttachment(fb_cfg.totalWidth,
+                                          fb_cfg.totalHeight));
 
         VkImageView color_view;
         view_info.image = attachments.back().image;
@@ -318,7 +325,8 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
 
     if (fb_cfg.depthLinearBytesPerFrame > 0) {
         attachments.emplace_back(
-            alloc.makeLinearDepthAttachment(fb_cfg.width, fb_cfg.height));
+            alloc.makeLinearDepthAttachment(fb_cfg.totalWidth,
+                                            fb_cfg.totalHeight));
 
         VkImageView linear_depth_view;
         view_info.image = attachments.back().image;
@@ -331,7 +339,7 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     }
 
     attachments.emplace_back(
-            alloc.makeDepthAttachment(fb_cfg.width, fb_cfg.height));
+            alloc.makeDepthAttachment(fb_cfg.totalWidth, fb_cfg.totalHeight));
 
     view_info.image = attachments.back().image;
     view_info.format = alloc.getFormats().depthAttachment;
@@ -350,8 +358,8 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     fb_info.renderPass = render_pass;
     fb_info.attachmentCount = static_cast<uint32_t>(attachment_views.size());
     fb_info.pAttachments = attachment_views.data();
-    fb_info.width = fb_cfg.width;
-    fb_info.height = fb_cfg.height;
+    fb_info.width = fb_cfg.totalWidth;
+    fb_info.height = fb_cfg.totalHeight;
     fb_info.layers = 1;
 
     VkFramebuffer fb_handle;
@@ -612,7 +620,7 @@ static PipelineState makePipeline(const DeviceState &dev,
     // Viewport
     VkRect2D scissors {
         { 0, 0 },
-        { fb_cfg.width, fb_cfg.height }
+        { fb_cfg.totalWidth, fb_cfg.totalHeight }
     };
 
     VkPipelineViewportStateCreateInfo viewport_info {};
@@ -1220,10 +1228,22 @@ int CommandStreamState::getSemaphoreFD(uint32_t frame_idx) const
 }
 
 VulkanState::VulkanState(const RenderConfig &config, const DeviceUUID &uuid)
+    : VulkanState(config, [&config, &uuid]() {
+        InstanceState inst_state(false, {});
+        DeviceState dev_state(
+                inst_state.makeDevice(uuid,
+                                      config.numStreams + config.numLoaders,
+                                      1,
+                                      config.numLoaders, nullptr));
+        return CoreVulkanHandles { move(inst_state), move(dev_state) };
+    }())
+{}
+
+VulkanState::VulkanState(const RenderConfig &config,
+                         CoreVulkanHandles &&handles)
     : cfg(config),
-      inst(),
-      dev(inst.makeDevice(uuid, cfg.numStreams + cfg.numLoaders, 1,
-                          cfg.numLoaders)),
+      inst(move(handles.inst)),
+      dev(move(handles.dev)),
       queueMgr(dev),
       alloc(dev, inst),
       fbCfg(getFramebufferConfig(cfg)),

@@ -66,6 +66,11 @@ device:
 - vkCmdSetViewport
 - vkGetMemoryFdKHR
 - vkGetSemaphoreFdKHR
+- need_present:
+    - vkCreateSwapchainKHR
+    - vkGetSwapchainImagesKHR
+    - vkAcquireNextImageKHR
+    - vkQueuePresentKHR
 
 instance:
 - vkEnumeratePhysicalDevices
@@ -76,6 +81,10 @@ instance:
 - vkGetPhysicalDeviceQueueFamilyProperties2
 - vkGetInstanceProcAddr
 - vkCreateDevice
-#ifdef VK_USE_PLATFORM_XCB_KHR
-- vkCreateXcbSurfaceKHR
-#endif
+- vkDestroyInstance
+- need_present:
+    - vkDestroySurfaceKHR
+    - vkGetPhysicalDeviceSurfaceCapabilitiesKHR
+    - vkGetPhysicalDeviceSurfaceFormatsKHR
+    - vkGetPhysicalDeviceSurfacePresentModesKHR
+    - vkGetPhysicalDeviceSurfaceSupportKHR

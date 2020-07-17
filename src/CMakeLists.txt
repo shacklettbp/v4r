@@ -53,7 +53,7 @@ add_library(v4r SHARED
     vulkan_handles.hpp vulkan_handles.cpp
     vulkan_memory.hpp vulkan_memory.cpp
     vulkan_state.hpp vulkan_state.cpp
-    ../include/v4r.hpp v4r.cpp
+    ../include/v4r.hpp v4r.cpp v4r_utils.hpp
     ../include/v4r/environment.hpp ../include/v4r/environment.inl
     ../include/v4r/assets.hpp ../include/v4r/assets.inl
     ../include/v4r/config.hpp
@@ -63,6 +63,16 @@ add_library(v4r SHARED
 add_dependencies(v4r generate_vk_dispatch compile_shaders)
 
 target_link_libraries(v4r Vulkan::Vulkan CUDA::cudart Threads::Threads assimp::assimp)
+
+if (glfw3_FOUND)
+    add_library(v4r_display SHARED
+        v4r_display.cpp ../include/v4r/display.hpp
+    )
+
+    add_dependencies(v4r_display v4r)
+    target_link_libraries(v4r_display v4r glfw)
+endif()
+
 
 # Debug utilities for frontend
 

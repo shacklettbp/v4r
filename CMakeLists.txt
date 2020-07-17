@@ -44,15 +44,6 @@ set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
 
-IF (NOT DEFINED HEADLESS)
-    set(HEADLESS 1)
-ENDIF()
-
-IF (NOT HEADLESS)
-    find_package(XCB REQUIRED)
-    add_definitions(-DVK_USE_PLATFORM_XCB_KHR)
-ENDIF()
-
 include_directories(include external)
 
 find_package(CUDAToolkit REQUIRED)
@@ -81,6 +72,8 @@ IF (NOT ASSIMP_FOUND OR USE_BUNDLED)
     add_subdirectory(external/assimp)
     include_directories(external/assimp/include)
 ENDIF()
+
+find_package(glfw3 3.3)
 
 add_subdirectory(src)
 add_subdirectory(bin)

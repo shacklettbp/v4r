@@ -201,7 +201,7 @@ static SceneDescription parseAssimpScene(const string &scene_path,
                                          const glm::mat4 &coordinate_txfm)
 {
     Assimp::Importer importer;
-    int flags = aiProcess_PreTransformVertices | aiProcess_Triangulate;
+    int flags = aiProcess_JoinIdenticalVertices | aiProcess_Triangulate;
     const aiScene *raw_scene = importer.ReadFile(scene_path.c_str(), flags);
     if (!raw_scene) {
         cerr << "Failed to load scene " << scene_path << ": " <<

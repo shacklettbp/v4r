@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <memory>
 
+#include <v4r/utils.hpp>
+
 namespace v4r {
 
 [[noreturn]] void fatalExit() noexcept;
@@ -197,6 +199,22 @@ private:
     std::unique_ptr<T[]> data_;
     size_t num_elems_;
 };
+
+template <typename T, typename... Args>
+inline Handle<T> make_handle(Args&&... args)
+{
+    return Handle<T>(new T(std::forward<Args>(args)...));
+};
+
+template <typename T>
+inline void HandleDeleter<T>::operator()(std::remove_extent_t<T> *ptr) const
+{
+    if constexpr (std::is_array_v<T>) {
+        delete[] ptr;
+    } else {
+        delete ptr;
+    }
+}
 
 }
 

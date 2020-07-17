@@ -73,7 +73,7 @@ public:
     uint8_t * getColorDevPtr(bool alternate_buffer = false) const;
     float * getDepthDevPtr(bool alternate_buffer = false) const;
 
-private:
+protected:
     CommandStream(Handle<CommandStreamState> &&state,
                   const CudaState &cuda_global,
                   uint32_t render_width,
@@ -81,6 +81,8 @@ private:
                   bool double_buffered);
 
     Handle<CommandStreamState> state_;
+
+private:
     Handle<CudaStreamState[]> cuda_;
     Handle<SyncState[]> sync_;
 
@@ -97,8 +99,11 @@ public:
     AssetLoader makeLoader();
     CommandStream makeCommandStream();
 
-private:
+protected:
+    BatchRenderer(Handle<VulkanState> &&vk_state);
     Handle<VulkanState> state_;
+
+private:
     Handle<CudaState> cuda_;
 };
 

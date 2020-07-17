@@ -2,6 +2,8 @@
 #define VULKAN_HANDLES_HPP_INCLUDED
 
 #include <array>
+#include <optional>
+#include <vector>
 
 #include <vulkan/vulkan.h>
 
@@ -26,6 +28,8 @@ public:
     const DeviceDispatch dt;
 
     DeviceState() = delete;
+    DeviceState(const DeviceState &) = delete;
+    DeviceState(DeviceState &&) = default;
 };
 
 struct InstanceState {
@@ -33,16 +37,24 @@ public:
     const VkInstance hdl;
     const InstanceDispatch dt;
 
-    InstanceState();
+    InstanceState(bool need_present,
+                  const std::vector<const char *> &extra_exts);
+    InstanceState(const InstanceState &) = delete;
+    InstanceState(InstanceState &&) = default;
 
     DeviceState makeDevice(const DeviceUUID &uuid,
                            uint32_t desired_gfx_queues,
                            uint32_t desired_compute_queues,
-                           uint32_t desired_transfer_queues) const;
+                           uint32_t desired_transfer_queues,
+                           std::add_pointer_t<
+                               VkBool32(VkInstance,
+                                        VkPhysicalDevice,
+                                        uint32_t)> present_check) const;
 private:
     const VkDebugUtilsMessengerEXT debug_;
 
-    InstanceState(bool enable_validation);
+    InstanceState(bool enable_validation, bool need_present,
+                  const std::vector<const char *> &extra_exts);
 
     VkPhysicalDevice findPhysicalDevice(const DeviceUUID &uuid) const;
 };

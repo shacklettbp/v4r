@@ -21,11 +21,11 @@ static inline PFN_vkVoidFunction checkPtr(PFN_vkVoidFunction ptr,
     return ptr;
 }
 
-InstanceDispatch::InstanceDispatch(VkInstance ctx)
+InstanceDispatch::InstanceDispatch(VkInstance ctx, bool need_present)
 #include "dispatch_instance_impl.cpp"
 {}
 
-DeviceDispatch::DeviceDispatch(VkDevice ctx)
+DeviceDispatch::DeviceDispatch(VkDevice ctx, bool need_present)
 #include "dispatch_device_impl.cpp"
 {}
 

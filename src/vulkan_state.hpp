@@ -55,8 +55,10 @@ public:
     uint32_t numImagesWidePerBatch;
     uint32_t numImagesTallPerBatch;
 
-    uint32_t width;
-    uint32_t height;
+    uint32_t frameWidth;
+    uint32_t frameHeight;
+    uint32_t totalWidth;
+    uint32_t totalHeight;
 
     uint64_t colorLinearBytesPerFrame;
     uint64_t depthLinearBytesPerFrame;
@@ -179,11 +181,15 @@ private:
     uint32_t cur_frame_;
 };
 
+struct CoreVulkanHandles {
+    InstanceState inst;
+    DeviceState dev;
+};
+
 class VulkanState {
 public:
     VulkanState(const RenderConfig &cfg, const DeviceUUID &uuid);
-    VulkanState(const VulkanState &) = delete;
-    VulkanState(VulkanState &&) = delete;
+    VulkanState(const RenderConfig &cfg, CoreVulkanHandles &&handles);
 
     LoaderState makeLoader();
     CommandStreamState makeStream();

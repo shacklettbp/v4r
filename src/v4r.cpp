@@ -2,6 +2,7 @@
 
 #include "cuda_state.hpp"
 #include "dispatch.hpp"
+#include "v4r_utils.hpp"
 #include "vulkan_state.hpp"
 #include "scene.hpp"
 
@@ -13,28 +14,6 @@
 using namespace std;
 
 namespace v4r {
-
-struct SyncState {
-    const DeviceState &dev;
-    const VkFence fence;
-    cudaExternalSemaphore_t cudaSemaphore;
-};
-
-template <typename T, typename... Args>
-static inline Handle<T> make_handle(Args&&... args)
-{
-    return Handle<T>(new T(forward<Args>(args)...));
-};
-
-template <typename T>
-void HandleDeleter<T>::operator()(remove_extent_t<T> *ptr) const
-{
-    if constexpr (is_array_v<T>) {
-        delete[] ptr;
-    } else {
-        delete ptr;
-    }
-}
 
 template struct HandleDeleter<LoaderState>;
 template struct HandleDeleter<CommandStreamState>;
@@ -253,8 +232,14 @@ RenderSync CommandStream::render(const std::vector<Environment> &elems)
 }
 
 BatchRenderer::BatchRenderer(const RenderConfig &cfg)
-    : state_(make_handle<VulkanState>(cfg, getUUIDFromCudaID(cfg.gpuID))),
-      cuda_(make_handle<CudaState>(cfg.gpuID, state_->getFramebufferFD(),
+    : BatchRenderer(
+            make_handle<VulkanState>(cfg, getUUIDFromCudaID(cfg.gpuID)))
+{}
+
+BatchRenderer::BatchRenderer(Handle<VulkanState> &&vk_state)
+    : state_(move(vk_state)),
+      cuda_(make_handle<CudaState>(state_->cfg.gpuID,
+                                   state_->getFramebufferFD(),
                                    state_->getFramebufferBytes()))
 {}
 

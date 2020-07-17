@@ -22,15 +22,6 @@ extern "C" {
 
 namespace v4r {
 
-static const char *device_extensions[] = {
-    VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
-    VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
-    VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME
-};
-
-static constexpr uint32_t num_device_extensions =
-    sizeof(device_extensions) / sizeof(const char *);
-
 static bool enableValidation()
 {
     char *enable_env = getenv("V4R_VALIDATE");
@@ -57,7 +48,8 @@ static bool enableValidation()
     return false;
 }
 
-static VkInstance createInstance(bool enable_validation)
+static VkInstance createInstance(bool enable_validation,
+                                 const vector<const char *> &extra_exts)
 {
     VkApplicationInfo app_info {};
     app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -66,7 +58,7 @@ static VkInstance createInstance(bool enable_validation)
     app_info.apiVersion = VK_API_VERSION_1_2;
 
     vector<const char *> layers;
-    vector<const char *> extensions;
+    vector<const char *> extensions(extra_exts);
 
     if (enable_validation) {
         layers.push_back("VK_LAYER_KHRONOS_validation");
@@ -135,13 +127,15 @@ static VkDebugUtilsMessengerEXT makeDebugCallback(VkInstance hdl,
     return messenger;
 }
 
-InstanceState::InstanceState()
-    : InstanceState(enableValidation())
+InstanceState::InstanceState(bool need_present,
+                             const vector<const char *> &extra_exts)
+    : InstanceState(enableValidation(), need_present, extra_exts)
 {}
 
-InstanceState::InstanceState(bool enable_validation)
-    : hdl(createInstance(enable_validation)),
-      dt(hdl),
+InstanceState::InstanceState(bool enable_validation, bool need_present,
+                             const vector<const char *> &extra_exts)
+    : hdl(createInstance(enable_validation, extra_exts)),
+      dt(hdl, need_present),
       debug_(enable_validation ? makeDebugCallback(hdl, dt) : VK_NULL_HANDLE)
 {}
 
@@ -187,8 +181,23 @@ DeviceState InstanceState::makeDevice(
         const DeviceUUID &uuid,
         uint32_t desired_gfx_queues,
         uint32_t desired_compute_queues,
-        uint32_t desired_transfer_queues) const
+        uint32_t desired_transfer_queues,
+        add_pointer_t<VkBool32(VkInstance,
+                               VkPhysicalDevice,
+                               uint32_t)> present_check) const
 {
+    vector<const char *> extensions {
+        VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
+        VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME
+    };
+
+    bool need_present = present_check != nullptr;
+
+    if (need_present) {
+        extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    }
+
     VkPhysicalDevice phy = findPhysicalDevice(uuid);
 
     VkPhysicalDeviceFeatures2 feats;
@@ -235,8 +244,8 @@ DeviceState InstanceState::makeDevice(
 
             compute_queue_family = i;;
         } else if (!gfx_queue_family &&
-                   (qf_prop.queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
-
+                   (qf_prop.queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
+                   (!need_present || present_check(hdl, phy, i))) {
             gfx_queue_family = i;
         }
 
@@ -278,8 +287,9 @@ DeviceState InstanceState::makeDevice(
     dev_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     dev_create_info.queueCreateInfoCount = 3;
     dev_create_info.pQueueCreateInfos = queue_infos.data();
-    dev_create_info.enabledExtensionCount = num_device_extensions;
-    dev_create_info.ppEnabledExtensionNames = device_extensions;
+    dev_create_info.enabledExtensionCount =
+        static_cast<uint32_t>(extensions.size());
+    dev_create_info.ppEnabledExtensionNames = extensions.data();
 
     dev_create_info.pEnabledFeatures = nullptr;
 
@@ -309,7 +319,7 @@ DeviceState InstanceState::makeDevice(
         num_transfer_queues,
         phy,
         dev,
-        DeviceDispatch(dev)
+        DeviceDispatch(dev, need_present)
     };
 }
 

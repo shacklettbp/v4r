@@ -27,3 +27,10 @@ add_executable(lighting
     lighting.cpp
 )
 target_link_libraries(lighting ${V4R_HEADLESS_LIBS} v4r_debug)
+
+if (TARGET v4r_display)
+    add_executable(display
+        display.cpp
+    )
+    target_link_libraries(display v4r v4r_display v4r_debug)
+endif()
