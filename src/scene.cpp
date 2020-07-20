@@ -196,6 +196,12 @@ shared_ptr<Material> makeSharedMaterial(
     });
 }
 
+// FIXME remove
+static void deleter_hack(void *ptr)
+{
+    delete[] (uint8_t *)ptr;
+}
+
 template <typename VertexType, typename MaterialDescType>
 static SceneDescription parseAssimpScene(const string &scene_path,
                                          const glm::mat4 &coordinate_txfm)
@@ -213,7 +219,23 @@ static SceneDescription parseAssimpScene(const string &scene_path,
     vector<shared_ptr<Mesh>> geometry;
     vector<uint32_t> mesh_materials;
 
-    auto material_params = assimpParseMaterials<MaterialDescType>(raw_scene);
+    // FIXME remove
+    std::shared_ptr<Texture> default_diffuse(new Texture {
+        1,
+        1,
+        4,
+
+        ManagedArray(new uint8_t[4], deleter_hack)
+    });
+
+    default_diffuse->raw_image[0] = 255;
+    default_diffuse->raw_image[1] = 255;
+    default_diffuse->raw_image[2] = 255;
+    default_diffuse->raw_image[3] = 255;
+
+    auto material_params = assimpParseMaterials<MaterialDescType>(
+            raw_scene, default_diffuse);
+
     materials.reserve(material_params.size());
     for (auto &&params : material_params) {
         materials.emplace_back(makeSharedMaterial(move(params)));

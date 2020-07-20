@@ -114,7 +114,8 @@ LitRendererInputs::MaterialDescription makeMaterialParams(
 
 template <typename MaterialParamsType>
 std::vector<MaterialParamsType> assimpParseMaterials(
-        const aiScene *raw_scene)
+        const aiScene *raw_scene,
+        const std::shared_ptr<Texture> &default_diffuse)
 {
     std::vector<MaterialParamsType> materials;
     
@@ -161,6 +162,10 @@ std::vector<MaterialParamsType> assimpParseMaterials(
         if (diffuse_tex) {
             materials.emplace_back(
                     makeMaterialParams<MaterialParamsType>(move(diffuse_tex)));
+        } else {
+            materials.emplace_back(
+                    makeMaterialParams<MaterialParamsType>(
+                            std::shared_ptr<Texture>(default_diffuse)));
         }
     }
 
