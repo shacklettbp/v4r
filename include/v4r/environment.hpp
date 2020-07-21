@@ -13,6 +13,7 @@ namespace v4r {
 class Environment {
 public:
     Environment(Environment &&) = default;
+    Environment & operator=(Environment &&) = default;
 
     // Instance transformations
     uint32_t addInstance(uint32_t model_idx, uint32_t material_idx,
