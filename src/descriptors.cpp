@@ -56,6 +56,7 @@ DescriptorSet DescriptorManager::makeSet()
     VkDescriptorSet desc_set = makeDescriptorSet(dev, cur_pool.pool, layout_);
 
     cur_pool.numUsed++;
+    cur_pool.numActive++;
 
     if (cur_pool.numUsed == VulkanConfig::descriptor_pool_size) {
         used_pools_.splice(used_pools_.end(), free_pools_,
