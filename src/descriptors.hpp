@@ -135,11 +135,12 @@ using LitPerRenderLayout = DescriptorLayout<
 
 struct PoolState {
     PoolState(VkDescriptorPool p)
-        : pool(p), numActive(0)
+        : pool(p), numUsed(0), numActive(0)
     {}
 
     VkDescriptorPool pool;
-    std::atomic_uint64_t numActive;
+    uint32_t numUsed;
+    std::atomic_uint32_t numActive;
 };
 
 struct DescriptorSet {
