@@ -73,7 +73,7 @@ IF (NOT ASSIMP_FOUND OR USE_BUNDLED)
     include_directories(external/assimp/include)
 ENDIF()
 
-find_package(glfw3 3.3)
+find_package(glfw3 3.3 QUIET)
 
 add_subdirectory(src)
 add_subdirectory(bin)
