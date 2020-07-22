@@ -340,7 +340,7 @@ uint32_t Environment::addLight(const glm::vec3 &position,
         light_id = state_->lightIDs.size() - 1;
     }
 
-    state_->lightReverseIDs[light_id] = light_idx;
+    state_->lightReverseIDs.push_back(light_idx);
     return light_id;
 }
 

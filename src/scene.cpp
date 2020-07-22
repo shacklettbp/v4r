@@ -228,10 +228,10 @@ static SceneDescription parseAssimpScene(const string &scene_path,
         ManagedArray(new uint8_t[4], deleter_hack)
     });
 
-    default_diffuse->raw_image[0] = 255;
-    default_diffuse->raw_image[1] = 255;
-    default_diffuse->raw_image[2] = 255;
-    default_diffuse->raw_image[3] = 255;
+    default_diffuse->raw_image[0] = 127;
+    default_diffuse->raw_image[1] = 127;
+    default_diffuse->raw_image[2] = 127;
+    default_diffuse->raw_image[3] = 127;
 
     auto material_params = assimpParseMaterials<MaterialDescType>(
             raw_scene, default_diffuse);
