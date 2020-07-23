@@ -17,21 +17,12 @@
 
 #include "descriptors.hpp"
 #include "scene.hpp"
+#include "shader.hpp"
 #include "utils.hpp"
 #include "vulkan_handles.hpp"
 #include "vulkan_memory.hpp"
 
 namespace v4r {
-
-struct RenderPushConstant {
-    uint32_t batchIdx;
-};
-
-// FIXME unify with shader
-struct ViewInfo {
-    glm::mat4 projection;
-    glm::mat4 view;
-};
 
 struct PerRenderDescriptorConfig {
     VkDescriptorSetLayout layout;

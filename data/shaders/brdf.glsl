@@ -38,7 +38,7 @@ vec3 blinnPhong(BRDFParams bp)
 
     vec3 diffuse = M_1_PI * bp.Li * bp.albedo;
 
-    vec3 specular = vec3(0.5f) * pow(max(dot(bp.N, bp.H), 0.f), 256.f);
+    vec3 specular = vec3(0.5f) * pow(max(dot(bp.N, bp.H), 0.f), 8.f);
 
     return bp.NdL * (diffuse + specular);
 }

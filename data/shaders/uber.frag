@@ -2,6 +2,8 @@
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_EXT_scalar_block_layout : require
 
+#include "shader_common.h"
+
 #ifdef FRAG_NEED_MATERIAL
 #ifdef TEXTURE_COLOR // FIXME
 
@@ -23,28 +25,18 @@ layout (location = INSTANCE_LOC) flat in uint instance_id;
 
 #ifdef LIT_PIPELINE
 
-struct ViewInfo {
-    mat4 projection;
-    mat4 view;
-};
-
 layout (set = 0, binding = 1) readonly buffer ViewInfos {
     ViewInfo view_info[];
 };
 
-layout (push_constant) uniform
-RenderPushConstant {
-    uint batchIdx;
-} render_const;
+layout (push_constant, scalar) uniform PushConstant {
+    RenderPushConstant render_const;
+};
 
 #include "brdf.glsl"
 
 // FIXME
 #define MAX_LIGHTS 500
-struct LightProperties {
-    vec4 position;
-    vec4 color;
-};
 
 layout (set = 0, binding = LIGHT_BIND, scalar) uniform LightingInfo {
     LightProperties lights[MAX_LIGHTS];

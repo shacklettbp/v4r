@@ -1,14 +1,10 @@
 #version 450
 #extension GL_EXT_scalar_block_layout : require
 
-layout (set = 0, binding = 0) readonly buffer
-Transforms {
-    mat4 modelTransforms[];
-};
+#include "shader_common.h"
 
-struct ViewInfo {
-    mat4 projection;
-    mat4 view;
+layout (set = 0, binding = 0) readonly buffer Transforms {
+    mat4 modelTransforms[];
 };
 
 // FIXME switch back to a max sized uniform
@@ -16,10 +12,9 @@ layout (set = 0, binding = 1) readonly buffer ViewInfos {
     ViewInfo view_info[];
 };
 
-layout (push_constant) uniform
-RenderPushConstant {
-    uint batchIdx;
-} render_const;
+layout (push_constant, scalar) uniform PushConstant {
+    RenderPushConstant render_const;
+};
 
 layout (location = 0) in vec3 in_pos;
 
