@@ -15,6 +15,9 @@
             "supported_color_sources": [
                 "texture",
                 "none"
+            ],
+            "variants": [
+                "NONUNIFORM_SCALE"
             ]
         }
     }

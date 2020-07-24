@@ -76,6 +76,7 @@ def generate_defines(cfg_file, cmake):
 
                 if need_lighting:
                     flags.append("LIT_PIPELINE")
+                    flags.append("NONUNIFORM_SCALE")
                     flags.append(f"LIGHT_BIND={iface.bind(0)}")
                     flags.append(f"NORMAL_IN_LOC={iface.vert_in()}")
                     flags.append(f"NORMAL_LOC={iface.vert_out()}")

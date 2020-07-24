@@ -25,7 +25,7 @@ layout (location = INSTANCE_LOC) flat in uint instance_id;
 
 #ifdef LIT_PIPELINE
 
-layout (set = 0, binding = 1) readonly buffer ViewInfos {
+layout (set = 0, binding = 0) readonly buffer ViewInfos {
     ViewInfo view_info[];
 };
 
