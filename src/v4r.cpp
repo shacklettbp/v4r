@@ -42,7 +42,7 @@ AssetLoader::AssetLoader(Handle<LoaderState> &&state)
 shared_ptr<Mesh>
 AssetLoader::loadMesh(const string &geometry_path)
 {
-    return state_->assetHelper.loadMesh(geometry_path);
+    return state_->loadMesh(geometry_path);
 }
 
 template <typename VertexType>
@@ -51,17 +51,6 @@ shared_ptr<Mesh> AssetLoader::loadMesh(
 {
     return state_->makeMesh(move(vertices), move(indices));
 }
-
-template shared_ptr<Mesh> AssetLoader::loadMesh(
-        vector<UnlitRendererInputs::NoColorVertex>, vector<uint32_t>);
-template shared_ptr<Mesh> AssetLoader::loadMesh(
-        vector<UnlitRendererInputs::ColoredVertex>, vector<uint32_t>);
-template shared_ptr<Mesh> AssetLoader::loadMesh(
-        vector<UnlitRendererInputs::TexturedVertex>, vector<uint32_t>);
-template shared_ptr<Mesh> AssetLoader::loadMesh(
-        vector<LitRendererInputs::NoColorVertex>, vector<uint32_t>);
-template shared_ptr<Mesh> AssetLoader::loadMesh(
-        vector<LitRendererInputs::TexturedVertex>, vector<uint32_t>);
 
 shared_ptr<Texture> AssetLoader::loadTexture(
         const string &texture_path)
@@ -83,32 +72,23 @@ shared_ptr<Texture> AssetLoader::loadTexture(
     return state_->loadTexture(raw);
 }
 
-template <typename MaterialDescType>
+template <typename MaterialParamsType>
 shared_ptr<Material> AssetLoader::makeMaterial(
-        MaterialDescType params)
+        MaterialParamsType params)
 {
     return state_->makeMaterial(params);
 }
 
-template shared_ptr<Material> AssetLoader::makeMaterial(
-        UnlitRendererInputs::MaterialDescription);
-template shared_ptr<Material> AssetLoader::makeMaterial(
-        LitRendererInputs::MaterialDescription);
-
 shared_ptr<Scene> AssetLoader::makeScene(
         const SceneDescription &desc)
 {
-    return state_->loadScene(desc);
+    return state_->makeScene(desc);
 }
 
 shared_ptr<Scene> AssetLoader::loadScene(
         const string &scene_path)
 {
-    SceneDescription desc =
-        state_->assetHelper.parseScene(scene_path,
-                                       state_->coordinateTransform);
-
-    return makeScene(desc);
+    return state_->loadScene(scene_path);
 }
 
 RenderSync::RenderSync(const SyncState *state)
@@ -231,14 +211,17 @@ RenderSync CommandStream::render(const std::vector<Environment> &elems)
     return RenderSync(&sync_[frame_idx]);
 }
 
-BatchRenderer::BatchRenderer(const RenderConfig &cfg)
+template <typename FeaturesType>
+BatchRenderer::BatchRenderer(const RenderConfig<FeaturesType> &cfg)
     : BatchRenderer(
-            make_handle<VulkanState>(cfg, getUUIDFromCudaID(cfg.gpuID)))
+            make_handle<VulkanState>(cfg, getUUIDFromCudaID(cfg.gpuID)),
+            cfg.gpuID)
 {}
 
-BatchRenderer::BatchRenderer(Handle<VulkanState> &&vk_state)
+BatchRenderer::BatchRenderer(Handle<VulkanState> &&vk_state,
+                             int gpu_id)
     : state_(move(vk_state)),
-      cuda_(make_handle<CudaState>(state_->cfg.gpuID,
+      cuda_(make_handle<CudaState>(gpu_id,
                                    state_->getFramebufferFD(),
                                    state_->getFramebufferBytes()))
 {}
@@ -253,10 +236,11 @@ CommandStream BatchRenderer::makeCommandStream()
 {
     auto stream_state = make_handle<CommandStreamState>(state_->makeStream());
 
+    glm::u32vec2 img_dim = state_->getImageDimensions();
+
     return CommandStream(move(stream_state), *cuda_,
-                         state_->cfg.imgWidth, state_->cfg.imgHeight,
-                         state_->cfg.features.options &
-                             RenderFeatures::Options::DoubleBuffered);
+                         img_dim.x, img_dim.y,
+                         state_->isDoubleBuffered());
 }
 
 Environment::Environment(Handle<EnvironmentState> &&state)
@@ -268,7 +252,7 @@ Environment::Environment(Handle<EnvironmentState> &&state)
 {}
 
 uint32_t Environment::addInstance(uint32_t model_idx, uint32_t material_idx,
-                                  const glm::mat4 &model_matrix)
+                                  const glm::mat4x3 &model_matrix)
 {
     transforms_[model_idx].emplace_back(model_matrix);
     materials_[model_idx].emplace_back(material_idx);

@@ -28,12 +28,15 @@ layout (location = NORMAL_TXFM1_LOC) in vec3 normal_txfm1;
 layout (location = NORMAL_TXFM2_LOC) in vec3 normal_txfm2;
 layout (location = NORMAL_TXFM3_LOC) in vec3 normal_txfm3;
 #endif
+
 #endif
 
-#if defined(TEXTURE_COLOR)
+#ifdf HAS_TEXTURES
 layout (location = UV_IN_LOC) in vec2 in_uv;
 layout (location = UV_LOC) out vec2 out_uv;
-#elif defined(VERTEX_COLOR)
+#endif
+
+#ifdef VERTEX_COLOR
 layout (location = COLOR_IN_LOC) in vec3 in_color;
 layout (location = COLOR_LOC) out vec3 out_color;
 #endif
@@ -42,17 +45,17 @@ layout (location = COLOR_LOC) out vec3 out_color;
 layout (location = DEPTH_LOC) out float out_linear_depth;
 #endif
 
-#ifdef FRAG_NEED_MATERIAL
-layout (location = INSTANCE_LOC) out uint instance_id;
+#ifdef HAS_MATERIALS
+layout (location = MATERIAL_IN_LOC) in uint in_material_idx;
+layout (location = MATERIAL_LOC) out uint material_idx;
 #endif
-
 
 void main() 
 {
     mat4 model(vec4(txfm1.xyz,                 0.f),
-               vec4(txfm2.xyz,                 0.f),
-               vec4(txfm3.xyz,                 0.f),
-               vec4(txfm1.w, txfm2.w, txfm3.w, 1.f));
+               vec4(txfm1.w, txfm2.xy,         0.f),
+               vec4(txfm2.zw, txfm3.x,         0.f),
+               vec4(txfm3.yzw,                 1.f));
 
     mat4 mv = view_info[render_const.batchIdx].view * model;
 
@@ -61,18 +64,23 @@ void main()
     gl_Position = view_info[render_const.batchIdx].projection * camera_space;
 
 #ifdef LIT_PIPELINE
+
 #ifdef NONUNIFORM_SCALE
     mat3 inv_transpose = mat3(normal_txfm1, normal_txfm2, normal_txfm3);
 #else
     mat3 inv_transpose = mat3(mv);
 ##endif
+
     out_normal = mat3(mv) * in_normal;
     out_camera_pos = camera_space.xyz;
+
 #endif
 
-#if defined(TEXTURE_COLOR)
+#ifdef HAS_TEXTURES
     out_uv = in_uv;
-#elif defined(VERTEX_COLOR)
+#endif
+
+#ifdef VERTEX_COLOR
     out_color = in_color;
 #endif
 
@@ -80,7 +88,7 @@ void main()
     out_linear_depth = gl_Position.w;
 #endif
 
-#ifdef FRAG_NEED_MATERIAL
-    instance_id = gl_InstanceIndex;
+#ifdef MATERIAL_PARAMS
+    material_idx = in_material_idx;
 #endif
 }

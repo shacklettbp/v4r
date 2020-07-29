@@ -27,9 +27,9 @@ public:
 
     std::shared_ptr<Texture> loadTexture(const std::string &texture_path);
 
-    template <typename MaterialDescType>
+    template <typename MaterialParamsType>
     std::shared_ptr<Material> makeMaterial(
-            MaterialDescType params);
+            MaterialParamsType params);
 
     std::shared_ptr<Scene> makeScene(
             const SceneDescription &desc);
@@ -90,13 +90,14 @@ friend class BatchRenderer;
 
 class BatchRenderer {
 public:
-    BatchRenderer(const RenderConfig &cfg);
+    template <typename FeaturesType>
+    BatchRenderer(const RenderConfig<FeaturesType> &cfg);
 
     AssetLoader makeLoader();
     CommandStream makeCommandStream();
 
 protected:
-    BatchRenderer(Handle<VulkanState> &&vk_state);
+    BatchRenderer(Handle<VulkanState> &&vk_state, int gpu_id);
     Handle<VulkanState> state_;
 
 private:

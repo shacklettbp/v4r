@@ -2,6 +2,7 @@
 #define ASSET_LOAD_INL_INCLUDED
 
 #include "asset_load.hpp"
+#include "scene.hpp"
 
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
@@ -84,40 +85,11 @@ static const std::shared_ptr<Texture> assimpLoadTexture(
 }
 
 template <typename MaterialParamsType>
-MaterialParamsType makeMaterialParams(
-        std::shared_ptr<Texture> &&)
-{
-    std::cerr << typeid(MaterialParamsType).name() << std::endl;
-    std::cerr << "No assimp load support for pipeline type" <<
-        std::endl;
-
-    fatalExit();
-}
-
-template <>
-UnlitRendererInputs::MaterialDescription makeMaterialParams(
-        std::shared_ptr<Texture> &&texture)
-{
-    return {
-        move(texture)
-    };
-}
-
-template <>
-LitRendererInputs::MaterialDescription makeMaterialParams(
-        std::shared_ptr<Texture> &&texture)
-{
-    return {
-        move(texture)
-    };
-}
-
-template <typename MaterialParamsType>
-std::vector<MaterialParamsType> assimpParseMaterials(
+std::vector<std::shared_ptr<Material>> assimpParseMaterials(
         const aiScene *raw_scene,
         const std::shared_ptr<Texture> &default_diffuse)
 {
-    std::vector<MaterialParamsType> materials;
+    std::vector<std::shared_ptr<Material>> materials;
     
     std::unordered_map<std::string, std::shared_ptr<Texture>> loaded;
 
@@ -159,28 +131,31 @@ std::vector<MaterialParamsType> assimpParseMaterials(
         float shininess = 0.f;
         raw_mat->Get(AI_MATKEY_SHININESS, shininess);
 
-        if (diffuse_tex) {
-            materials.emplace_back(
-                    makeMaterialParams<MaterialParamsType>(move(diffuse_tex)));
-        } else {
-            materials.emplace_back(
-                    makeMaterialParams<MaterialParamsType>(
-                            std::shared_ptr<Texture>(default_diffuse)));
+        if (!diffuse_tex) {
+            diffuse_tex = default_diffuse;
         }
+
+        if (!specular_tex) {
+            specular_tex = default_diffuse;
+        }
+
+        materials.emplace_back(Material::makeShared<MaterialParamsType>(
+                MaterialParam::DiffuseTexture { move(diffuse_tex) },
+                MaterialParam::DiffuseColor { diffuse_color },
+                MaterialParam::SpecularTexture { move(specular_tex) },
+                MaterialParam::SpecularColor { specular_color },
+                MaterialParam::Shininess { shininess }));
     }
 
     return materials;
 }
-
-template <typename VertexType>
-static VertexType assimpParseVertex(const aiMesh *raw_mesh, uint32_t vert_idx);
 
 static glm::vec3 readPosition(const aiMesh *raw_mesh, uint32_t vert_idx)
 {
     return glm::make_vec3(&raw_mesh->mVertices[vert_idx].x);
 }
 
-static glm::vec3 readColor(const aiMesh *raw_mesh, uint32_t vert_idx)
+static glm::u8vec3 readColor(const aiMesh *raw_mesh, uint32_t vert_idx)
 {
     if (raw_mesh->HasVertexColors(0)) {
         const auto raw_color = &raw_mesh->mColors[0][vert_idx];
@@ -210,54 +185,56 @@ static glm::vec3 readNormal(const aiMesh *raw_mesh, uint32_t vert_idx)
     }
 }
 
-template <>
-UnlitRendererInputs::NoColorVertex assimpParseVertex(
-        const aiMesh *raw_mesh, uint32_t vert_idx)
-{
-    return {
-        readPosition(raw_mesh, vert_idx)
-    };
-}
+template <typename VertexType>
+static VertexType assimpParseVertex(const aiMesh *raw_mesh,
+                                    uint32_t vert_idx) {
 
-template <>
-UnlitRendererInputs::ColoredVertex assimpParseVertex(
-        const aiMesh *raw_mesh, uint32_t vert_idx)
-{
-    return {
-        readPosition(raw_mesh, vert_idx),
-        readColor(raw_mesh, vert_idx)
+    auto getPosition = [&]() {
+        if constexpr (VertexType::HasPosition) {
+            return std::make_tuple(VertexAttribute::Position {
+                readPosition(raw_mesh, vert_idx)
+            });
+        } else {
+            return std::tuple<>();
+        }
     };
-}
 
-template <>
-UnlitRendererInputs::TexturedVertex assimpParseVertex(
-        const aiMesh *raw_mesh, uint32_t vert_idx)
-{
-    return {
-        readPosition(raw_mesh, vert_idx),
-        readUV(raw_mesh, vert_idx)
+    auto getNormal = [&]() {
+        if constexpr (VertexType::HasNormal) {
+            return std::make_tuple(VertexAttribute::Normal {
+                    readNormal(raw_mesh, vert_idx)
+            });
+        } else {
+            return std::tuple<>();
+        }
     };
-}
 
-template <>
-LitRendererInputs::NoColorVertex assimpParseVertex(
-        const aiMesh *raw_mesh, uint32_t vert_idx)
-{
-    return {
-        readPosition(raw_mesh, vert_idx),
-        readNormal(raw_mesh, vert_idx)
+    auto getColor = [&]() {
+        if constexpr (VertexType::HasColor) {
+            return std::make_tuple(VertexAttribute::Color {
+                readColor(raw_mesh, vert_idx)
+            });
+        } else {
+            return std::tuple<>();
+        }
     };
-}
 
-template <>
-LitRendererInputs::TexturedVertex assimpParseVertex(
-        const aiMesh *raw_mesh, uint32_t vert_idx)
-{
-    return {
-        readPosition(raw_mesh, vert_idx),
-        readNormal(raw_mesh, vert_idx),
-        readUV(raw_mesh, vert_idx)
+    auto getUV = [&]() {
+        if constexpr (VertexType::HasUV) {
+            return std::make_tuple(VertexAttribute::UV {
+                readUV(raw_mesh, vert_idx)
+            });
+        } else {
+            return std::tuple<>();
+        }
     };
+
+    return std::apply(VertexType::make,
+                      std::tuple_cat(
+                              getPosition(),
+                              getNormal(),
+                              getColor(),
+                              getUV()));
 }
 
 template <typename VertexType>
@@ -310,7 +287,10 @@ void assimpParseInstances(SceneDescription &desc,
 
             uint32_t mesh_idx = cur_node->mMeshes[0];
 
-            desc.addInstance(mesh_idx, mesh_materials[mesh_idx], cur_txfm);
+            desc.addInstance(mesh_idx,
+                             mesh_materials.size() > 0 ?
+                                 mesh_materials[mesh_idx] : 0,
+                             cur_txfm);
         } else {
             for (unsigned child_idx = 0; child_idx < cur_node->mNumChildren;
                     child_idx++) {

@@ -17,10 +17,16 @@ namespace BufferFlags {
         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 
+    static constexpr VkBufferUsageFlags hostGenericUsage =
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | shaderUsage;
+
     static constexpr VkBufferUsageFlags geometryUsage =
         VK_BUFFER_USAGE_TRANSFER_DST_BIT |
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+
+    static constexpr VkBufferUsageFlags localGenericUsage =
+        geometryUsage | shaderUsage;
 
     static constexpr VkBufferUsageFlags dedicatedUsage =
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
@@ -316,11 +322,27 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
             dev_mem_props);
 
+    VkMemoryRequirements host_generic_reqs =
+        getBufferMemReqs(dev, BufferFlags::hostGenericUsage);
+
+    uint32_t host_generic_type_idx = findMemoryTypeIndex(
+            host_generic_reqs.memoryTypeBits,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+            dev_mem_props);
+
     VkMemoryRequirements geometry_reqs =
         getBufferMemReqs(dev, BufferFlags::geometryUsage);
 
     uint32_t geometry_type_idx = findMemoryTypeIndex(
             geometry_reqs.memoryTypeBits,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            dev_mem_props);
+
+    VkMemoryRequirements local_generic_reqs =
+        getBufferMemReqs(dev, BufferFlags::localGenericUsage);
+
+    uint32_t local_generic_type_idx = findMemoryTypeIndex(
+            local_generic_reqs.memoryTypeBits,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             dev_mem_props);
 
@@ -371,7 +393,9 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
     return MemoryTypeIndices {
         stage_type_idx,
         shader_type_idx,
+        host_generic_type_idx,
         geometry_type_idx,
+        local_generic_type_idx,
         dedicated_type_idx,
         texture_precomp_idx,
         texture_runtime_idx,
@@ -461,22 +485,42 @@ HostBuffer MemoryAllocator::makeShaderBuffer(VkDeviceSize num_bytes)
                           type_indices_.shaderBuffer);
 }
 
-LocalBuffer MemoryAllocator::makeGeometryBuffer(VkDeviceSize num_bytes)
+HostBuffer MemoryAllocator::makeHostBuffer(VkDeviceSize num_bytes)
+{
+    return makeHostBuffer(num_bytes, BufferFlags::hostGenericUsage,
+                          type_indices_.hostGenericBuffer);
+}
+
+LocalBuffer MemoryAllocator::makeLocalBuffer(VkDeviceSize num_bytes,
+                                             VkBufferUsageFlags usage,
+                                             uint32_t mem_idx)
 {
     auto [buffer, reqs] = makeUnboundBuffer(dev, num_bytes,
-                                            BufferFlags::geometryUsage);
+                                            usage);
 
     VkMemoryAllocateInfo alloc;
     alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     alloc.pNext = nullptr;
     alloc.allocationSize = reqs.size;
-    alloc.memoryTypeIndex = type_indices_.localGeometryBuffer;
+    alloc.memoryTypeIndex = mem_idx;
 
     VkDeviceMemory memory;
     REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &memory));
     REQ_VK(dev.dt.bindBufferMemory(dev.hdl, buffer, memory, 0));
 
     return LocalBuffer(buffer, AllocDeleter<false>(memory, *this));
+}
+
+LocalBuffer MemoryAllocator::makeLocalBuffer(VkDeviceSize num_bytes)
+{
+    return makeLocalBuffer(num_bytes, BufferFlags::localGenericUsage,
+                           type_indices_.localGenericBuffer);
+}
+
+LocalBuffer MemoryAllocator::makeGeometryBuffer(VkDeviceSize num_bytes)
+{
+    return makeLocalBuffer(num_bytes, BufferFlags::geometryUsage,
+                           type_indices_.localGeometryBuffer);
 }
 
 pair<LocalBuffer, VkDeviceMemory> MemoryAllocator::makeDedicatedBuffer(

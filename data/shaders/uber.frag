@@ -1,29 +1,13 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_EXT_scalar_block_layout : require
+#extension GL_EXT_shader_16bit_storage : require
 
 #include "shader_common.h"
 
-#ifdef FRAG_NEED_MATERIAL
-#ifdef TEXTURE_COLOR // FIXME
-
-struct Material {
-#ifdef TEXTURE_COLOR
-    uint textureIdx;
-#endif
-};
-
-layout (set = 0, binding = MATERIAL_BIND, scalar) readonly buffer
-MaterialParams {
-    Material materials[];
-};
-
-layout (location = INSTANCE_LOC) flat in uint instance_id;
-
-#endif
-#endif
-
 #ifdef LIT_PIPELINE
+
+#include "brdf.glsl"
 
 layout (set = 0, binding = 0) readonly buffer ViewInfos {
     ViewInfo view_info[];
@@ -33,12 +17,7 @@ layout (push_constant, scalar) uniform PushConstant {
     RenderPushConstant render_const;
 };
 
-#include "brdf.glsl"
-
-// FIXME
-#define MAX_LIGHTS 500
-
-layout (set = 0, binding = LIGHT_BIND, scalar) uniform LightingInfo {
+layout (set = 0, binding = 1, scalar) uniform LightingInfo {
     LightProperties lights[MAX_LIGHTS];
     uint numLights;
 } lighting_info;
@@ -48,12 +27,68 @@ layout (location = CAMERA_POS_LOC) in vec3 in_camera_pos;
 
 #endif
 
-#if defined(TEXTURE_COLOR)
-layout (set = 1, binding = 0) uniform texture2D textures[];
-layout (set = 1, binding = 1) uniform sampler texture_sampler;
+#ifdef HAS_MATERIALS
+
+layout (location = MATERIAL_LOC) flat in uint material_idx;
+
+#endif
+
+#ifdef MATERIAL_PARAMS
+
+struct MaterialParams {
+#ifdef BLINN_PHONG
+    float shininess;
+#endif
+
+#ifdef DIFFUSE_COLOR
+    vec4 diffuseColor;
+#endif 
+
+#ifdef SPECULAR_COLOR
+    vec4 specularColor;
+#endif
+};
+
+
+layout (set = 1, binding = PARAM_BIND, scalar) uniform Params {
+    MaterialParams material_params[MAX_MATERIALS];
+};
+
+#ifdef DIFFUSE_CONSTANT
+layout (constant_id = DIFFUSE_CONSTANT) const vec3 diffuse_constant;
+#endif
+
+#ifdef SPECULAR_CONSTANT
+layout (constant_id = SPECULAR_CONSTANT) const vec3 specular_constant;
+#endif
+
+#endif
+
+#ifdef HAS_TEXTURES
+layout (set = 1, binding = 0) uniform sampler texture_sampler;
+
+#ifdef LIT_PIPELINE
+
+#ifdef DIFFUSE_TEXTURE
+layout (set = 1, binding = DIFFUSE_TEXTURE_BIND)
+    uniform texture2D diffuse_textures[];
+#endif
+
+#ifdef SPECULAR_TEXTURE
+layout (set = 1, binding = SPECULAR_TEXTURE_BIND)
+    uniform texture2D specular_textures[];
+#endif
+
+#else
+
+layout (set = 1, binding = 1)
+    uniform texture2D albedo_textures[];
+#endif
 
 layout (location = UV_LOC) in vec2 in_uv;
-#elif defined(VERTEX_COLOR)
+#endif
+
+#ifdef VERTEX_COLOR
 layout (location = COLOR_LOC) in vec3 in_vertex_color;
 #endif
 
@@ -66,25 +101,41 @@ layout (location = DEPTH_OUT_LOC) out float out_linear_depth;
 layout (location = COLOR_OUT_LOC) out vec4 out_color;
 #endif
 
-void main() 
-{
-#if defined(TEXTURE_COLOR)
-    uint tex_idx = materials[instance_id].textureIdx;
-    vec4 albedo = texture(sampler2D(textures[tex_idx], texture_sampler),
-                          in_uv, 0.f);
-#elif defined(VERTEX_COLOR)
-    vec4 albedo = vec4(in_vertex_color, 1.f);
-
-#elif defined(OUTPUT_COLOR)
-    // No vertex color, no textures, but still want color...
-    // Make it white
-
-    vec4 albedo = vec4(1.f);
-#endif
-
 #ifdef OUTPUT_COLOR
 
-#if defined(LIT_PIPELINE)
+#ifdef LIT_PIPELINE
+
+vec4 compute_color()
+{
+#ifdef MATERIAL_PARAMS
+    MaterialParams params = material_params[material_idx];
+#endif
+
+#ifdef DIFFUSE_TEXTURE
+    vec3 diffuse = texture(sampler2D(diffuse_textures[material_idx],
+                                     texture_sampler), in_uv, 0.f).xyz;
+#endif
+
+#ifdef DIFFUSE_COLOR
+    vec3 diffuse = params.diffuseColor.xyz;
+#endif
+
+#ifdef DIFFUSE_CONSTANT
+    vec3 diffuse = diffuse_constant;
+#endif
+
+#ifdef SPECULAR_TEXTURE
+    vec3 specular = texture(sampler2D(specular_textures[material_idx],
+                                      texture_sampler), in_uv, 0.f).xyz;
+#endif
+
+#ifdef SPECULAR_COLOR
+    vec3 specular = params.specularColor.xyz;
+#endif
+
+#ifdef SPECULAR_CONSTANT
+    vec3 specular = specular_constant;
+#endif
 
     vec3 Lo = vec3(0.0);
     for (int light_idx = 0; light_idx < lighting_info.numLights; light_idx++) {
@@ -94,21 +145,41 @@ void main()
                 (view_info[render_const.batchIdx].view *
                     vec4(world_light_position, 1.f)).xyz;
         vec3 light_color = lighting_info.lights[light_idx].color.xyz;
-        BRDFParams params = makeBRDFParams(light_position, in_camera_pos,
-                                           in_normal, light_color,
-                                           albedo.xyz);
+        BRDFParams brdf_params = makeBRDFParams(light_position, in_camera_pos,
+                                                in_normal, light_color);
 
-        Lo += blinnPhong(params);
+#ifdef BLINN_PHONG
+        Lo += blinnPhong(brdf_params, shininess, diffuse, specular);
+#endif
     }
 
-    out_color = vec4(Lo, 1.f);
+    return Lo;
+}
 
 #else
 
-    out_color = albedo;
+vec4 compute_color()
+{
+#ifdef HAS_TEXTURES
+    vec4 albedo = texture(sampler2D(albedo_textures[material_idx],
+                                    texture_sampler), in_uv, 0.f);
+#endif
+
+#ifdef VERTEX_COLOR
+    vec4 albedo = vec4(in_vertex_color, 1.f);
+#endif
+
+    return albedo;
+}
 
 #endif
 
+#endif
+
+void main() 
+{
+#ifdef OUTPUT_COLOR
+    out_color = compute_color();
 #endif
 
 #ifdef OUTPUT_DEPTH

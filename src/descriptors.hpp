@@ -24,6 +24,8 @@ struct BindingConfig {
 
 template<typename... Binding>
 struct DescriptorLayout {
+    static constexpr size_t NumBindings = sizeof...(Binding);
+
     template<typename... SamplerType>
     static VkDescriptorSetLayout makeSetLayout(
             const DeviceState &dev,

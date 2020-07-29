@@ -10,12 +10,11 @@ struct BRDFParams {
     vec3 N;
     float NdV;
     float NdL;
-    vec3 albedo;
     vec3 H;
 };
 
 BRDFParams makeBRDFParams(vec3 light_pos, vec3 fragment_pos,
-                          vec3 normal, vec3 light_color, vec3 albedo)
+                          vec3 normal, vec3 light_color)
 {
     BRDFParams params;
     params.Li = light_color;
@@ -26,19 +25,19 @@ BRDFParams makeBRDFParams(vec3 light_pos, vec3 fragment_pos,
     params.N = normalize(normal);
     params.NdV = clamp(dot(params.N, params.V), 0.f, 1.f);
     params.NdL = dot(params.N, params.L);
-    params.albedo = albedo;
     params.H = normalize(params.L + params.V);
 
     return params;
 }
 
-vec3 blinnPhong(BRDFParams bp)
+vec3 blinnPhong(BRDFParams bp, float shininess,
+                vec3 base_diffuse, vec3 base_specular)
 {
     if (bp.NdL < 0) return vec3(0.0);
 
-    vec3 diffuse = M_1_PI * bp.Li * bp.albedo;
+    vec3 diffuse = M_1_PI * bp.Li * base_diffuse;
 
-    vec3 specular = vec3(0.5f) * pow(max(dot(bp.N, bp.H), 0.f), 8.f);
+    vec3 specular = base_specular * pow(max(dot(bp.N, bp.H), 0.f), shininess);
 
     return bp.NdL * (diffuse + specular);
 }

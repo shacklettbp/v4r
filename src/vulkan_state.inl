@@ -11,7 +11,7 @@ template <typename Fn>
 uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
                                     Fn &&submit_func)
 {
-    const PerFrameState &frame_state = frame_states_[cur_frame_];
+    PerFrameState &frame_state = frame_states_[cur_frame_];
 
     VkCommandBuffer render_cmd = frame_state.commands[0];
 
@@ -22,7 +22,7 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
     dev.dt.cmdBindDescriptorSets(render_cmd,
                                  VK_PIPELINE_BIND_POINT_GRAPHICS,
                                  pipeline.gfxLayout, 0,
-                                 1, &per_render_descriptor_,
+                                 1, &frame_state.frameSet,
                                  0, nullptr);
 
     // FIXME
@@ -44,28 +44,23 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
         static_cast<uint32_t>(fb_cfg_.clearValues.size());
     render_begin.pClearValues = fb_cfg_.clearValues.data();
 
-    //render_begin.renderArea.offset = {
-    //    static_cast<int32_t>(fb_offset_.x),
-    //    static_cast<int32_t>(fb_offset_.y) };
-    //render_begin.renderArea.extent = { render_size_.x, render_size_.y };
-
     dev.dt.cmdBeginRenderPass(render_cmd, &render_begin,
                               VK_SUBPASS_CONTENTS_INLINE);
 
     uint32_t cur_instance = 0;
-    glm::mat4 *transform_ptr = transform_ptr_;
-    uint32_t *material_ptr = material_ptr_;
-    LightProperties *light_ptr = light_ptr_;
-    ViewInfo *view_ptr = view_ptr_;
+    glm::mat4x3 *transform_ptr = frame_state.transformPtr;
+    uint32_t *material_ptr = frame_state.materialPtr;
+    LightProperties *light_ptr = frame_state.lightPtr;
+    ViewInfo *view_ptr = frame_state.viewPtr;
     for (uint32_t batch_idx = 0; batch_idx < envs.size(); batch_idx++) {
         const Environment &env = envs[batch_idx];
 
         const Scene &scene = *(envs[batch_idx].state_->scene);
-        if (scene.textureSet.hdl != VK_NULL_HANDLE) {
+        if (scene.materialSet.hdl != VK_NULL_HANDLE) {
             dev.dt.cmdBindDescriptorSets(render_cmd,
                                          VK_PIPELINE_BIND_POINT_GRAPHICS,
                                          pipeline.gfxLayout, 1,
-                                         1, &scene.textureSet.hdl,
+                                         1, &scene.materialSet.hdl,
                                          0, nullptr);
         }
 
@@ -96,10 +91,12 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
 
         dev.dt.cmdSetViewport(render_cmd, 0, 1, &viewport);
 
-        VkDeviceSize vert_offset = 0;
-        dev.dt.cmdBindVertexBuffers(render_cmd, 0, 1, &scene.geometry.buffer,
-                                    &vert_offset);
-        dev.dt.cmdBindIndexBuffer(render_cmd, scene.geometry.buffer,
+        frame_state.vertexBuffers[0] = scene.data.buffer;
+        dev.dt.cmdBindVertexBuffers(render_cmd, 0,
+                                    frame_state.vertexBuffers.size(),
+                                    frame_state.vertexBuffers.data(),
+                                    frame_state.vertexOffsets.data());
+        dev.dt.cmdBindIndexBuffer(render_cmd, scene.data.buffer,
                                   scene.indexOffset, VK_INDEX_TYPE_UINT32);
 
         for (uint32_t mesh_idx = 0; mesh_idx < scene.meshes.size();
@@ -114,7 +111,7 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
                                   cur_instance);
 
             memcpy(transform_ptr, env.transforms_[mesh_idx].data(),
-                   bytes_per_txfm_ * num_instances);
+                   sizeof(glm::mat4x3) * num_instances);
 
             cur_instance += num_instances;
             transform_ptr += num_instances;
@@ -133,7 +130,7 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
             memcpy(light_ptr, env.state_->lights.data(),
                    num_lights * sizeof(LightProperties));
 
-            *num_lights_ptr_ = num_lights;
+            *frame_state.numLightsPtr = num_lights;
 
             light_ptr += num_lights;
         }

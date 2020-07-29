@@ -5,7 +5,13 @@
 
 namespace v4r {
 
-InstanceProperties::InstanceProperties(const glm::mat4 &model_txfm, uint32_t mat_idx)
+InstanceProperties::InstanceProperties(const glm::mat4 &model_txfm,
+                                       uint32_t mat_idx)
+    : InstanceProperties(glm::mat4x3(model_txfm), mat_idx)
+{}
+
+InstanceProperties::InstanceProperties(const glm::mat4x3 &model_txfm,
+                                       uint32_t mat_idx)
     : modelTransform(model_txfm),
       materialIndex(mat_idx)
 {}
@@ -23,6 +29,14 @@ uint32_t SceneDescription::addInstance(
         uint32_t model_idx,
         uint32_t material_idx,
         const glm::mat4 &model_transform)
+{
+    return addInstance(model_idx, material_idx, glm::mat4x3(model_transform));
+}
+
+uint32_t SceneDescription::addInstance(
+        uint32_t model_idx,
+        uint32_t material_idx,
+        const glm::mat4x3 &model_transform)
 {
     default_instances_.emplace_back(model_idx,
                                     InstanceProperties {

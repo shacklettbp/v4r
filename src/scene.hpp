@@ -46,12 +46,52 @@ struct Texture {
     ManagedArray<uint8_t> raw_image;
 };
 
-struct Material {
-    std::vector<std::shared_ptr<Texture>> textures;
+namespace MaterialParam {
+    struct DiffuseTexture {
+        std::shared_ptr<Texture> texture;
+    };
+
+    struct DiffuseColor {
+        glm::vec4 color;
+    };
+
+    struct SpecularTexture {
+        std::shared_ptr<Texture> texture;
+    };
+
+    struct SpecularColor {
+        glm::vec4 color;
+    };
+
+    struct Shininess {
+        float shininess;
+    };
 };
 
-struct BlinnPhongMaterial : Material {
-    float shininess;
+namespace VertexAttribute {
+    struct Position {
+        glm::vec3 position;
+    };
+
+    struct Normal {
+        glm::vec3 normal;
+    };
+
+    struct Color {
+        glm::u8vec3 color;
+    };
+
+    struct UV {
+        glm::vec2 uv;
+    };
+};
+
+struct Material {
+    std::vector<std::shared_ptr<Texture>> textures;
+    std::vector<uint8_t> paramBytes;
+
+    template <typename ParamsType, typename ...Args>
+    static std::shared_ptr<Material> makeShared(Args ...args);
 };
 
 struct EnvironmentInit {
@@ -61,7 +101,7 @@ struct EnvironmentInit {
             const std::vector<LightProperties> &lights,
             uint32_t num_meshes);
 
-    std::vector<std::vector<glm::mat4>> transforms;
+    std::vector<std::vector<glm::mat4x3>> transforms;
     std::vector<std::vector<uint32_t>> materials;
     std::vector<std::pair<uint32_t, uint32_t>> indexMap;
     std::vector<std::vector<uint32_t>> reverseIDMap;
@@ -74,8 +114,8 @@ struct EnvironmentInit {
 struct Scene {
     std::vector<LocalImage> textures;
     std::vector<VkImageView> texture_views;
-    DescriptorSet textureSet;
-    LocalBuffer geometry;
+    DescriptorSet materialSet;
+    LocalBuffer data;
     VkDeviceSize indexOffset;
     std::vector<InlineMesh> meshes;
     EnvironmentInit envDefaults;
@@ -97,19 +137,21 @@ public:
     std::vector<uint32_t> lightReverseIDs;
 };
 
-struct StagedMeshes {
+struct StagedScene {
     HostBuffer buffer;
     std::vector<InlineMesh> meshPositions;
     VkDeviceSize indexBufferOffset;
+    VkDeviceSize paramBufferOffset;
     VkDeviceSize totalBytes;
 };
 
-struct LoaderHelper {
+struct LoaderImpl {
     std::add_pointer_t<
-        StagedMeshes(const std::vector<std::shared_ptr<Mesh>> &,
-                     const DeviceState &,
-                     MemoryAllocator &)>
-            stageGeometry;
+        StagedScene(const std::vector<std::shared_ptr<Mesh>> &,
+                    const std::vector<uint8_t> &param_bytes,
+                    const DeviceState &,
+                    MemoryAllocator &)>
+            stageScene;
 
     std::add_pointer_t<
         SceneDescription(const std::string &, const glm::mat4 &)>
@@ -118,25 +160,33 @@ struct LoaderHelper {
     std::add_pointer_t<
         std::shared_ptr<Mesh>(const std::string &)>
             loadMesh;
+
+    template <typename VertexType, typename MaterialParamsType>
+    static LoaderImpl create();
 };
 
 class LoaderState {
 public:
     LoaderState(const DeviceState &dev,
-                const RenderFeatures &features,
-                const PerSceneDescriptorConfig &scene_desc_cfg,
+                const LoaderImpl &impl,
+                const VkDescriptorSetLayout &scene_set_layout,
                 MemoryAllocator &alc,
                 QueueManager &queue_manager,
                 const glm::mat4 &coordinateTransform);
 
-    std::shared_ptr<Scene> loadScene(
+
+    std::shared_ptr<Scene> loadScene(const std::string &scene_path);
+
+    std::shared_ptr<Scene> makeScene(
             const SceneDescription &scene_desc);
 
     std::shared_ptr<Texture> loadTexture(
             const std::vector<uint8_t> &raw);
 
-    template <typename MatDescType>
-    std::shared_ptr<Material> makeMaterial(MatDescType description);
+    template <typename MaterialParamsType>
+    std::shared_ptr<Material> makeMaterial(MaterialParamsType params);
+
+    std::shared_ptr<Mesh> loadMesh(const std::string &geometry_path);
 
     template <typename VertexType>
     std::shared_ptr<Mesh> makeMesh(std::vector<VertexType> vertices,
@@ -160,7 +210,8 @@ public:
 
     glm::mat4 coordinateTransform;
 
-    LoaderHelper assetHelper;
+private:
+    const LoaderImpl impl_;
 };
 
 }

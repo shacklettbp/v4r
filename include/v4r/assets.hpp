@@ -10,47 +10,11 @@
 
 namespace v4r {
 
-struct UnlitRendererInputs {
-    struct NoColorVertex {
-        glm::vec3 position;
-    };
-
-    struct ColoredVertex {
-        glm::vec3 position;
-        glm::u8vec3 color;
-    };
-    
-    struct TexturedVertex {
-        glm::vec3 position;
-        glm::vec2 uv;
-    };
-
-    struct MaterialDescription {
-        std::shared_ptr<Texture> texture;
-    };
-};
-
-struct LitRendererInputs {
-    struct NoColorVertex {
-        glm::vec3 position;
-        glm::vec3 normal;
-    };
-    
-    struct TexturedVertex {
-        glm::vec3 position;
-        glm::vec3 normal;
-        glm::vec2 uv;
-    };
-
-    struct MaterialDescription {
-        std::shared_ptr<Texture> texture;
-    };
-};
-
 struct InstanceProperties {
-    glm::mat4 modelTransform;
+    glm::mat4x3 modelTransform;
     uint32_t materialIndex;
 
+    inline InstanceProperties(const glm::mat4x3 &model_txfm, uint32_t mat_idx);
     inline InstanceProperties(const glm::mat4 &model_txfm, uint32_t mat_idx);
 };
 
@@ -64,6 +28,9 @@ public:
     inline SceneDescription(
             std::vector<std::shared_ptr<Mesh>> geometry,
             std::vector<std::shared_ptr<Material>> materials);
+
+    inline uint32_t addInstance(uint32_t model_idx, uint32_t material_idx,
+                                const glm::mat4x3 &model_transform);
 
     inline uint32_t addInstance(uint32_t model_idx, uint32_t material_idx,
                                 const glm::mat4 &model_transform);

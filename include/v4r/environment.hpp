@@ -18,11 +18,19 @@ public:
     // Instance transformations
     uint32_t addInstance(uint32_t model_idx, uint32_t material_idx,
                          const glm::mat4 &model_matrix);
+
+    uint32_t addInstance(uint32_t model_idx, uint32_t material_idx,
+                         const glm::mat4x3 &model_matrix);
+
     void deleteInstance(uint32_t inst_id);
 
-    inline const glm::mat4 & getInstanceTransform(uint32_t inst_id) const;
+    inline const glm::mat4x3 & getInstanceTransform(uint32_t inst_id) const;
+
     inline void updateInstanceTransform(uint32_t inst_id,
                                         const glm::mat4 &model_matrix);
+
+    inline void updateInstanceTransform(uint32_t inst_id,
+                                        const glm::mat4x3 &model_matrix);
 
     inline void setInstanceMaterial(uint32_t inst_id, uint32_t material_idx);
 
@@ -45,7 +53,7 @@ private:
     Handle<EnvironmentState> state_;
     glm::mat4 view_;
     std::vector<std::pair<uint32_t, uint32_t>> index_map_;
-    std::vector<std::vector<glm::mat4>> transforms_;
+    std::vector<std::vector<glm::mat4x3>> transforms_;
     std::vector<std::vector<uint32_t>> materials_;
 
 friend class CommandStream;

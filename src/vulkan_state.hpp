@@ -24,29 +24,11 @@
 
 namespace v4r {
 
-struct PerRenderDescriptorConfig {
-    VkDescriptorSetLayout layout;
-
-    VkDeviceSize bytesPerTransform;
-    VkDeviceSize totalTransformBytes;
-
-    VkDeviceSize viewOffset;
-    VkDeviceSize totalViewBytes;
-
-    VkDeviceSize materialIndicesOffset;
-    VkDeviceSize totalMaterialIndexBytes;
-
-    VkDeviceSize lightsOffset;
-    VkDeviceSize totalLightParamBytes;
-
-    VkDeviceSize totalParamBytes;
-
-    std::add_pointer_t<
-        VkDescriptorPool(const DeviceState &, uint32_t)> makePool;
-};
-
 struct FramebufferConfig {
 public:
+    uint32_t imgWidth;
+    uint32_t imgHeight;
+
     uint32_t numImagesWidePerBatch;
     uint32_t numImagesTallPerBatch;
 
@@ -61,7 +43,66 @@ public:
 
     uint64_t totalLinearBytes;
 
+    bool colorOutput;
+    bool depthOutput;
+
     std::vector<VkClearValue> clearValues;
+};
+
+// FIXME separate out things like the layout, cache (maybe renderpass)
+// into PipelineManager
+struct PipelineState {
+    std::vector<VkShaderModule> shaders;
+
+    VkPipelineCache pipelineCache;
+    VkPipelineLayout gfxLayout;
+    VkPipeline gfxPipeline;
+};
+
+struct ParamBufferConfig {
+    VkDeviceSize totalTransformBytes;
+
+    VkDeviceSize viewOffset;
+    VkDeviceSize totalViewBytes;
+
+    VkDeviceSize materialIndicesOffset;
+    VkDeviceSize totalMaterialIndexBytes;
+
+    VkDeviceSize lightsOffset;
+    VkDeviceSize totalLightParamBytes;
+
+    VkDeviceSize totalParamBytes;
+};
+
+struct RenderState {
+    ParamBufferConfig paramPositions;
+
+    VkDescriptorSetLayout frameDescriptorLayout;
+    VkDescriptorPool frameDescriptorPool;
+
+    VkDescriptorSetLayout sceneDescriptorLayout;
+    VkSampler textureSampler;
+
+    VkRenderPass renderPass;
+};
+
+template <typename FeaturesType>
+struct FeatureProps;
+
+template <typename FeaturesType>
+struct FeaturesImpl {
+    static FramebufferConfig getFramebufferConfig(
+            uint32_t batch_size, uint32_t img_width, uint32_t img_height,
+            uint32_t num_streams);
+
+    static RenderState makeRenderState(const DeviceState &dev,
+                                       uint32_t batch_size,
+                                       uint32_t num_streams,
+                                       MemoryAllocator &alloc);
+
+    static PipelineState makePipeline(const DeviceState &dev,
+                                      const FramebufferConfig &fb_cfg,
+                                      const RenderState &render_state);
 };
 
 struct FramebufferState {
@@ -75,25 +116,6 @@ public:
     VkDeviceMemory resultMem;
 };
 
-struct PipelineConfig {
-public:
-    std::vector<VkVertexInputBindingDescription> inputBindings;
-    std::vector<VkVertexInputAttributeDescription> inputAttrs;
-
-    std::vector<std::pair<const std::string, VkShaderStageFlagBits>> shaders;
-    std::vector<VkDescriptorSetLayout> descLayouts;
-};
-
-// FIXME separate out things like the layout, cache (maybe renderpass)
-// into PipelineManager
-struct PipelineState {
-    std::vector<VkShaderModule> shaders;
-
-    VkPipelineCache pipelineCache;
-    VkPipelineLayout gfxLayout;
-    VkPipeline gfxPipeline;
-};
-
 struct PerFrameState {
     VkSemaphore semaphore;
     VkFence fence;
@@ -104,26 +126,32 @@ struct PerFrameState {
 
     VkDeviceSize colorBufferOffset;
     VkDeviceSize depthBufferOffset;
+
+    VkDescriptorSet frameSet;
+
+    DynArray<VkBuffer> vertexBuffers;
+    DynArray<VkDeviceSize> vertexOffsets;
+    glm::mat4x3 *transformPtr;
+    ViewInfo *viewPtr;
+    uint32_t *materialPtr;
+    LightProperties *lightPtr;
+    uint32_t *numLightsPtr;
 };
 
 class CommandStreamState {
 public:
-    CommandStreamState(const RenderFeatures &features,
-                       const InstanceState &inst,
+    CommandStreamState(const InstanceState &inst,
                        const DeviceState &dev,
-                       const PerRenderDescriptorConfig &per_render_cfg,
-                       VkDescriptorSet per_render_descriptor,
-                       VkRenderPass render_pass,
-                       const PipelineState &pipeline,
                        const FramebufferConfig &fb_cfg,
+                       const RenderState &render_state,
+                       const PipelineState &pipeline,
                        const FramebufferState &fb,
                        MemoryAllocator &alc,
                        QueueManager &queue_manager,
                        uint32_t batch_size,
-                       uint32_t render_width,
-                       uint32_t render_height,
                        uint32_t stream_idx,
-                       uint32_t num_frames_inflight);
+                       uint32_t num_frames_inflight,
+                       bool cpu_sync);
 
     CommandStreamState(const CommandStreamState &) = delete;
     CommandStreamState(CommandStreamState &&) = default;
@@ -187,14 +215,7 @@ private:
     const FramebufferConfig &fb_cfg_;
     const FramebufferState &fb_;
     VkRenderPass render_pass_;
-    VkDescriptorSet per_render_descriptor_;
     HostBuffer per_render_buffer_;
-    glm::mat4 *transform_ptr_;
-    VkDeviceSize bytes_per_txfm_;
-    ViewInfo *view_ptr_;
-    uint32_t *material_ptr_;
-    LightProperties *light_ptr_;
-    uint32_t *num_lights_ptr_;
 
     glm::u32vec2 render_size_;
     glm::u32vec2 render_extent_;
@@ -209,8 +230,14 @@ struct CoreVulkanHandles {
 
 class VulkanState {
 public:
-    VulkanState(const RenderConfig &cfg, const DeviceUUID &uuid);
-    VulkanState(const RenderConfig &cfg, CoreVulkanHandles &&handles);
+    template <typename FeaturesType>
+    VulkanState(const RenderConfig<FeaturesType> &cfg,
+                const DeviceUUID &uuid);
+
+    template <typename FeaturesType,
+              typename ImplType = FeaturesImpl<FeaturesType>>
+    VulkanState(const RenderConfig<FeaturesType> &cfg,
+                CoreVulkanHandles &&handles);
 
     LoaderState makeLoader();
     CommandStreamState makeStream();
@@ -218,7 +245,12 @@ public:
     int getFramebufferFD() const;
     uint64_t getFramebufferBytes() const;
 
-    const RenderConfig cfg;
+    glm::u32vec2 getImageDimensions() const
+    {
+        return glm::u32vec2(fbCfg.imgWidth, fbCfg.imgHeight);
+    }
+
+    bool isDoubleBuffered() const { return double_buffered_; }
 
     const InstanceState inst;
     const DeviceState dev;
@@ -227,15 +259,24 @@ public:
     MemoryAllocator alloc;
 
     const FramebufferConfig fbCfg;
-    const PerRenderDescriptorConfig streamDescCfg;
-    const PerSceneDescriptorConfig sceneDescCfg;
-    VkDescriptorPool renderDescriptorPool;
-    VkRenderPass renderPass;
+    const RenderState renderState;
     const PipelineState pipeline;
     const FramebufferState fb;
 
-    std::atomic_uint32_t numLoaders;
-    std::atomic_uint32_t numStreams;
+    const glm::mat4 globalTransform;
+
+private:
+    const LoaderImpl loader_impl_;
+
+    std::atomic_uint32_t num_loaders_;
+    std::atomic_uint32_t num_streams_;
+
+    const uint32_t max_num_loaders_;
+    const uint32_t max_num_streams_;
+
+    const uint32_t batch_size_;
+    const bool double_buffered_;
+    const bool cpu_sync_;
 };
 
 }

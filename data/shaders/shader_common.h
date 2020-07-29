@@ -15,4 +15,7 @@ struct LightProperties {
     vec4 color;
 };
 
+#define MAX_MATERIALS (10000)
+#define MAX_LIGHTS (10000)
+
 #endif

@@ -13,7 +13,7 @@ std::shared_ptr<Texture> readSDRTexture(const uint8_t *input,
                                         size_t num_bytes);
 
 template <typename MaterialParamType>
-std::vector<MaterialParamType> assimpParseMaterials(
+std::vector<std::shared_ptr<Material>> assimpParseMaterials(
         const aiScene *scene, const std::shared_ptr<Texture> &default_diffuse);
 
 template <typename VertexType>

@@ -17,144 +17,62 @@ using namespace std;
 
 namespace v4r {
 
-static PerSceneDescriptorConfig getSceneDescriptorConfig(
-        const RenderFeatures &features,
-        const DeviceState &dev)
+template <typename FeaturesType>
+static constexpr bool isDoubleBuffered()
 {
-    if (features.colorSrc != RenderFeatures::MeshColor::Texture) {
-        return {
-            VK_NULL_HANDLE,
-            VK_NULL_HANDLE
-        };
-    }
-
-    VkSamplerCreateInfo sampler_info;
-    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    sampler_info.pNext = nullptr;
-    sampler_info.flags = 0;
-    sampler_info.magFilter = VK_FILTER_LINEAR;
-    sampler_info.minFilter = VK_FILTER_LINEAR;
-    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.mipLodBias = 0;
-    sampler_info.anisotropyEnable = VK_FALSE;
-    sampler_info.maxAnisotropy = 0;
-    sampler_info.compareEnable = VK_FALSE;
-    sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
-    sampler_info.minLod = 0;
-    sampler_info.maxLod = VK_LOD_CLAMP_NONE;
-    sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
-    sampler_info.unnormalizedCoordinates = VK_FALSE;
-
-    VkSampler sampler;
-    REQ_VK(dev.dt.createSampler(dev.hdl, &sampler_info, nullptr, &sampler));
-
-    return {
-        sampler,
-        PerSceneDescriptorLayout::makeSetLayout(dev, nullptr, &sampler)
-    };
+    return FeaturesType::options & RenderOptions::DoubleBuffered;
 }
 
-static PerRenderDescriptorConfig getRenderDescriptorConfig(
-        const RenderFeatures &features, 
-        uint32_t batch_size,
-        const MemoryAllocator &alloc,
-        const DeviceState &dev)
+template <typename FeaturesType>
+static constexpr bool needCpuSync()
 {
-    PerRenderDescriptorConfig cfg {};
-    cfg.bytesPerTransform = sizeof(glm::mat4);
-    cfg.totalTransformBytes = cfg.bytesPerTransform *
-        VulkanConfig::max_instances;
-
-    cfg.viewOffset = alloc.alignUniformBufferOffset(cfg.totalTransformBytes);
-    cfg.totalViewBytes = sizeof(ViewInfo) * batch_size;
-
-    bool need_material = false;
-    bool need_lighting = false;
-
-    switch (features.pipeline) {
-        case RenderFeatures::Pipeline::Unlit: {
-            if (features.colorSrc == RenderFeatures::MeshColor::Texture) {
-                need_material = true;
-                cfg.layout = UnlitMaterialPerRenderLayout::makeSetLayout(
-                        dev, nullptr, nullptr, nullptr);
-                cfg.makePool = UnlitMaterialPerRenderLayout::makePool;
-            } else {
-                cfg.layout = UnlitNoMaterialPerRenderLayout::makeSetLayout(
-                        dev, nullptr, nullptr);
-                cfg.makePool = UnlitNoMaterialPerRenderLayout::makePool;
-            }
-            break;
-        }
-        case RenderFeatures::Pipeline::Lit: {
-            need_material = true;
-            need_lighting = true;
-
-            cfg.layout = LitPerRenderLayout::makeSetLayout(
-                    dev, nullptr, nullptr, nullptr, nullptr);
-            cfg.makePool = LitPerRenderLayout::makePool;
-            break;
-        }
-        case RenderFeatures::Pipeline::Shadowed: {
-            cerr << "Shadowed pipeline unimplemented" << endl;
-            fatalExit();
-            
-            break;
-        }
-    }
-
-    VkDeviceSize cur_offset = cfg.viewOffset + cfg.totalViewBytes;
-
-    if (need_material) {
-        cfg.materialIndicesOffset =
-            alloc.alignStorageBufferOffset(cur_offset);
-
-        cfg.totalMaterialIndexBytes = sizeof(uint32_t) *
-            VulkanConfig::max_instances;
-
-        cur_offset = cfg.materialIndicesOffset + cfg.totalMaterialIndexBytes;
-    }
-
-    if (need_lighting) {
-        cfg.lightsOffset = alloc.alignUniformBufferOffset(cur_offset);
-        cfg.totalLightParamBytes = sizeof(LightProperties) *
-            VulkanConfig::max_lights + sizeof(uint32_t);
-
-        cur_offset = cfg.lightsOffset + cfg.totalLightParamBytes;
-    }
-
-    cfg.totalParamBytes = cur_offset;
-
-    return cfg;
+    return FeaturesType::options & RenderOptions::CpuSynchronization;
 }
 
-static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
+template <typename FeaturesType>
+static constexpr bool needColorOutput()
 {
+    return FeaturesType::outputs & RenderOutputs::Color;
+}
+
+template <typename FeaturesType>
+static constexpr bool needDepthOutput()
+{
+    return FeaturesType::outputs & RenderOutputs::Depth;
+}
+
+template <typename FeaturesType>
+FramebufferConfig FeaturesImpl<FeaturesType>::getFramebufferConfig(
+    uint32_t batch_size, uint32_t img_width, uint32_t img_height,
+    uint32_t num_streams)
+{
+    constexpr bool need_color_output = needColorOutput<FeaturesType>();
+    constexpr bool need_depth_output = needDepthOutput<FeaturesType>();
+    constexpr bool is_double_buffered = isDoubleBuffered<FeaturesType>();
+
     uint32_t num_frames_per_stream =
-        cfg.features.options & RenderFeatures::Options::DoubleBuffered ?
+        is_double_buffered ?
             2 : 1;
 
-    uint32_t batch_fb_images_wide = ceil(sqrt(cfg.batchSize));
-    while (cfg.batchSize % batch_fb_images_wide != 0) {
+    uint32_t batch_fb_images_wide = ceil(sqrt(batch_size));
+    while (batch_size % batch_fb_images_wide != 0) {
         batch_fb_images_wide++;
     }
 
-    uint32_t batch_fb_images_tall = (cfg.batchSize / batch_fb_images_wide);
-    assert(batch_fb_images_wide * batch_fb_images_tall == cfg.batchSize);
+    uint32_t batch_fb_images_tall = (batch_size / batch_fb_images_wide);
+    assert(batch_fb_images_wide * batch_fb_images_tall == batch_size);
 
-    uint32_t frame_fb_width = cfg.imgWidth * batch_fb_images_wide;
-    uint32_t frame_fb_height = cfg.imgHeight * batch_fb_images_tall;
+    uint32_t frame_fb_width = img_width * batch_fb_images_wide;
+    uint32_t frame_fb_height = img_height * batch_fb_images_tall;
 
-    uint32_t total_fb_width = frame_fb_width * cfg.numStreams *
+    uint32_t total_fb_width = frame_fb_width * num_streams *
         num_frames_per_stream;
     uint32_t total_fb_height = frame_fb_height;
     
     vector<VkClearValue> clear_vals;
 
     uint64_t frame_color_bytes = 0;
-    if (cfg.features.outputs & RenderFeatures::Outputs::Color) {
+    if constexpr (need_color_output) {
         frame_color_bytes = 
             4 * sizeof(uint8_t) * frame_fb_width * frame_fb_height;
 
@@ -165,7 +83,7 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
     }
 
     uint64_t frame_depth_bytes = 0;
-    if (cfg.features.outputs & RenderFeatures::Outputs::Depth) {
+    if constexpr (need_depth_output) {
         frame_depth_bytes =
             sizeof(float) * frame_fb_width * frame_fb_height;
 
@@ -185,6 +103,8 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
     assert(frame_linear_bytes > 0);
 
     return FramebufferConfig {
+        img_width,
+        img_height,
         batch_fb_images_wide,
         batch_fb_images_tall,
         frame_fb_width,
@@ -194,19 +114,22 @@ static FramebufferConfig getFramebufferConfig(const RenderConfig &cfg)
         frame_color_bytes,
         frame_depth_bytes,
         frame_linear_bytes,
-        frame_linear_bytes * cfg.numStreams * num_frames_per_stream,
+        frame_linear_bytes * num_streams * num_frames_per_stream,
+        need_color_output,
+        need_depth_output,
         move(clear_vals)
     };
 }
 
-static VkRenderPass makeRenderPass(const FramebufferConfig &fb_cfg,
-                                   const DeviceState &dev,
-                                   const ResourceFormats &fmts)
+static VkRenderPass makeRenderPass(const DeviceState &dev,
+                                   const ResourceFormats &fmts,
+                                   bool color_output,
+                                   bool depth_output)
 {
     vector<VkAttachmentDescription> attachment_descs;
     vector<VkAttachmentReference> attachment_refs;
 
-    if (fb_cfg.colorLinearBytesPerFrame > 0) {
+    if (color_output) {
         attachment_descs.push_back({
             0,
             fmts.colorAttachment,
@@ -224,7 +147,7 @@ static VkRenderPass makeRenderPass(const FramebufferConfig &fb_cfg,
         });
     }
 
-    if (fb_cfg.depthLinearBytesPerFrame > 0) {
+    if (depth_output) {
         attachment_descs.push_back({
             0,
             fmts.linearDepthAttachment,
@@ -286,6 +209,125 @@ static VkRenderPass makeRenderPass(const FramebufferConfig &fb_cfg,
     return render_pass;
 }
 
+static VkSampler makeImmutableSampler(const DeviceState &dev)
+{
+    VkSampler sampler;
+
+    VkSamplerCreateInfo sampler_info;
+    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    sampler_info.pNext = nullptr;
+    sampler_info.flags = 0;
+    sampler_info.magFilter = VK_FILTER_LINEAR;
+    sampler_info.minFilter = VK_FILTER_LINEAR;
+    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.mipLodBias = 0;
+    sampler_info.anisotropyEnable = VK_FALSE;
+    sampler_info.maxAnisotropy = 0;
+    sampler_info.compareEnable = VK_FALSE;
+    sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
+    sampler_info.minLod = 0;
+    sampler_info.maxLod = VK_LOD_CLAMP_NONE;
+    sampler_info.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+    sampler_info.unnormalizedCoordinates = VK_FALSE;
+
+    REQ_VK(dev.dt.createSampler(dev.hdl, &sampler_info,
+                                nullptr, &sampler));
+
+    return sampler;
+}
+
+static ParamBufferConfig computeParamBufferConfig(
+        bool need_materials, bool need_lighting,
+        uint32_t batch_size, const MemoryAllocator &alloc)
+{
+    ParamBufferConfig cfg {};
+
+    cfg.totalTransformBytes = sizeof(glm::mat4x3) * 
+        VulkanConfig::max_instances;
+
+    cfg.viewOffset = alloc.alignUniformBufferOffset(cfg.totalTransformBytes);
+
+    cfg.totalViewBytes = sizeof(ViewInfo) * batch_size;
+
+    VkDeviceSize cur_offset = cfg.viewOffset + cfg.totalViewBytes;
+
+    if (need_materials) {
+        cfg.materialIndicesOffset =
+            alloc.alignStorageBufferOffset(cur_offset);
+
+        cfg.totalMaterialIndexBytes = sizeof(uint32_t) *
+            VulkanConfig::max_instances;
+
+        cur_offset = cfg.materialIndicesOffset + cfg.totalMaterialIndexBytes;
+    }
+
+    if (need_lighting) {
+        cfg.lightsOffset = alloc.alignUniformBufferOffset(cur_offset);
+        cfg.totalLightParamBytes = sizeof(LightProperties) *
+            VulkanConfig::max_lights + sizeof(uint32_t);
+
+        cur_offset = cfg.lightsOffset + cfg.totalLightParamBytes;
+    }
+
+    cfg.totalParamBytes = cur_offset;
+
+    return  cfg;
+}
+
+template <typename FeaturesType>
+RenderState FeaturesImpl<FeaturesType>::makeRenderState(
+        const DeviceState &dev, uint32_t batch_size,
+        uint32_t num_streams, MemoryAllocator &alloc)
+{
+    using Props = FeatureProps<FeaturesType>;
+
+    ParamBufferConfig param_positions = computeParamBufferConfig(
+            Props::needMaterials, Props::needLighting, batch_size, alloc);
+
+    using FrameLayout = typename Props::PerFrameDescriptorLayout;
+    array<VkSampler *, FrameLayout::NumBindings> frame_layout_args;
+    frame_layout_args.fill(nullptr);
+
+    VkDescriptorSetLayout frame_descriptor_layout = apply([&](auto ...args) {
+        return FrameLayout::makeSetLayout(dev, args...);
+    }, frame_layout_args);
+
+    constexpr uint32_t frames_per_stream =
+        (FeaturesType::options & RenderOptions::DoubleBuffered) ? 2 : 1;
+
+    VkDescriptorPool frame_descriptor_pool = FrameLayout::makePool(
+            dev, num_streams * frames_per_stream);
+
+    VkSampler texture_sampler = VK_NULL_HANDLE;
+    VkDescriptorSetLayout scene_descriptor_layout = VK_NULL_HANDLE;
+    if constexpr (Props::needTextures) {
+        using SceneLayout = typename Props::PerSceneDescriptorLayout;
+
+        texture_sampler = makeImmutableSampler(dev);
+
+        array<VkSampler *, SceneLayout::NumBindings - 1> layout_args;
+        layout_args.fill(nullptr);
+
+        scene_descriptor_layout = apply([&](auto ...args) {
+            return SceneLayout::makeSetLayout(dev, &texture_sampler, args...);
+        }, layout_args);
+    }
+
+    return {
+        param_positions,
+        frame_descriptor_layout,
+        frame_descriptor_pool,
+        scene_descriptor_layout,
+        texture_sampler,
+        makeRenderPass(dev, alloc.getFormats(),
+                       FeaturesType::outputs & RenderOutputs::Color,
+                       FeaturesType::outputs & RenderOutputs::Depth)
+    };
+}
+
 static FramebufferState makeFramebuffer(const DeviceState &dev,
                                         MemoryAllocator &alloc,
                                         const FramebufferConfig &fb_cfg,
@@ -304,7 +346,7 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     view_info_sr.baseArrayLayer = 0;
     view_info_sr.layerCount = 1;
 
-    if (fb_cfg.colorLinearBytesPerFrame > 0) {
+    if (fb_cfg.colorOutput) {
         attachments.emplace_back(
                 alloc.makeColorAttachment(fb_cfg.totalWidth,
                                           fb_cfg.totalHeight));
@@ -319,7 +361,7 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
         attachment_views.push_back(color_view);
     }
 
-    if (fb_cfg.depthLinearBytesPerFrame > 0) {
+    if (fb_cfg.depthOutput) {
         attachments.emplace_back(
             alloc.makeLinearDepthAttachment(fb_cfg.totalWidth,
                                             fb_cfg.totalHeight));
@@ -408,162 +450,71 @@ static VkShaderModule loadShader(const DeviceState &dev,
     return shader_module;
 }
 
-static pair<vector<VkVertexInputAttributeDescription>, uint32_t>
-getVertexFormat(const RenderConfig &cfg)
+template <typename FeaturesType>
+PipelineState FeaturesImpl<FeaturesType>::makePipeline(
+        const DeviceState &dev,
+        const FramebufferConfig &fb_cfg,
+        const RenderState &render_state)
 {
-    vector<VkVertexInputAttributeDescription> input_desc;
-
-    // All vertex types have position first (offset 0)
-    input_desc.push_back({
-        0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0
-    });
-
-    switch (cfg.features.pipeline) {
-        case RenderFeatures::Pipeline::Unlit:
-            switch (cfg.features.colorSrc) {
-                case RenderFeatures::MeshColor::None:
-                    return {
-                        move(input_desc),
-                        sizeof(UnlitRendererInputs::NoColorVertex)
-                    };
-                case RenderFeatures::MeshColor::Vertex:
-                    input_desc.push_back({
-                        1, 0, VK_FORMAT_R8G8B8_UNORM,
-                        offsetof(UnlitRendererInputs::ColoredVertex, color)
-                    });
-                    return {
-                        move(input_desc),
-                        sizeof(UnlitRendererInputs::ColoredVertex)
-                    };
-                case RenderFeatures::MeshColor::Texture:
-                    input_desc.push_back({
-                        1, 0, VK_FORMAT_R32G32_SFLOAT,
-                        offsetof(UnlitRendererInputs::TexturedVertex, uv)
-                    });
-                    return {
-                        move(input_desc),
-                        sizeof(UnlitRendererInputs::TexturedVertex)
-                    };
-                default:
-                    return {{}, 0};
-            };
-        case RenderFeatures::Pipeline::Lit:
-        case RenderFeatures::Pipeline::Shadowed:
-            switch (cfg.features.colorSrc) {
-                case RenderFeatures::MeshColor::None:
-                    input_desc.push_back({
-                        1, 0, VK_FORMAT_R32G32B32_SFLOAT,
-                        offsetof(LitRendererInputs::NoColorVertex, normal)
-                    });
-                    return {
-                        move(input_desc),
-                        sizeof(LitRendererInputs::NoColorVertex)
-                    };
-                case RenderFeatures::MeshColor::Texture:
-                    input_desc.push_back({
-                        1, 0, VK_FORMAT_R32G32B32_SFLOAT,
-                        offsetof(LitRendererInputs::TexturedVertex, normal)
-                    });
-                    input_desc.push_back({
-                        2, 0, VK_FORMAT_R32G32_SFLOAT,
-                        offsetof(LitRendererInputs::TexturedVertex, uv)
-                    });
-                    return {
-                        move(input_desc),
-                        sizeof(LitRendererInputs::TexturedVertex)
-                    };
-                default:
-                    return {{}, 0};
-            }
-    }
-
-    unreachable();
-}
-
-static pair<const string, const string> getShaderNames(const RenderConfig &cfg)
-{
-    string pipeline;
-
-    switch (cfg.features.pipeline) {
-        case RenderFeatures::Pipeline::Unlit:
-            pipeline = "unlit";
-            break;
-        case RenderFeatures::Pipeline::Lit:
-            pipeline = "lit";
-            break;
-        case RenderFeatures::Pipeline::Shadowed:
-            pipeline = "shadowed";
-            break;
-    };
-
-    string color;
-    switch (cfg.features.colorSrc) {
-        case RenderFeatures::MeshColor::None:
-            color = "none";
-            break;
-        case RenderFeatures::MeshColor::Vertex:
-            color = "vertex";
-            break;
-        case RenderFeatures::MeshColor::Texture: 
-            color = "texture";
-            break;
-    };
-
-    string outputs = "";
-    if (cfg.features.outputs & RenderFeatures::Outputs::Color) {
-        outputs += "color";
-    }
-
-    if (cfg.features.outputs & RenderFeatures::Outputs::Depth) {
-        outputs += "depth";
-    }
-
-    string name = pipeline + "_" + color + "_" + outputs;
-
-    return {
-        name + ".vert.spv",
-        name + ".frag.spv"
-    };
-}
-
-static auto getPipelineConfig(const RenderConfig &cfg,
-                              const VkDescriptorSetLayout &per_render_layout,
-                              const VkDescriptorSetLayout &per_scene_layout)
-{
-    PipelineConfig pipeline_cfg;
-
-    auto [input_attrs, vertex_size] = getVertexFormat(cfg);
-    assert(vertex_size != 0);
+    using Props = FeatureProps<FeaturesType>;
+    using VertexType = typename FeaturesType::VertexType;
 
     // Vertex input assembly
-    pipeline_cfg.inputBindings = {{
-        0, vertex_size, VK_VERTEX_INPUT_RATE_VERTEX
-    }};
+    constexpr size_t num_bindings = Props::needMaterials ? 3 : 2;
 
-    pipeline_cfg.inputAttrs = move(input_attrs);
-
-    auto [vert_name, frag_name] = getShaderNames(cfg);
-
-    pipeline_cfg.shaders = decltype(pipeline_cfg.shaders) {
-        {vert_name, VK_SHADER_STAGE_VERTEX_BIT},
-        {frag_name, VK_SHADER_STAGE_FRAGMENT_BIT}
+    array<VkVertexInputBindingDescription, num_bindings> input_bindings;
+    input_bindings[0] = {
+        0, sizeof(VertexType), VK_VERTEX_INPUT_RATE_VERTEX
     };
 
-    pipeline_cfg.descLayouts.push_back(per_render_layout);
+    input_bindings[1] = {
+        1, sizeof(glm::mat4x3), VK_VERTEX_INPUT_RATE_INSTANCE
+    };
 
-    if (per_scene_layout != VK_NULL_HANDLE) {
-        pipeline_cfg.descLayouts.push_back(per_scene_layout);
+    if constexpr (Props::needMaterials) {
+        input_bindings[2] = {
+            2, sizeof(uint32_t), VK_VERTEX_INPUT_RATE_INSTANCE
+        };
     }
 
-    return pipeline_cfg;
-}
+    const auto &vertex_attributes = Props::vertexAttributes;
+    constexpr size_t total_attributes = vertex_attributes.size() +
+        3 + (Props::needMaterials ? 1 : 0);
 
-static PipelineState makePipeline(const DeviceState &dev,
-                                  const FramebufferConfig &fb_cfg,
-                                  VkRenderPass render_pass,
-                                  const PipelineConfig &cfg)
-                                  
-{
+    array<VkVertexInputAttributeDescription, total_attributes>
+        input_attributes;
+
+    std::copy(vertex_attributes.begin(), vertex_attributes.end(),
+              input_attributes.begin());
+
+    // 3 vec4s for mat4x3 transform matrix
+    for (size_t idx_offset = 0; idx_offset < 3; idx_offset++) {
+        size_t attr_idx = vertex_attributes.size() + idx_offset;
+        vertex_attributes[attr_idx] = {
+            Props::transformLocationVertex + idx_offset, 1,
+            VK_FORMAT_R32G32B32A32_SFLOAT,
+            idx_offset * sizeof(glm::vec4)
+        };
+    }
+
+    // FIXME (normal matrix)
+
+    if constexpr (Props::needMaterials) {
+        vertex_attributes[vertex_attributes.size() - 1] = {
+            Props::materialLocationVertex, 2,
+            VK_FORMAT_R32_UINT, 0
+        };
+    }
+
+    constexpr size_t total_layouts = Props::needMaterials ? 2 : 1;
+
+    array<VkDescriptorSetLayout, total_layouts> desc_layouts;
+    desc_layouts[0] = render_state.frameDescriptorLayout;
+
+    if constexpr (Props::needMaterials) {
+        desc_layouts[1] = render_state.sceneDescriptorLayout;
+    }
+
     // Pipeline cache (FIXME)
     VkPipelineCacheCreateInfo pcache_info {};
     pcache_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
@@ -571,19 +522,24 @@ static PipelineState makePipeline(const DeviceState &dev,
     REQ_VK(dev.dt.createPipelineCache(dev.hdl, &pcache_info,
                                       nullptr, &pipeline_cache));
 
-    vector<VkShaderModule> shader_modules;
-    shader_modules.reserve(cfg.shaders.size());
+    constexpr size_t num_shaders = 2;
 
-    vector<VkPipelineShaderStageCreateInfo> shader_stages;
-    shader_stages.reserve(shader_modules.size());
+    const array<pair<const char *, VkShaderStageFlagBits>,
+                num_shaders> shader_cfg = {
+        {Props::vertexShaderName, VK_SHADER_STAGE_VERTEX_BIT},
+        {Props::fragmentShaderName, VK_SHADER_STAGE_FRAGMENT_BIT}
+    };
 
-    for (size_t shader_idx = 0; shader_idx < cfg.shaders.size();
+    vector<VkShaderModule> shader_modules(num_shaders);
+    array<VkPipelineShaderStageCreateInfo, num_shaders> shader_stages;
+
+    for (size_t shader_idx = 0; shader_idx < shader_cfg.size();
          shader_idx++) {
-        auto [shader_name, shader_stage_flag] = cfg.shaders[shader_idx];
+        auto [shader_name, shader_stage_flag] = shader_cfg[shader_idx];
 
-        shader_modules.push_back(loadShader(dev, shader_name));
+        shader_modules[shader_idx] = loadShader(dev, shader_name);
 
-        shader_stages.push_back({
+        shader_stages[shader_idx] = {
             VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             nullptr,
             0,
@@ -591,19 +547,20 @@ static PipelineState makePipeline(const DeviceState &dev,
             shader_modules[shader_idx],
             "main",
             nullptr
-        });
+        };
     }
 
     VkPipelineVertexInputStateCreateInfo vert_info;
-    vert_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vert_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vert_info.pNext = nullptr;
     vert_info.flags = 0;
     vert_info.vertexBindingDescriptionCount =
-        static_cast<uint32_t>(cfg.inputBindings.size());
-    vert_info.pVertexBindingDescriptions = cfg.inputBindings.data();
+        static_cast<uint32_t>(input_bindings.size());
+    vert_info.pVertexBindingDescriptions = input_bindings.data();
     vert_info.vertexAttributeDescriptionCount =
-        static_cast<uint32_t>(cfg.inputAttrs.size());
-    vert_info.pVertexAttributeDescriptions = cfg.inputAttrs.data();
+        static_cast<uint32_t>(input_attributes.size());
+    vert_info.pVertexAttributeDescriptions = input_attributes.data();
     
     // Assembly
     VkPipelineInputAssemblyStateCreateInfo input_assembly_info {};
@@ -669,11 +626,11 @@ static PipelineState makePipeline(const DeviceState &dev,
         VK_COLOR_COMPONENT_A_BIT;
 
     vector<VkPipelineColorBlendAttachmentState> blend_attachments;
-    if (fb_cfg.colorLinearBytesPerFrame > 0) {
+    if (fb_cfg.colorOutput) {
         blend_attachments.push_back(blend_attach);
     }
 
-    if (fb_cfg.depthLinearBytesPerFrame > 0) {
+    if (fb_cfg.depthOutput) {
         blend_attachments.push_back(blend_attach);
     }
 
@@ -708,8 +665,8 @@ static PipelineState makePipeline(const DeviceState &dev,
     pipeline_layout_info.pNext = nullptr;
     pipeline_layout_info.flags = 0;
     pipeline_layout_info.setLayoutCount =
-        static_cast<uint32_t>(cfg.descLayouts.size());
-    pipeline_layout_info.pSetLayouts = cfg.descLayouts.data();
+        static_cast<uint32_t>(desc_layouts.size());
+    pipeline_layout_info.pSetLayouts = desc_layouts.data();
     pipeline_layout_info.pushConstantRangeCount = 1;
     pipeline_layout_info.pPushConstantRanges = &push_const;
 
@@ -734,7 +691,7 @@ static PipelineState makePipeline(const DeviceState &dev,
     pipeline_info.pColorBlendState = &blend_info;
     pipeline_info.pDynamicState = &dyn_info;
     pipeline_info.layout = pipeline_layout;
-    pipeline_info.renderPass = render_pass;
+    pipeline_info.renderPass = render_state.renderPass;
     pipeline_info.subpass = 0;
     pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
     pipeline_info.basePipelineIndex = -1;
@@ -753,46 +710,132 @@ static PipelineState makePipeline(const DeviceState &dev,
 }
 
 static glm::u32vec2 computeFBPosition(uint32_t batch_idx,
-                                      const FramebufferConfig &cfg,
-                                      const glm::u32vec2 &render_size)
+                                      const FramebufferConfig &cfg)
 {
     return glm::u32vec2((batch_idx % cfg.numImagesWidePerBatch) *
-                         render_size.x,
+                        cfg.imgWidth,
                         (batch_idx / cfg.numImagesWidePerBatch) *
-                         render_size.y);
+                        cfg.imgHeight);
 }
 
 static PerFrameState makeFrameState(const DeviceState &dev,
                                     const FramebufferConfig &fb_cfg,
-                                    VkCommandPool gfxPool,
+                                    const ParamBufferConfig &param_config,
+                                    const HostBuffer &param_buffer,
+                                    VkCommandPool gfx_pool,
+                                    VkDescriptorPool frame_set_pool,
+                                    VkDescriptorSetLayout frame_set_layout,
                                     bool cpu_sync,
-                                    const glm::u32vec2 &render_size,
                                     uint32_t batch_size,
                                     uint32_t frame_idx,
                                     uint32_t num_frames_per_stream,
                                     uint32_t stream_idx)
 {
-    VkCommandBuffer render_command = makeCmdBuffer(dev, gfxPool);
-    VkCommandBuffer copy_command = makeCmdBuffer(dev, gfxPool);
+    VkCommandBuffer render_command = makeCmdBuffer(dev, gfx_pool);
+    VkCommandBuffer copy_command = makeCmdBuffer(dev, gfx_pool);
 
     uint32_t global_frame_idx = stream_idx * num_frames_per_stream + frame_idx;
 
     glm::u32vec2 base_fb_offset(
-            global_frame_idx * fb_cfg.numImagesWidePerBatch * render_size.x,
+            global_frame_idx * fb_cfg.numImagesWidePerBatch * fb_cfg.imgWidth,
             0);
 
     DynArray<glm::u32vec2> batch_fb_offsets(batch_size);
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         batch_fb_offsets[batch_idx] =
-            computeFBPosition(batch_idx, fb_cfg, render_size) + base_fb_offset;
+            computeFBPosition(batch_idx, fb_cfg) + base_fb_offset;
     }
-
 
     VkDeviceSize color_buffer_offset =
         global_frame_idx * fb_cfg.linearBytesPerFrame;
 
     VkDeviceSize depth_buffer_offset =
         color_buffer_offset + fb_cfg.colorLinearBytesPerFrame;
+
+    const bool use_materials = param_config.totalMaterialIndexBytes > 0;
+    const bool use_lights = param_config.totalLightParamBytes > 0;
+
+    VkDescriptorSet frame_set = makeDescriptorSet(dev, frame_set_pool,
+                                                  frame_set_layout);
+    vector<VkWriteDescriptorSet> frame_set_updates;
+
+    const size_t num_vertex_inputs = use_materials ? 3 : 2;
+
+    DynArray<VkBuffer> vertex_buffers(num_vertex_inputs);
+    DynArray<VkDeviceSize> vertex_offsets(num_vertex_inputs);
+
+    // First vertex buffer is the actual vertex buffer, starts at 0, handle
+    // is set at render time
+    vertex_buffers[0] = VK_NULL_HANDLE;
+    vertex_offsets[0] = 0;
+
+    VkDeviceSize base_offset = frame_idx * param_config.totalParamBytes;
+
+    vertex_buffers[1] = param_buffer.buffer;
+    vertex_offsets[1] = base_offset;
+
+    uint8_t *base_ptr = reinterpret_cast<uint8_t *>(param_buffer.ptr) +
+        base_offset;
+
+    glm::mat4x3 *transform_ptr = reinterpret_cast<glm::mat4x3 *>(base_ptr);
+
+    ViewInfo *view_ptr = reinterpret_cast<ViewInfo *>(
+            base_ptr + param_config.viewOffset);
+
+    VkDescriptorBufferInfo view_buffer_info = {
+        param_buffer.buffer,
+        base_offset + param_config.viewOffset,
+        param_config.totalViewBytes
+    };
+
+    VkWriteDescriptorSet binding_update;
+    binding_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    binding_update.pNext = nullptr;
+    binding_update.dstSet = frame_set;
+    binding_update.dstBinding = 0;
+    binding_update.dstArrayElement = 0;
+    binding_update.descriptorCount = 1;
+    binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    binding_update.pImageInfo = nullptr;
+    binding_update.pBufferInfo = &view_buffer_info;
+    binding_update.pTexelBufferView = nullptr;
+    frame_set_updates.push_back(binding_update);
+
+    uint32_t *material_ptr = nullptr;
+    LightProperties *light_ptr = nullptr;
+    uint32_t *num_lights_ptr = nullptr;
+
+    if (use_materials) {
+        material_ptr = reinterpret_cast<uint32_t *>(
+                base_ptr + param_config.materialIndicesOffset);
+
+        vertex_buffers[2] = param_buffer.buffer;
+        vertex_offsets[2] = base_offset + param_config.materialIndicesOffset;
+    }
+
+    VkDescriptorBufferInfo light_info;
+    if (use_lights) {
+        light_ptr = reinterpret_cast<LightProperties *>(
+                base_ptr + param_config.lightsOffset);
+
+        num_lights_ptr = reinterpret_cast<uint32_t *>(
+                light_ptr + VulkanConfig::max_lights);
+
+        light_info = {
+            param_buffer.buffer,
+            base_offset + param_config.lightsOffset,
+            param_config.totalLightParamBytes
+        };
+
+        binding_update.dstBinding = 1;
+        binding_update.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        binding_update.pBufferInfo = &light_info;
+        frame_set_updates.push_back(binding_update);
+    }
+
+    dev.dt.updateDescriptorSets(dev.hdl,
+            static_cast<uint32_t>(frame_set_updates.size()),
+            frame_set_updates.data(), 0, nullptr);
 
     return PerFrameState {
         makeBinaryExternalSemaphore(dev),
@@ -801,20 +844,27 @@ static PerFrameState makeFrameState(const DeviceState &dev,
         base_fb_offset,
         move(batch_fb_offsets),
         color_buffer_offset,
-        depth_buffer_offset
+        depth_buffer_offset,
+        frame_set,
+        move(vertex_buffers),
+        move(vertex_offsets),
+        transform_ptr,
+        view_ptr,
+        material_ptr,
+        light_ptr,
+        num_lights_ptr
     };
 }
 
-static void recordFBToLinearCopy(const PerFrameState &state,
-                                 RenderFeatures::Outputs outputs,
-                                 const DeviceState &dev,
-                                 const FramebufferState &fb,
-                                 const glm::u32vec2 &render_size)
+static void recordFBToLinearCopy(const DeviceState &dev,
+                                 const PerFrameState &state,
+                                 const FramebufferConfig &fb_cfg,
+                                 const FramebufferState &fb)
 {
     // FIXME move this to FramebufferState
     vector<VkImageMemoryBarrier> fb_barriers;
 
-    if (outputs & RenderFeatures::Outputs::Color) {
+    if (fb_cfg.colorOutput) {
         fb_barriers.emplace_back(VkImageMemoryBarrier {
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             nullptr,
@@ -832,7 +882,7 @@ static void recordFBToLinearCopy(const PerFrameState &state,
         });
     }
 
-    if (outputs & RenderFeatures::Outputs::Depth) {
+    if (fb_cfg.depthOutput) {
         fb_barriers.emplace_back(VkImageMemoryBarrier {
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             nullptr,
@@ -889,12 +939,12 @@ static void recordFBToLinearCopy(const PerFrameState &state,
                 0
             };
             region.imageExtent = {
-                render_size.x,
-                render_size.y,
+                fb_cfg.imgWidth,
+                fb_cfg.imgHeight,
                 1
             };
 
-            cur_offset += render_size.x * render_size.y * texel_bytes;
+            cur_offset += fb_cfg.imgWidth * fb_cfg.imgHeight * texel_bytes;
         }
 
         dev.dt.cmdCopyImageToBuffer(copy_cmd,
@@ -905,12 +955,12 @@ static void recordFBToLinearCopy(const PerFrameState &state,
                                     copy_regions.data());
     };
 
-    if (outputs & RenderFeatures::Outputs::Color) {
+    if (fb_cfg.colorOutput) {
         make_copy_cmd(state.colorBufferOffset, sizeof(uint8_t) * 4,
                       fb.attachments[0].image);
     }
 
-    if (outputs & RenderFeatures::Outputs::Depth) {
+    if (fb_cfg.depthOutput) {
         make_copy_cmd(state.depthBufferOffset, sizeof(float),
                       fb.attachments[fb.attachments.size() - 2].image);
     }
@@ -919,22 +969,18 @@ static void recordFBToLinearCopy(const PerFrameState &state,
 }
 
 CommandStreamState::CommandStreamState(
-        const RenderFeatures &features,
         const InstanceState &i,
         const DeviceState &d,
-        const PerRenderDescriptorConfig &per_render_cfg,
-        VkDescriptorSet per_render_descriptor,
-        VkRenderPass render_pass,
-        const PipelineState &pl,
         const FramebufferConfig &fb_cfg,
+        const RenderState &render_state,
+        const PipelineState &pl,
         const FramebufferState &framebuffer,
         MemoryAllocator &alc,
         QueueManager &queue_manager,
         uint32_t batch_size,
-        uint32_t render_width,
-        uint32_t render_height,
         uint32_t stream_idx,
-        uint32_t num_frames_inflight)
+        uint32_t num_frames_inflight,
+        bool cpu_sync)
     : inst(i),
       dev(d),
       pipeline(pl),
@@ -943,114 +989,32 @@ CommandStreamState::CommandStreamState(
       alloc(alc),
       fb_cfg_(fb_cfg),
       fb_(framebuffer),
-      render_pass_(render_pass),
-      per_render_descriptor_(per_render_descriptor),
-      per_render_buffer_(
-              alloc.makeShaderBuffer(per_render_cfg.totalParamBytes)),
-      transform_ptr_(reinterpret_cast<glm::mat4 *>(
-          per_render_buffer_.ptr)),
-      bytes_per_txfm_(per_render_cfg.bytesPerTransform),
-      view_ptr_(reinterpret_cast<ViewInfo *>(
-          reinterpret_cast<uint8_t *>(per_render_buffer_.ptr) +
-              per_render_cfg.viewOffset)),
-      material_ptr_(per_render_cfg.totalMaterialIndexBytes == 0 ? nullptr :
-          reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(
-              per_render_buffer_.ptr) + per_render_cfg.materialIndicesOffset)),
-      light_ptr_(per_render_cfg.totalLightParamBytes == 0 ? nullptr :
-          reinterpret_cast<LightProperties *>(reinterpret_cast<uint8_t *>(
-              per_render_buffer_.ptr) + per_render_cfg.lightsOffset)),
-      num_lights_ptr_(light_ptr_ == nullptr ? nullptr :
-          reinterpret_cast<uint32_t *>(
-              light_ptr_ + VulkanConfig::max_lights)),
-      render_size_(render_width, render_height),
-      render_extent_(render_width * fb_cfg.numImagesWidePerBatch,
-                     render_height * fb_cfg.numImagesTallPerBatch),
+      render_pass_(render_state.renderPass),
+      per_render_buffer_(alloc.makeShaderBuffer(
+                render_state.paramPositions.totalParamBytes *
+                    num_frames_inflight)),
+      render_size_(fb_cfg.imgWidth, fb_cfg.imgHeight),
+      render_extent_(render_size_.x * fb_cfg.numImagesWidePerBatch,
+                     render_size_.y * fb_cfg.numImagesTallPerBatch),
       frame_states_(),
       cur_frame_(0)
 {
-    vector<VkWriteDescriptorSet> render_desc_update;
-
-    auto makeBufferInfo = [this](
-            VkDeviceSize offset, VkDeviceSize num_bytes) {
-        VkDescriptorBufferInfo buffer_info;
-        buffer_info.buffer = per_render_buffer_.buffer;
-        buffer_info.offset = offset;
-        buffer_info.range = num_bytes;
-
-        return buffer_info;
-    };
-
-    VkDescriptorBufferInfo transform_info =
-        makeBufferInfo(0, per_render_cfg.totalTransformBytes);
-    VkDescriptorBufferInfo view_info =
-        makeBufferInfo(per_render_cfg.viewOffset,
-                       per_render_cfg.totalViewBytes);
-
-    // Define these outside if blocks so pointers remain valid if used
-    VkDescriptorBufferInfo material_info;
-    VkDescriptorBufferInfo light_info;
-
-    uint32_t cur_binding = 0;
-    VkWriteDescriptorSet binding_update;
-    binding_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    binding_update.pNext = nullptr;
-    binding_update.dstSet = per_render_descriptor_;
-    binding_update.dstBinding = cur_binding++;
-    binding_update.dstArrayElement = 0;
-    binding_update.descriptorCount = 1;
-    binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    binding_update.pImageInfo = nullptr;
-    binding_update.pBufferInfo = &transform_info;
-    binding_update.pTexelBufferView = nullptr;
-    render_desc_update.push_back(binding_update);
-
-    binding_update.dstBinding = cur_binding++;
-    binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    binding_update.pBufferInfo = &view_info;
-    render_desc_update.push_back(binding_update);
-
-    if (per_render_cfg.totalMaterialIndexBytes > 0) {
-        material_info = makeBufferInfo(
-                per_render_cfg.materialIndicesOffset,
-                per_render_cfg.totalMaterialIndexBytes);
-
-        binding_update.dstBinding = cur_binding++;
-        binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        binding_update.pBufferInfo = &material_info;
-        render_desc_update.push_back(binding_update);
-    }
-
-    if (per_render_cfg.totalLightParamBytes > 0) {
-        light_info = makeBufferInfo(
-                per_render_cfg.lightsOffset,
-                per_render_cfg.totalLightParamBytes);
-
-        binding_update.dstBinding = cur_binding++;
-        binding_update.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        binding_update.pBufferInfo = &light_info;
-        render_desc_update.push_back(binding_update);
-    }
-
-    dev.dt.updateDescriptorSets(dev.hdl,
-            static_cast<uint32_t>(render_desc_update.size()),
-            render_desc_update.data(), 0, nullptr);
-
-    bool cpu_sync = features.options &
-        RenderFeatures::Options::CpuSynchronization;
-
     frame_states_.reserve(num_frames_inflight);
     for (uint32_t frame_idx = 0; frame_idx < num_frames_inflight;
          frame_idx++) {
-        frame_states_.emplace_back(makeFrameState(dev, fb_cfg, gfxPool,
-                                                  cpu_sync, render_size_,
-                                                  batch_size,
-                                                  frame_idx,
-                                                  num_frames_inflight,
-                                                  stream_idx));
+        frame_states_.emplace_back(makeFrameState(dev,
+                fb_cfg,
+                render_state.paramPositions,
+                per_render_buffer_,
+                gfxPool,
+                render_state.frameDescriptorPool,
+                render_state.frameDescriptorLayout,
+                cpu_sync, batch_size,
+                frame_idx, num_frames_inflight, stream_idx));
 
-        recordFBToLinearCopy(frame_states_.back(), features.outputs, dev, fb_,
-                             render_size_);
+        recordFBToLinearCopy(dev, frame_states_.back(), fb_cfg_, fb_);
     }
+
 }
 
 uint32_t CommandStreamState::render(const vector<Environment> &envs)
@@ -1086,7 +1050,9 @@ int CommandStreamState::getSemaphoreFD(uint32_t frame_idx) const
     return fd;
 }
 
-VulkanState::VulkanState(const RenderConfig &config, const DeviceUUID &uuid)
+template <typename FeaturesType>
+VulkanState::VulkanState(const RenderConfig<FeaturesType> &config,
+                         const DeviceUUID &uuid)
     : VulkanState(config, [&config, &uuid]() {
         InstanceState inst_state(false, {});
         DeviceState dev_state(
@@ -1098,63 +1064,61 @@ VulkanState::VulkanState(const RenderConfig &config, const DeviceUUID &uuid)
     }())
 {}
 
-VulkanState::VulkanState(const RenderConfig &config,
+template <typename FeaturesType, typename ImplType>
+VulkanState::VulkanState(const RenderConfig<FeaturesType> &cfg,
                          CoreVulkanHandles &&handles)
-    : cfg(config),
-      inst(move(handles.inst)),
+    : inst(move(handles.inst)),
       dev(move(handles.dev)),
       queueMgr(dev),
       alloc(dev, inst),
-      fbCfg(getFramebufferConfig(cfg)),
-      streamDescCfg(getRenderDescriptorConfig(cfg.features, cfg.batchSize,
-                                              alloc, dev)),
-      sceneDescCfg(getSceneDescriptorConfig(cfg.features, dev)),
-      renderDescriptorPool(streamDescCfg.makePool(dev, cfg.numStreams)),
-      renderPass(makeRenderPass(fbCfg, dev, alloc.getFormats())),
-      pipeline(makePipeline(dev, fbCfg, renderPass,
-                            getPipelineConfig(config,
-                                              streamDescCfg.layout,
-                                              sceneDescCfg.layout))),
-      fb(makeFramebuffer(dev, alloc, fbCfg, renderPass)),
-      numLoaders(0),
-      numStreams(0)
+      fbCfg(ImplType::getFramebufferConfig(cfg.batchSize, cfg.imgWidth,
+                                           cfg.imgHeight, cfg.numStreams)),
+      renderState(ImplType::makeRenderState(dev, cfg.batchSize,
+                                            fbCfg, alloc)),
+      pipeline(ImplType::makePipeline(dev, fbCfg, renderState)),
+      fb(makeFramebuffer(dev, alloc, fbCfg, renderState.renderPass)),
+      globalTransform(cfg.coordinateTransform),
+      loader_impl_(LoaderImpl::create<FeaturesType::VertexType,
+                                      FeaturesType::MaterialParamsType>()),
+      num_loaders_(0),
+      num_streams_(0),
+      max_num_loaders_(cfg.numLoaders),
+      max_num_streams_(cfg.numStreams),
+      batch_size_(cfg.batchSize),
+      double_buffered_(v4r::isDoubleBuffered<FeaturesType>()),
+      cpu_sync_(v4r::needCpuSync<FeaturesType>())
 {}
 
 LoaderState VulkanState::makeLoader()
 {
-    numLoaders++;
-    assert(numLoaders <= cfg.numLoaders);
+    num_loaders_++;
+    assert(num_loaders_ <= max_num_loaders_);
 
-    return LoaderState(dev, cfg.features, sceneDescCfg,
+    return LoaderState(dev, loader_impl_,
+                       renderState.sceneDescriptorLayout,
                        alloc, queueMgr,
-                       cfg.coordinateTransform);
+                       globalTransform);
 }
 
 CommandStreamState VulkanState::makeStream()
 {
-    uint32_t stream_idx = numStreams++;
-    assert(stream_idx < cfg.numStreams);
+    uint32_t stream_idx = num_streams_++;
+    assert(stream_idx < max_num_streams_);
 
-    uint32_t num_frames_inflight =
-        (cfg.features.options & RenderFeatures::Options::DoubleBuffered) ?
-            2 : 1;
+    uint32_t num_frames_inflight = double_buffered_ ? 2 : 1;
 
-    return CommandStreamState(cfg.features,
-                              inst,
+    return CommandStreamState(inst,
                               dev,
-                              streamDescCfg,
-                              makeDescriptorSet(dev, renderDescriptorPool,
-                                                streamDescCfg.layout),
-                              renderPass,
+                              fbCfg,
+                              renderState,
                               pipeline,
-                              fbCfg, fb,
+                              fb,
                               alloc,
                               queueMgr,
-                              cfg.batchSize,
-                              cfg.imgWidth,
-                              cfg.imgHeight,
+                              batch_size_,
                               stream_idx,
-                              num_frames_inflight);
+                              num_frames_inflight,
+                              cpu_sync_);
 }
 
 int VulkanState::getFramebufferFD() const
@@ -1177,3 +1141,5 @@ uint64_t VulkanState::getFramebufferBytes() const
 }
 
 }
+
+#include "pipelines/render_definitions.inl"
