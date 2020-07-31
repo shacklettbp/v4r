@@ -1,6 +1,7 @@
 #include "scene.hpp"
 
 #include "asset_load.hpp"
+#include "shader.hpp"
 #include "utils.hpp"
 
 #include <assimp/Importer.hpp>
@@ -234,13 +235,9 @@ static SceneDescription parseAssimpScene(const string &scene_path,
         default_diffuse->raw_image[2] = 127;
         default_diffuse->raw_image[3] = 127;
 
-        auto material_params = assimpParseMaterials<MaterialParamsType>(
+        materials = assimpParseMaterials<MaterialParamsType>(
                 raw_scene, default_diffuse);
 
-        materials.reserve(material_params.size());
-        for (auto &&params : material_params) {
-            materials.emplace_back(Material::makeShared(move(params)));
-        }
         mesh_materials.reserve(raw_scene->mNumMeshes);
     }
 
@@ -652,7 +649,7 @@ shared_ptr<Scene> LoaderState::makeScene(
         texture_views.push_back(view);
     }
 
-    assert(gpu_textures.size() <= VulkanConfig::max_textures);
+    assert(materials.size() <= VulkanConfig::max_materials);
 
     DescriptorSet material_set = descriptorManager.makeSet();
 
@@ -745,7 +742,7 @@ shared_ptr<Texture> LoaderState::loadTexture(const vector<uint8_t> &raw)
 template <typename MaterialParamsType>
 shared_ptr<Material> LoaderState::makeMaterial(MaterialParamsType params)
 {
-    return Material::makeShared(move(params));
+    return MaterialImpl<MaterialParamsType>::make(move(params));
 }
 
 std::shared_ptr<Mesh> LoaderState::loadMesh(const std::string &geometry_path)

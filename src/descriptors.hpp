@@ -99,42 +99,6 @@ struct DescriptorLayout {
     }
 };
 
-using PerSceneDescriptorLayout = DescriptorLayout<
-    BindingConfig<0, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VulkanConfig::max_textures,
-                  VK_SHADER_STAGE_FRAGMENT_BIT,
-                  VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT>,
-    BindingConfig<1, VK_DESCRIPTOR_TYPE_SAMPLER, 1,
-                  VK_SHADER_STAGE_FRAGMENT_BIT>
->;
-
-using UnlitNoMaterialPerRenderLayout = DescriptorLayout<
-    BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                  VK_SHADER_STAGE_VERTEX_BIT>, // Transforms
-    BindingConfig<1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                  VK_SHADER_STAGE_VERTEX_BIT> // View Info
->;
-
-using UnlitMaterialPerRenderLayout = DescriptorLayout<
-    BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                  VK_SHADER_STAGE_VERTEX_BIT>, // Transforms
-    BindingConfig<1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                  VK_SHADER_STAGE_VERTEX_BIT>, // View Info
-    BindingConfig<2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                  VK_SHADER_STAGE_FRAGMENT_BIT> // Material Info
->;
-
-using LitPerRenderLayout = DescriptorLayout<
-    BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                  VK_SHADER_STAGE_VERTEX_BIT>, // Transforms
-    BindingConfig<1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                  VK_SHADER_STAGE_VERTEX_BIT |
-                    VK_SHADER_STAGE_FRAGMENT_BIT>, // View Info
-    BindingConfig<2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                  VK_SHADER_STAGE_FRAGMENT_BIT>, // Material Info
-    BindingConfig<3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
-                  VK_SHADER_STAGE_FRAGMENT_BIT> // Light Info
->;
-
 struct PoolState {
     PoolState(VkDescriptorPool p)
         : pool(p), numUsed(0), numActive(0)

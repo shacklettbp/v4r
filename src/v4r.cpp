@@ -211,10 +211,12 @@ RenderSync CommandStream::render(const std::vector<Environment> &elems)
     return RenderSync(&sync_[frame_idx]);
 }
 
-template <typename FeaturesType>
-BatchRenderer::BatchRenderer(const RenderConfig<FeaturesType> &cfg)
+template <typename PipelineType>
+BatchRenderer::BatchRenderer(const RenderConfig &cfg,
+                             const RenderFeatures<PipelineType> &features)
     : BatchRenderer(
-            make_handle<VulkanState>(cfg, getUUIDFromCudaID(cfg.gpuID)),
+            make_handle<VulkanState>(cfg, features, 
+                                     getUUIDFromCudaID(cfg.gpuID)),
             cfg.gpuID)
 {}
 

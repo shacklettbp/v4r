@@ -1,20 +1,20 @@
-set(VERTEX_SHADER uber.vert)
-set(FRAGMENT_SHADER uber.frag)
+set(VERTEX_SHADER shaders/uber.vert)
+set(FRAGMENT_SHADER shaders/uber.frag)
 set(SHADER_DEPENDENCIES
-    shader_common.h
-    brdf.glsl)
+    shaders/shader_common.h
+    shaders/brdf.glsl)
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-             shaders_cfg.json)
+             pipeline_cfg.json)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-             ../../scripts/gen_shader_defines.py)
+             ../scripts/gen_pipelines.py)
 
-set(CFG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/shaders_cfg.json")
+set(CFG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/pipeline_cfg.json")
 set(VERTEX_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${VERTEX_SHADER}")
 set(FRAGMENT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${FRAGMENT_SHADER}")
 
 execute_process(
-    COMMAND ../scripts/gen_shader_defines.py "${CFG_FILE}" "--cmake"
+    COMMAND ../scripts/gen_pipelines.py "${CFG_FILE}" "${CMAKE_CURRENT_BINARY_DIR}"
     OUTPUT_VARIABLE SHADER_DEFINES
     ERROR_VARIABLE CFG_ERROR
     RESULT_VARIABLE SHADER_SUCCESS)
@@ -26,9 +26,10 @@ endif()
 find_program(GLSLC glslc)
 
 set(COMPILED_SHADERS "")
+file(MAKE_DIRECTORY "${SHADER_DIR}")
 
 function(add_shader SHADER_NAME SHADER_SRC COMPILER_ARGS)
-    set(COMPILED_SHADER "${SHADER_NAME}.spv")
+    set(COMPILED_SHADER "${SHADER_DIR}/${SHADER_NAME}.spv")
     list(APPEND COMPILED_SHADERS "${COMPILED_SHADER}")
     set(COMPILED_SHADERS "${COMPILED_SHADERS}" PARENT_SCOPE)
 

@@ -86,11 +86,11 @@ struct RenderState {
     VkRenderPass renderPass;
 };
 
-template <typename FeaturesType>
-struct FeatureProps;
+template <typename PipelineType>
+struct PipelineProps;
 
-template <typename FeaturesType>
-struct FeaturesImpl {
+template <typename PipelineType>
+struct PipelineImpl {
     static FramebufferConfig getFramebufferConfig(
             uint32_t batch_size, uint32_t img_width, uint32_t img_height,
             uint32_t num_streams);
@@ -230,13 +230,15 @@ struct CoreVulkanHandles {
 
 class VulkanState {
 public:
-    template <typename FeaturesType>
-    VulkanState(const RenderConfig<FeaturesType> &cfg,
+    template <typename PipelineType>
+    VulkanState(const RenderConfig &cfg,
+                const RenderFeatures<PipelineType> &features,
                 const DeviceUUID &uuid);
 
-    template <typename FeaturesType,
-              typename ImplType = FeaturesImpl<FeaturesType>>
-    VulkanState(const RenderConfig<FeaturesType> &cfg,
+    template <typename PipelineType,
+              typename ImplType = PipelineImpl<PipelineType>>
+    VulkanState(const RenderConfig &cfg,
+                const RenderFeatures<PipelineType> &features,
                 CoreVulkanHandles &&handles);
 
     LoaderState makeLoader();

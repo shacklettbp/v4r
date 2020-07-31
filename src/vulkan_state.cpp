@@ -1,4 +1,5 @@
 #include "vulkan_state.hpp"
+#include "pipelines/render_definitions.inl"
 
 #include "utils.hpp"
 #include "vk_utils.hpp"
@@ -17,38 +18,38 @@ using namespace std;
 
 namespace v4r {
 
-template <typename FeaturesType>
+template <typename PipelineType>
 static constexpr bool isDoubleBuffered()
 {
-    return FeaturesType::options & RenderOptions::DoubleBuffered;
+    return PipelineType::options & RenderOptions::DoubleBuffered;
 }
 
-template <typename FeaturesType>
+template <typename PipelineType>
 static constexpr bool needCpuSync()
 {
-    return FeaturesType::options & RenderOptions::CpuSynchronization;
+    return PipelineType::options & RenderOptions::CpuSynchronization;
 }
 
-template <typename FeaturesType>
+template <typename PipelineType>
 static constexpr bool needColorOutput()
 {
-    return FeaturesType::outputs & RenderOutputs::Color;
+    return PipelineType::outputs & RenderOutputs::Color;
 }
 
-template <typename FeaturesType>
+template <typename PipelineType>
 static constexpr bool needDepthOutput()
 {
-    return FeaturesType::outputs & RenderOutputs::Depth;
+    return PipelineType::outputs & RenderOutputs::Depth;
 }
 
-template <typename FeaturesType>
-FramebufferConfig FeaturesImpl<FeaturesType>::getFramebufferConfig(
+template <typename PipelineType>
+FramebufferConfig PipelineImpl<PipelineType>::getFramebufferConfig(
     uint32_t batch_size, uint32_t img_width, uint32_t img_height,
     uint32_t num_streams)
 {
-    constexpr bool need_color_output = needColorOutput<FeaturesType>();
-    constexpr bool need_depth_output = needDepthOutput<FeaturesType>();
-    constexpr bool is_double_buffered = isDoubleBuffered<FeaturesType>();
+    constexpr bool need_color_output = needColorOutput<PipelineType>();
+    constexpr bool need_depth_output = needDepthOutput<PipelineType>();
+    constexpr bool is_double_buffered = isDoubleBuffered<PipelineType>();
 
     uint32_t num_frames_per_stream =
         is_double_buffered ?
@@ -277,12 +278,12 @@ static ParamBufferConfig computeParamBufferConfig(
     return  cfg;
 }
 
-template <typename FeaturesType>
-RenderState FeaturesImpl<FeaturesType>::makeRenderState(
+template <typename PipelineType>
+RenderState PipelineImpl<PipelineType>::makeRenderState(
         const DeviceState &dev, uint32_t batch_size,
         uint32_t num_streams, MemoryAllocator &alloc)
 {
-    using Props = FeatureProps<FeaturesType>;
+    using Props = PipelineProps<PipelineType>;
 
     ParamBufferConfig param_positions = computeParamBufferConfig(
             Props::needMaterials, Props::needLighting, batch_size, alloc);
@@ -296,7 +297,7 @@ RenderState FeaturesImpl<FeaturesType>::makeRenderState(
     }, frame_layout_args);
 
     constexpr uint32_t frames_per_stream =
-        (FeaturesType::options & RenderOptions::DoubleBuffered) ? 2 : 1;
+        (PipelineType::options & RenderOptions::DoubleBuffered) ? 2 : 1;
 
     VkDescriptorPool frame_descriptor_pool = FrameLayout::makePool(
             dev, num_streams * frames_per_stream);
@@ -323,8 +324,8 @@ RenderState FeaturesImpl<FeaturesType>::makeRenderState(
         scene_descriptor_layout,
         texture_sampler,
         makeRenderPass(dev, alloc.getFormats(),
-                       FeaturesType::outputs & RenderOutputs::Color,
-                       FeaturesType::outputs & RenderOutputs::Depth)
+                       PipelineType::outputs & RenderOutputs::Color,
+                       PipelineType::outputs & RenderOutputs::Depth)
     };
 }
 
@@ -450,14 +451,14 @@ static VkShaderModule loadShader(const DeviceState &dev,
     return shader_module;
 }
 
-template <typename FeaturesType>
-PipelineState FeaturesImpl<FeaturesType>::makePipeline(
+template <typename PipelineType>
+PipelineState PipelineImpl<PipelineType>::makePipeline(
         const DeviceState &dev,
         const FramebufferConfig &fb_cfg,
         const RenderState &render_state)
 {
-    using Props = FeatureProps<FeaturesType>;
-    using VertexType = typename FeaturesType::VertexType;
+    using Props = PipelineProps<PipelineType>;
+    using VertexType = typename PipelineType::VertexType;
 
     // Vertex input assembly
     constexpr size_t num_bindings = Props::needMaterials ? 3 : 2;
@@ -1050,10 +1051,11 @@ int CommandStreamState::getSemaphoreFD(uint32_t frame_idx) const
     return fd;
 }
 
-template <typename FeaturesType>
-VulkanState::VulkanState(const RenderConfig<FeaturesType> &config,
+template <typename PipelineType>
+VulkanState::VulkanState(const RenderConfig &config,
+                         const RenderFeatures<PipelineType> &features,
                          const DeviceUUID &uuid)
-    : VulkanState(config, [&config, &uuid]() {
+    : VulkanState(config, features, [&config, &uuid]() {
         InstanceState inst_state(false, {});
         DeviceState dev_state(
                 inst_state.makeDevice(uuid,
@@ -1064,8 +1066,9 @@ VulkanState::VulkanState(const RenderConfig<FeaturesType> &config,
     }())
 {}
 
-template <typename FeaturesType, typename ImplType>
-VulkanState::VulkanState(const RenderConfig<FeaturesType> &cfg,
+template <typename PipelineType, typename ImplType>
+VulkanState::VulkanState(const RenderConfig &cfg,
+                         const RenderFeatures<PipelineType> &features,
                          CoreVulkanHandles &&handles)
     : inst(move(handles.inst)),
       dev(move(handles.dev)),
@@ -1078,15 +1081,15 @@ VulkanState::VulkanState(const RenderConfig<FeaturesType> &cfg,
       pipeline(ImplType::makePipeline(dev, fbCfg, renderState)),
       fb(makeFramebuffer(dev, alloc, fbCfg, renderState.renderPass)),
       globalTransform(cfg.coordinateTransform),
-      loader_impl_(LoaderImpl::create<FeaturesType::VertexType,
-                                      FeaturesType::MaterialParamsType>()),
+      loader_impl_(LoaderImpl::create<PipelineType::VertexType,
+                                      PipelineType::MaterialParamsType>()),
       num_loaders_(0),
       num_streams_(0),
       max_num_loaders_(cfg.numLoaders),
       max_num_streams_(cfg.numStreams),
       batch_size_(cfg.batchSize),
-      double_buffered_(v4r::isDoubleBuffered<FeaturesType>()),
-      cpu_sync_(v4r::needCpuSync<FeaturesType>())
+      double_buffered_(v4r::isDoubleBuffered<PipelineType>()),
+      cpu_sync_(v4r::needCpuSync<PipelineType>())
 {}
 
 LoaderState VulkanState::makeLoader()
@@ -1141,5 +1144,3 @@ uint64_t VulkanState::getFramebufferBytes() const
 }
 
 }
-
-#include "pipelines/render_definitions.inl"

@@ -90,8 +90,9 @@ friend class BatchRenderer;
 
 class BatchRenderer {
 public:
-    template <typename FeaturesType>
-    BatchRenderer(const RenderConfig<FeaturesType> &cfg);
+    template <typename PipelineType>
+    BatchRenderer(const RenderConfig &cfg,
+                  const RenderFeatures<PipelineType> &features);
 
     AssetLoader makeLoader();
     CommandStream makeCommandStream();

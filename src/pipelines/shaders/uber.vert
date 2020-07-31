@@ -31,7 +31,7 @@ layout (location = NORMAL_TXFM3_LOC) in vec3 normal_txfm3;
 
 #endif
 
-#ifdf HAS_TEXTURES
+#ifdef HAS_TEXTURES
 layout (location = UV_IN_LOC) in vec2 in_uv;
 layout (location = UV_LOC) out vec2 out_uv;
 #endif

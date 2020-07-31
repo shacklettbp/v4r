@@ -35,9 +35,11 @@ add_custom_target( generate_vk_dispatch DEPENDS
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/dispatch)
 
 # Build shaders
-set(SHADER_DIR "${CMAKE_BINARY_DIR}/data/shaders/")
-add_subdirectory("../data/shaders/" "${SHADER_DIR}")
+set(SHADER_DIR "${CMAKE_BINARY_DIR}/shaders/")
 add_definitions("-DSHADER_DIR=${SHADER_DIR}")
+add_subdirectory(pipelines)
+
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/pipelines)
 
 # Main library
 

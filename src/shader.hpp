@@ -9,12 +9,19 @@ namespace Shader {
 using namespace glm;
 using uint = uint32_t;
 
-#include "../data/shaders/shader_common.h"
-
+#include "pipelines/shaders/shader_common.h"
 };
 
 using Shader::ViewInfo;
 using Shader::RenderPushConstant;
+
+namespace VulkanConfig {
+
+constexpr uint32_t max_materials = MAX_MATERIALS;
+constexpr uint32_t max_lights = MAX_LIGHTS;
+constexpr uint32_t max_instances = 100000;
+
+}
 
 }
 

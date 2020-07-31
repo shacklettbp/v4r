@@ -1,0 +1,95 @@
+{
+    "properties": {
+        "needMaterial": "HAS_MATERIALS",
+        "needMaterialParams": "MATERIAL_PARAMS",
+        "needVertexColor": "VERTEX_COLOR",
+        "needTextures": "HAS_TEXTURES",
+        "needColorOutput": null,
+        "needDepthOutput": null,
+        "needLighting": "LIT_PIPELINE",
+        "blinnphong": "BLINN_PHONG"
+    },
+    "param_types" : {
+        "RenderOutputs": {
+            "values": {
+                "Color": ["needColorOutput"],
+                "Depth": ["needDepthOutput"]
+            },
+            "multiple": true
+        },
+        "DataSource": {
+            "values": {
+                "None": [],
+                "Vertex": ["needVertexColor"],
+                "Uniform": ["needMaterial", "needMaterialParams"],
+                "Texture": ["needMaterial", "needTextures"]
+            },
+            "multiple": false
+        }
+    },
+    "pipelines" : {
+        "Unlit" : {
+            "params": {
+                "output": {
+                    "type": "RenderOutputs"
+                },
+                "albedo": {
+                    "type": "DataSource",
+                    "num_components": 4
+                }
+            },
+            "valid_configurations": [{
+                "required": {
+                    "output": ["Color"]
+                },
+                "allowed": {
+                    "albedo": ["Vertex", "Uniform", "Texture"]
+                }}, {
+                "required": {
+                    "output": ["Depth"]
+                },
+                "allowed": {
+                    "output": ["Depth"],
+                    "albedo": ["None"]
+                }
+            }],
+            "shader_properties": []
+        },
+        "BlinnPhong": {
+            "params": {
+                "output": {
+                    "type": "RenderOutputs"
+                },
+                "diffuse_color": {
+                    "type": "DataSource",
+                    "num_components": 3
+                },
+                "specular_color": {
+                    "type": "DataSource",
+                    "num_components": 3
+                },
+                "shininess": {
+                    "type": "DataSource",
+                    "num_components": 1
+                },
+                "nonuniform_scale": {
+                    "type": "bool"
+                }
+            },
+            "valid_configurations": [{
+                "required": {
+                    "output": ["Color"]
+                },
+                "allowed": {
+                    "diffuse_color": ["Uniform", "Texture"],
+                    "specular_color": ["Uniform", "Texture"],
+                    "shininess": ["Uniform"]
+                }
+            }],
+            "shader_properties": [
+                "needLighting",
+                "blinnphong"
+            ]
+        }
+    }
+}

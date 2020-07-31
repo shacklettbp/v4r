@@ -139,12 +139,12 @@ std::vector<std::shared_ptr<Material>> assimpParseMaterials(
             specular_tex = default_diffuse;
         }
 
-        materials.emplace_back(Material::makeShared<MaterialParamsType>(
-                MaterialParam::DiffuseTexture { move(diffuse_tex) },
-                MaterialParam::DiffuseColor { diffuse_color },
-                MaterialParam::SpecularTexture { move(specular_tex) },
-                MaterialParam::SpecularColor { specular_color },
-                MaterialParam::Shininess { shininess }));
+        materials.emplace_back(MaterialImpl<MaterialParamsType>::make(
+                MaterialParam::DiffuseColorTexture { move(diffuse_tex) },
+                MaterialParam::DiffuseColorUniform { diffuse_color },
+                MaterialParam::SpecularColorTexture { move(specular_tex) },
+                MaterialParam::SpecularColorUniform { specular_color },
+                MaterialParam::ShininessUniform { shininess }));
     }
 
     return materials;
@@ -190,51 +190,54 @@ static VertexType assimpParseVertex(const aiMesh *raw_mesh,
                                     uint32_t vert_idx) {
 
     auto getPosition = [&]() {
-        if constexpr (VertexType::HasPosition) {
-            return std::make_tuple(VertexAttribute::Position {
+        if constexpr (VertexImpl<VertexType>::hasPosition) {
+            return std::make_tuple(
                 readPosition(raw_mesh, vert_idx)
-            });
+            );
         } else {
             return std::tuple<>();
         }
     };
 
     auto getNormal = [&]() {
-        if constexpr (VertexType::HasNormal) {
-            return std::make_tuple(VertexAttribute::Normal {
+        if constexpr (VertexImpl<VertexType>::hasNormal) {
+            return std::make_tuple(
                     readNormal(raw_mesh, vert_idx)
-            });
+            );
         } else {
             return std::tuple<>();
         }
     };
 
     auto getColor = [&]() {
-        if constexpr (VertexType::HasColor) {
-            return std::make_tuple(VertexAttribute::Color {
+        if constexpr (VertexImpl<VertexType>::hasColor) {
+            return std::make_tuple(
                 readColor(raw_mesh, vert_idx)
-            });
+            );
         } else {
             return std::tuple<>();
         }
     };
 
     auto getUV = [&]() {
-        if constexpr (VertexType::HasUV) {
-            return std::make_tuple(VertexAttribute::UV {
+        if constexpr (VertexImpl<VertexType>::hasUV) {
+            return std::make_tuple(
                 readUV(raw_mesh, vert_idx)
-            });
+            );
         } else {
             return std::tuple<>();
         }
     };
 
-    return std::apply(VertexType::make,
-                      std::tuple_cat(
-                              getPosition(),
-                              getNormal(),
-                              getColor(),
-                              getUV()));
+    return std::apply([] (auto&& ...args) {
+        return VertexType {
+            args
+            ...
+        };
+    }, std::tuple_cat(getPosition(),
+                      getNormal(),
+                      getColor(),
+                      getUV()));
 }
 
 template <typename VertexType>

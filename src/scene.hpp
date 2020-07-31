@@ -32,6 +32,9 @@ struct VertexMesh : public Mesh {
                std::vector<uint32_t> indices);
 };
 
+template <typename VertexType>
+struct VertexImpl;
+
 struct InlineMesh {
     uint32_t vertexOffset;
     uint32_t startIndex;
@@ -47,52 +50,34 @@ struct Texture {
 };
 
 namespace MaterialParam {
-    struct DiffuseTexture {
-        std::shared_ptr<Texture> texture;
+    struct DiffuseColorTexture {
+        std::shared_ptr<Texture> value;
     };
 
-    struct DiffuseColor {
-        glm::vec4 color;
+    struct DiffuseColorUniform {
+        glm::vec4 value;
     };
 
-    struct SpecularTexture {
-        std::shared_ptr<Texture> texture;
+    struct SpecularColorTexture {
+        std::shared_ptr<Texture> value;
     };
 
-    struct SpecularColor {
-        glm::vec4 color;
+    struct SpecularColorUniform {
+        glm::vec4 value;
     };
 
-    struct Shininess {
-        float shininess;
-    };
-};
-
-namespace VertexAttribute {
-    struct Position {
-        glm::vec3 position;
-    };
-
-    struct Normal {
-        glm::vec3 normal;
-    };
-
-    struct Color {
-        glm::u8vec3 color;
-    };
-
-    struct UV {
-        glm::vec2 uv;
+    struct ShininessUniform {
+        float value;
     };
 };
 
 struct Material {
     std::vector<std::shared_ptr<Texture>> textures;
     std::vector<uint8_t> paramBytes;
-
-    template <typename ParamsType, typename ...Args>
-    static std::shared_ptr<Material> makeShared(Args ...args);
 };
+
+template <typename MaterialParamsType>
+struct MaterialImpl;
 
 struct EnvironmentInit {
     EnvironmentInit(

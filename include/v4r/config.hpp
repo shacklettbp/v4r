@@ -8,10 +8,10 @@
 
 namespace v4r {
 
-enum class ColorSource : uint32_t {
+enum class DataSource : uint32_t {
     None,
     Vertex,
-    Constant,
+    Uniform,
     Texture
 };
 
@@ -23,8 +23,7 @@ enum class RenderOutputs : uint32_t {
 enum class RenderOptions : uint32_t {
     CpuSynchronization = 1 << 0,
     DoubleBuffered = 1 << 1,
-    VerticalSync = 1 << 2,
-    NonuniformScale = 1 << 4
+    VerticalSync = 1 << 2
 };
 
 struct NoMaterial {
@@ -32,30 +31,14 @@ private:
     NoMaterial();
 };
 
-template <ColorSource color>
-struct UnlitPipeline {
+template <typename PipelineType>
+struct RenderFeatures {
+    RenderOptions options;
+
+    using VertexType = typename PipelineType::VertexType;
+    using MaterialParamsType = typename PipelineType::MaterialParamsType;
 };
 
-template <ColorSource diffuse_color,
-          ColorSource specular_color>
-struct BlinnPhongPipeline {
-};
-
-template <typename PipelineT,
-          RenderOutputs out,
-          RenderOptions opt>
-struct FeatureComponents {
-    using PipelineType = PipelineT;
-    static constexpr RenderOutputs outputs = out; 
-    static constexpr RenderOptions options = opt; 
-};
-
-template <typename PipelineType,
-          RenderOutputs outputs,
-          RenderOptions options>
-struct RenderFeatures; 
-
-template <typename FeaturesType>
 struct RenderConfig {
     int gpuID;
     uint32_t numLoaders;
@@ -108,57 +91,8 @@ inline bool operator&(RenderOptions flags,
     return (static_cast<uint32_t>(flags) & mask_int) == mask_int;
 }
 
-template <>
-struct UnlitPipeline<ColorSource::None> {
-    struct Vertex {
-        glm::vec3 position;
-    };
-};
-
-template <RenderOptions options>
-struct RenderFeatures<UnlitPipeline<ColorSource::Vertex>,
-                      RenderOutputs::Color | RenderOutputs::Depth,
-                      options> {
-    struct Vertex {
-        glm::vec3 position;
-        glm::u8vec3 color;
-    };
-};
-
-template <>
-struct UnlitPipeline<ColorSource::Constant> {
-    struct Vertex {
-        glm::vec3 position;
-    };
-
-    struct MaterialParams {
-        glm::vec3 color;
-    };
-};
-
-template <>
-struct UnlitPipeline<ColorSource::Texture> {
-    struct Vertex {
-        glm::vec3 position;
-        glm::vec2 uv;
-    };
-    
-    struct MaterialParams {
-        std::shared_ptr<Texture> color;
-    };
-};
-
-struct BlinnPhongVertex {
-    glm::vec3 position;
-    glm::vec3 normal;
-};
-
-struct BlinnPhongTexturedVertex {
-    glm::vec3 position;
-    glm::vec3 normal;
-    glm::vec2 uv;
-};
-
 }
+
+#include "pipelines/config.inl"
 
 #endif

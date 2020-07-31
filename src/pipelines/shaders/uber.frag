@@ -36,56 +36,47 @@ layout (location = MATERIAL_LOC) flat in uint material_idx;
 #ifdef MATERIAL_PARAMS
 
 struct MaterialParams {
-#ifdef BLINN_PHONG
+#ifdef SHININESS_UNIFORM
     float shininess;
 #endif
 
-#ifdef DIFFUSE_COLOR
+#ifdef ALBEDO_COLOR_UNIFORM
+    vec4 albedoColor;
+#endif
+
+#ifdef DIFFUSE_COLOR_UNIFORM
     vec4 diffuseColor;
 #endif 
 
-#ifdef SPECULAR_COLOR
+#ifdef SPECULAR_COLOR_UNIFORM
     vec4 specularColor;
 #endif
 };
-
 
 layout (set = 1, binding = PARAM_BIND, scalar) uniform Params {
     MaterialParams material_params[MAX_MATERIALS];
 };
 
-#ifdef DIFFUSE_CONSTANT
-layout (constant_id = DIFFUSE_CONSTANT) const vec3 diffuse_constant;
-#endif
-
-#ifdef SPECULAR_CONSTANT
-layout (constant_id = SPECULAR_CONSTANT) const vec3 specular_constant;
-#endif
-
 #endif
 
 #ifdef HAS_TEXTURES
+layout (location = UV_LOC) in vec2 in_uv;
 layout (set = 1, binding = 0) uniform sampler texture_sampler;
-
-#ifdef LIT_PIPELINE
-
-#ifdef DIFFUSE_TEXTURE
-layout (set = 1, binding = DIFFUSE_TEXTURE_BIND)
-    uniform texture2D diffuse_textures[];
 #endif
 
-#ifdef SPECULAR_TEXTURE
-layout (set = 1, binding = SPECULAR_TEXTURE_BIND)
-    uniform texture2D specular_textures[];
-#endif
-
-#else
-
-layout (set = 1, binding = 1)
+#ifdef ALBEDO_COLOR_TEXTURE
+layout (set = 1, binding = ALBEDO_COLOR_TEXTURE_BIND)
     uniform texture2D albedo_textures[];
 #endif
 
-layout (location = UV_LOC) in vec2 in_uv;
+#ifdef DIFFUSE_COLOR_TEXTURE
+layout (set = 1, binding = DIFFUSE_COLOR_TEXTURE_BIND)
+    uniform texture2D diffuse_textures[];
+#endif
+
+#ifdef SPECULAR_COLOR_TEXTURE
+layout (set = 1, binding = SPECULAR_COLOR_TEXTURE_BIND)
+    uniform texture2D specular_textures[];
 #endif
 
 #ifdef VERTEX_COLOR
@@ -111,30 +102,22 @@ vec4 compute_color()
     MaterialParams params = material_params[material_idx];
 #endif
 
-#ifdef DIFFUSE_TEXTURE
+#if defined(DIFFUSE_COLOR_TEXTURE)
     vec3 diffuse = texture(sampler2D(diffuse_textures[material_idx],
                                      texture_sampler), in_uv, 0.f).xyz;
-#endif
-
-#ifdef DIFFUSE_COLOR
+#elif defined(DIFFUSE_COLOR_UNIFORM)
     vec3 diffuse = params.diffuseColor.xyz;
 #endif
 
-#ifdef DIFFUSE_CONSTANT
-    vec3 diffuse = diffuse_constant;
-#endif
-
-#ifdef SPECULAR_TEXTURE
+#if defined(SPECULAR_COLOR_TEXTURE)
     vec3 specular = texture(sampler2D(specular_textures[material_idx],
                                       texture_sampler), in_uv, 0.f).xyz;
-#endif
-
-#ifdef SPECULAR_COLOR
+#elif defined(SPECULAR_COLOR_UNIFORM)
     vec3 specular = params.specularColor.xyz;
 #endif
 
-#ifdef SPECULAR_CONSTANT
-    vec3 specular = specular_constant;
+#if defined(SHININESS_UNIFORM)
+    float shininess = params.shininess;
 #endif
 
     vec3 Lo = vec3(0.0);
@@ -160,7 +143,7 @@ vec4 compute_color()
 
 vec4 compute_color()
 {
-#ifdef HAS_TEXTURES
+#ifdef ALBEDO_TEXTURE
     vec4 albedo = texture(sampler2D(albedo_textures[material_idx],
                                     texture_sampler), in_uv, 0.f);
 #endif
