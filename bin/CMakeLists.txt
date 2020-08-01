@@ -32,7 +32,7 @@ if (TARGET v4r_display)
     add_executable(display
         display.cpp
     )
-    target_link_libraries(display v4r v4r_display v4r_debug)
+    target_link_libraries(display v4r_display v4r_debug)
 
     add_executable(fly
         fly.cpp

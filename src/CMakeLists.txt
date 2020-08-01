@@ -39,8 +39,6 @@ set(SHADER_DIR "${CMAKE_BINARY_DIR}/shaders/")
 add_definitions("-DSHADER_DIR=${SHADER_DIR}")
 add_subdirectory(pipelines)
 
-include_directories(${CMAKE_CURRENT_BINARY_DIR}/pipelines)
-
 # Main library
 
 add_library(v4r SHARED
@@ -62,6 +60,10 @@ add_library(v4r SHARED
     ../include/v4r/fwd.hpp ../include/v4r/utils.hpp
 )
 
+target_include_directories(v4r
+    PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/pipelines/interface
+    PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/pipelines/implementation)
+
 add_dependencies(v4r generate_vk_dispatch compile_shaders)
 
 target_link_libraries(v4r Vulkan::Vulkan CUDA::cudart Threads::Threads assimp::assimp)
@@ -71,10 +73,12 @@ if (glfw3_FOUND)
         v4r_display.cpp ../include/v4r/display.hpp
     )
 
-    add_dependencies(v4r_display v4r)
-    target_link_libraries(v4r_display v4r glfw)
-endif()
+    target_include_directories(v4r_display
+        PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/pipelines/implementation)
 
+    add_dependencies(v4r_display v4r)
+    target_link_libraries(v4r_display PUBLIC v4r glfw)
+endif()
 
 # Debug utilities for frontend
 

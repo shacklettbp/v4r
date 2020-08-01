@@ -16,8 +16,8 @@ public:
     Environment & operator=(Environment &&) = default;
 
     // Instance transformations
-    uint32_t addInstance(uint32_t model_idx, uint32_t material_idx,
-                         const glm::mat4 &model_matrix);
+    inline uint32_t addInstance(uint32_t model_idx, uint32_t material_idx,
+                                const glm::mat4 &model_matrix);
 
     uint32_t addInstance(uint32_t model_idx, uint32_t material_idx,
                          const glm::mat4x3 &model_matrix);

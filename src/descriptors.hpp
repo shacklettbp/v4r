@@ -159,8 +159,12 @@ VkDescriptorSet makeDescriptorSet(const DeviceState &dev,
 
 class DescriptorManager {
 public:
+    using MakePoolType = std::add_pointer_t<
+        VkDescriptorPool(const DeviceState &, uint32_t)>;
+
     DescriptorManager(const DeviceState &dev,
-                      const VkDescriptorSetLayout &layout);
+                      const VkDescriptorSetLayout &layout,
+                      MakePoolType make_pool);
     DescriptorManager(const DescriptorManager &) = delete;
     DescriptorManager(DescriptorManager &&) = default;
 
@@ -171,6 +175,7 @@ public:
 private:
     const DeviceState &dev;
     const VkDescriptorSetLayout &layout_;
+    MakePoolType make_pool_;
 
     std::list<PoolState> free_pools_;
     std::list<PoolState> used_pools_;

@@ -151,6 +151,35 @@ struct VertexImpl<{parent_type}::Vertex> {{
 }};
 """
 
+    def gen_attrs(self, pipeline_type):
+        attrs = []
+
+        for attr in self.attributes:
+            if attr.type == "vec3":
+                vk_fmt = "VK_FORMAT_R32G32B32_SFLOAT"
+            elif attr.type == "u8vec3":
+                vk_fmt = "VK_FORMAT_R8G8B8_UNORM"
+            elif attr.type == "vec2":
+                vk_fmt = "VK_FORMAT_R32G32_SFLOAT"
+            else:
+                raise Exception("Unknown vertex attribute type")
+
+            attrs.append(
+f"""{{ {len(attrs)}, 0, {vk_fmt},
+          offsetof(VertexType, {attr.name}) }}""")
+
+        sep = ",\n        "
+
+        return \
+f"""
+    using VertexType = {pipeline_type}::Vertex;
+
+    static constexpr std::array<VkVertexInputAttributeDescription,
+                                {len(attrs)}> vertexAttributes {{{{
+        {sep.join(attrs)}
+    }}}};
+"""
+
 MaterialParam = namedtuple('MaterialParam',
         ['name', 'value_type','attr_type', 'is_texture'])
 
@@ -194,7 +223,8 @@ f"""    struct MaterialParams {{
                 uniform_init.append(f"params.{name}")
 
             generic_params.append(
-                    f"move(tuple_args.get<{attr_type}>().value)")
+                    f"std::move(std::get<typename MaterialParam::{attr_type}&>\
+(tuple_args).value)")
 
         generic_sep = ",\n            "
         texture_sep = ",\n                "
@@ -235,12 +265,12 @@ struct MaterialImpl<{parent_type}::MaterialParams> {{
     template<typename... Args>
     static std::shared_ptr<Material> make(Args ...args)
     {{
-        auto tuple_args = std::make_tuple(args...);
+        auto tuple_args = std::forward_as_tuple(args...);
         return make({parent_type}::MaterialParams {{
             {generic_sep.join(generic_params)}
         }});
     }}
-}}
+}};
 """
     
     def gen_scene_layout(self):
@@ -253,7 +283,7 @@ f"""BindingConfig<{len(bindings)}, VK_DESCRIPTOR_TYPE_SAMPLER, 1,
             for i in range(self.num_textures):
                 bindings.append(
 f"""BindingConfig<{len(bindings)}, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                      VulkanConfig::max_textures,
+                      VulkanConfig::max_materials,
                       VK_SHADER_STAGE_FRAGMENT_BIT,
                       VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT>""")
 
@@ -273,7 +303,7 @@ f"""using PerSceneLayout = DescriptorLayout<
 
 def build_vertex(props, iface):
     vertex = Vertex()
-    vertex.add_attribute("position", type="vec3", in_loc=0)
+    vertex.add_attribute("position", type="vec3", in_loc=iface.vert_in())
     vertex.add_property("hasPosition", True)
 
     if "needLighting" in props:
@@ -299,26 +329,36 @@ def build_vertex(props, iface):
 
     return vertex
 
+def cpp_value(param_name, value, pipeline_params):
+    param_type = pipeline_params[param_name]["type"]
+    if param_type == "bool":
+        return 'true' if value else 'false'
+    else:
+        return f"{param_type}::{value}"
+
 def generate_pipeline_definition(name, params):
-    cpp_params = [f"{param_type['type']} {param_name}"
-            for param_name, param_type in params.items()]
+    cpp_params = []
+    for param_name, param_details in params.items():
+        param_str = f"{param_details['type']} {param_name}"
+        default = param_details.get("default")
+        if default != None:
+            param_str += f" = {cpp_value(param_name, default, params)}"
+
+        cpp_params.append(param_str)
+
+    first_param = next(iter(params))
+
     return f"""template <{", ".join(cpp_params)}>
 struct {name} {{
-    static_assert(!std::is_void_v<T> && std::is_void_v<T>,
+    static_assert({first_param} != {first_param},
                   "Unsupported combination of pipeline parameters");
 }};
 """
 
 def specialization_type(name, config, pipeline_params):
-    def cpp_value(param_name, value):
-        param_type = pipeline_params[param_name]["type"]
-        if param_type == "bool":
-            return 'true' if value else 'false'
-        else:
-            return f"{param_type}::{value}"
-
-    param_values = ", ".join([" | ".join([cpp_value(k, e) for e in v])
-        for k, v in config.items()])
+    param_values = ", ".join([" | ".join(
+        [cpp_value(k, e, pipeline_params) for e in v]) 
+            for k, v in config.items()])
 
     return f"{name}<{param_values}>"
 
@@ -333,7 +373,7 @@ struct {specialization_type} {{
 """
 
 def generate_props_specialization(specialization_type, props,
-        all_props, material, shader_name, txfm_loc, mat_loc):
+        all_props, vertex, material, shader_name, txfm_loc, mat_loc):
 
     prop_members = []
 
@@ -364,7 +404,7 @@ def generate_props_specialization(specialization_type, props,
         
 
     frame_bindings = [
-f"""BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1
+f"""BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
                       {view_info_stages}>"""
             ] + frame_bindings
 
@@ -387,10 +427,12 @@ f"""
 struct PipelineProps<{specialization_type}> {{
     {sep.join(prop_members)};
 
-    static const char *vertexShaderName =
+    static constexpr const char *vertexShaderName =
         "{shader_name}.vert.spv";
-    static const char *fragmentShaderName =
+    static constexpr const char *fragmentShaderName =
         "{shader_name}.frag.spv";
+
+    {vertex.gen_attrs(specialization_type)}
 
     {sep.join(vert_input_locs)};
 
@@ -398,7 +440,58 @@ struct PipelineProps<{specialization_type}> {{
 }};
 """
 
-def generate_pipelines(cfg_file, output_path, cmake):
+def write_template_instantiations(type_str, v4r, v4r_display,
+        render, loader, has_material):
+    entry_instantiate = \
+f"""template BatchRenderer::BatchRenderer(const RenderConfig &,
+    const RenderFeatures<{type_str}> &);
+
+template std::shared_ptr<Mesh> AssetLoader::loadMesh(
+        std::vector<{type_str}::Vertex>,
+        std::vector<uint32_t>);
+"""
+
+    if has_material:
+        entry_instantiate += f"""
+template std::shared_ptr<Material> AssetLoader::makeMaterial(
+    {type_str}::MaterialParams);
+"""
+    
+    print(entry_instantiate, file=v4r)
+
+    print(
+f"""template BatchPresentRenderer::BatchPresentRenderer(const RenderConfig &,
+    const RenderFeatures<{type_str}> &, bool);
+""", file=v4r_display)
+
+    print(
+f"""template VulkanState::VulkanState(const RenderConfig &,
+    const RenderFeatures<{type_str}> &,
+    const DeviceUUID &);
+
+template VulkanState::VulkanState(const RenderConfig &,
+    const RenderFeatures<{type_str}> &,
+    CoreVulkanHandles &&);
+""", file=render)
+
+    loader_instantiate = \
+f"""template LoaderImpl LoaderImpl::create<{type_str}::Vertex,
+                                       {type_str}::MaterialParams>();
+
+template std::shared_ptr<Mesh> LoaderState::makeMesh(
+    std::vector<{type_str}::Vertex>,
+    std::vector<uint32_t>);
+"""
+
+    if has_material:
+        loader_instantiate += f"""
+template std::shared_ptr<Material> LoaderState::makeMaterial(
+    {type_str}::MaterialParams);
+"""
+
+    print(loader_instantiate, file=loader)
+
+def generate_pipelines(cfg_file, interface_path, implementation_path, cmake):
     cfg = json.load(cfg_file)
     property_map = cfg['properties']
     param_definitions = add_default_definitions(cfg['param_types'])
@@ -406,20 +499,35 @@ def generate_pipelines(cfg_file, output_path, cmake):
 
     end = ';' if cmake else None
 
-    config_file = open(os.path.join(output_path,
+    config_file = open(os.path.join(interface_path,
         'config.inl'), 'w')
 
-    specializations_file = open(os.path.join(output_path,
+    specializations_file = open(os.path.join(interface_path,
         'specializations.inl'), 'w')
 
-    render_defn_file = open(os.path.join(output_path,
+    render_defn_file = open(os.path.join(implementation_path,
         'render_definitions.inl'), 'w')
-
-    loader_defn_file = open(os.path.join(output_path,
+    
+    loader_defn_file = open(os.path.join(implementation_path,
         'loader_definitions.inl'), 'w')
 
-    for f in (config_file, specializations_file, render_defn_file,
-            loader_defn_file):
+    render_inst_file = open(os.path.join(implementation_path,
+        'render_instantiations.inl'), 'w')
+
+    loader_inst_file = open(os.path.join(implementation_path,
+        'loader_instantiations.inl'), 'w')
+
+    entry_file = open(os.path.join(implementation_path,
+        'v4r_instantiations.inl'), 'w')
+
+    display_entry_file = open(os.path.join(implementation_path,
+        'v4r_display_instantiations.inl'), 'w')
+
+    all_files = (config_file, specializations_file, render_defn_file,
+                 loader_defn_file, render_inst_file, loader_inst_file,
+                 entry_file, display_entry_file)
+
+    for f in all_files:
         print("namespace v4r {\n", file=f)
 
     for pipeline_name, pipeline_config in pipelines.items():
@@ -492,7 +600,11 @@ def generate_pipelines(cfg_file, output_path, cmake):
                     props = props.union(param_definitions[param_type][
                         'values'][param_value])
 
-            flag_defines += filter(None, [property_map[prop] for prop in props])
+                    props = props.union(pipeline_params[param_name].get(
+                                    "extra_params") or [])
+
+            flag_defines += filter(None,
+                    [property_map[prop] for prop in props])
 
             pipeline_type = specialization_type(pipeline_name, param_config, 
                     pipeline_params)
@@ -510,9 +622,17 @@ def generate_pipelines(cfg_file, output_path, cmake):
             flag_defines.append(f"TXFM2_LOC={iface.vert_in()}")
             flag_defines.append(f"TXFM3_LOC={iface.vert_in()}")
 
+            if "needNormalMatrix" in props:
+                flag_defines.append(f"NORMAL_TXFM1_LOC={iface.vert_in()}")
+                flag_defines.append(f"NORMAL_TXFM2_LOC={iface.vert_in()}")
+                flag_defines.append(f"NORMAL_TXFM3_LOC={iface.vert_in()}")
+
             # Miscellaneous flags
+            flag_defines.append(f"COLOR_OUT_LOC={iface.frag_out()}")
+
             if "needDepthOutput" in props:
                 flag_defines.append(f"DEPTH_LOC={iface.vert_out()}")
+                flag_defines.append(f"DEPTH_OUT_LOC={iface.frag_out()}")
 
             if "needMaterial" in props:
                 material_input_location = iface.vert_in()
@@ -545,27 +665,34 @@ def generate_pipelines(cfg_file, output_path, cmake):
 
             props_specialization = generate_props_specialization(
                     pipeline_type, props, property_map.keys(),
-                    material, shader_name,
+                    vertex, material, shader_name,
                     transform_input_location,
                     material_input_location)
 
             print(pipeline_specialization, file=specializations_file)
             print(vertex_impl, file=loader_defn_file)
-            print(material_impl, file=loader_defn_file)
+            if material_impl != None:
+                print(material_impl, file=loader_defn_file)
             print(props_specialization, file=render_defn_file)
 
-    for f in (config_file, specializations_file, render_defn_file,
-            loader_defn_file):
+            write_template_instantiations(pipeline_type,
+                    entry_file, display_entry_file,
+                    render_inst_file, loader_inst_file,
+                    "needMaterial" in props)
+
+    for f in all_files:
         print("}", file=f)
 
     print('\n#include "specializations.inl"', file=config_file)
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print(f"{sys.argv[0]}: CONFIG_PATH OUTPUT_PATH [--cmake]",
+    if len(sys.argv) < 4:
+        print(f"{sys.argv[0]}: CONFIG_PATH INTERFACE_PATH \
+IMPLEMENTATION_PATH [--cmake]",
               file=sys.stderr)
         sys.exit(1)
 
     with open(sys.argv[1], 'r') as cfg_file:
-        cmake = len(sys.argv) > 3 and sys.argv[3] == '--cmake'
-        generate_pipelines(cfg_file, sys.argv[2], cmake)
+        cmake = len(sys.argv) > 4 and sys.argv[4] == '--cmake'
+        generate_pipelines(cfg_file, sys.argv[2],
+                           sys.argv[3], cmake)

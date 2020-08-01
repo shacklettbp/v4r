@@ -35,8 +35,8 @@ template <typename PipelineType>
 struct RenderFeatures {
     RenderOptions options;
 
-    using VertexType = typename PipelineType::VertexType;
-    using MaterialParamsType = typename PipelineType::MaterialParamsType;
+    using VertexType = typename PipelineType::Vertex;
+    using MaterialParamsType = typename PipelineType::MaterialParams;
 };
 
 struct RenderConfig {
@@ -93,6 +93,6 @@ inline bool operator&(RenderOptions flags,
 
 }
 
-#include "pipelines/config.inl"
+#include "config.inl"
 
 #endif

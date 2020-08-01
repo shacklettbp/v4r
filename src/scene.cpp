@@ -1,4 +1,5 @@
 #include "scene.hpp"
+#include "loader_definitions.inl"
 
 #include "asset_load.hpp"
 #include "shader.hpp"
@@ -273,6 +274,7 @@ LoaderImpl LoaderImpl::create()
 LoaderState::LoaderState(const DeviceState &d,
                          const LoaderImpl &impl,
                          const VkDescriptorSetLayout &scene_set_layout,
+                         DescriptorManager::MakePoolType make_scene_pool,
                          MemoryAllocator &alc,
                          QueueManager &queue_manager,
                          const glm::mat4 &coordinate_transform)
@@ -286,7 +288,7 @@ LoaderState::LoaderState(const DeviceState &d,
       semaphore(makeBinarySemaphore(dev)),
       fence(makeFence(dev)),
       alloc(alc),
-      descriptorManager(dev, scene_set_layout),
+      descriptorManager(dev, scene_set_layout, make_scene_pool),
       coordinateTransform(coordinate_transform),
       impl_(impl)
 {}
@@ -757,7 +759,6 @@ shared_ptr<Mesh> LoaderState::makeMesh(vector<VertexType> vertices,
     return makeSharedMesh(move(vertices), move(indices));
 }
 
-
-#include "pipelines/loader_definitions.inl"
-
 }
+
+#include "loader_instantiations.inl"

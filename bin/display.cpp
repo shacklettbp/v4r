@@ -43,6 +43,26 @@ vector<glm::mat4> readViews(const char *dump_path)
     return views;
 }
 
+BatchPresentRenderer makeRenderer(const RenderConfig &cfg,
+                           RenderOutputs desired_outputs,
+                           RenderOptions opts)
+{
+    if ((desired_outputs & RenderOutputs::Color) &&
+        (desired_outputs & RenderOutputs::Depth)) {
+        return BatchPresentRenderer(cfg,
+            RenderFeatures<Unlit<RenderOutputs::Color | RenderOutputs::Depth,
+                                 DataSource::Texture>> { opts }, true);
+    } else if (desired_outputs & RenderOutputs::Color) {
+        return BatchPresentRenderer(cfg,
+            RenderFeatures<Unlit<RenderOutputs::Color,
+                                 DataSource::Texture>> { opts }, true);
+    } else {
+        return BatchPresentRenderer(cfg,
+            RenderFeatures<Unlit<RenderOutputs::Depth,
+                                 DataSource::None>> { opts }, true);
+    }
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 4) {
         cerr << argv[0] << " scene views batch_size [output]" << endl;
@@ -56,16 +76,14 @@ int main(int argc, char *argv[]) {
 
     RenderDoc rdoc;
 
-    RenderFeatures::Outputs outputs =
-        RenderFeatures::Outputs::Color | RenderFeatures::Outputs::Depth;
-    RenderFeatures::MeshColor color_src = RenderFeatures::MeshColor::Texture;
+    RenderOutputs outputs =
+        RenderOutputs::Color | RenderOutputs::Depth;
 
     if (argc > 4) {
         if (!strcmp(argv[4], "color")) {
-            outputs = RenderFeatures::Outputs::Color;
+            outputs = RenderOutputs::Color;
         } else if (!strcmp(argv[4], "depth")) {
-            outputs = RenderFeatures::Outputs::Depth;
-            color_src = RenderFeatures::MeshColor::None;
+            outputs = RenderOutputs::Depth;
         }
     }
 
@@ -75,21 +93,17 @@ int main(int argc, char *argv[]) {
 
     uint32_t batch_size = stoul(argv[3]);
 
-    BatchPresentRenderer renderer({0, 1, 1, batch_size, 256, 256,
-        glm::mat4(
-            1, 0, 0, 0,
-            0, -1.19209e-07, -1, 0,
-            0, 1, -1.19209e-07, 0,
-            0, 0, 0, 1
-        ),
-        {
-            color_src,
-            RenderFeatures::Pipeline::Unlit,
-            outputs,
-            RenderFeatures::Options::DoubleBuffered |
-                RenderFeatures::Options::CpuSynchronization
-        }
-    }, true);
+    BatchPresentRenderer renderer = makeRenderer(
+        {0, 1, 1, batch_size, 256, 256,
+            glm::mat4(
+                1, 0, 0, 0,
+                0, -1.19209e-07, -1, 0,
+                0, 1, -1.19209e-07, 0,
+                0, 0, 0, 1
+            )},
+        outputs, RenderOptions::DoubleBuffered |
+            RenderOptions::CpuSynchronization
+    );
 
     glm::u32vec2 frame_dim = renderer.getFrameDimensions();
     GLFWwindow *window = makeWindow(frame_dim);

@@ -81,6 +81,7 @@ struct RenderState {
     VkDescriptorPool frameDescriptorPool;
 
     VkDescriptorSetLayout sceneDescriptorLayout;
+    DescriptorManager::MakePoolType makeScenePool;
     VkSampler textureSampler;
 
     VkRenderPass renderPass;
@@ -93,11 +94,12 @@ template <typename PipelineType>
 struct PipelineImpl {
     static FramebufferConfig getFramebufferConfig(
             uint32_t batch_size, uint32_t img_width, uint32_t img_height,
-            uint32_t num_streams);
+            uint32_t num_streams, const RenderOptions &opts);
 
     static RenderState makeRenderState(const DeviceState &dev,
                                        uint32_t batch_size,
                                        uint32_t num_streams,
+                                       const RenderOptions &opts,
                                        MemoryAllocator &alloc);
 
     static PipelineState makePipeline(const DeviceState &dev,
@@ -235,8 +237,7 @@ public:
                 const RenderFeatures<PipelineType> &features,
                 const DeviceUUID &uuid);
 
-    template <typename PipelineType,
-              typename ImplType = PipelineImpl<PipelineType>>
+    template <typename PipelineType>
     VulkanState(const RenderConfig &cfg,
                 const RenderFeatures<PipelineType> &features,
                 CoreVulkanHandles &&handles);

@@ -7,9 +7,11 @@ using namespace std;
 
 namespace v4r {
 
-DescriptorManager::DescriptorManager(const DeviceState &d,
-                                     const VkDescriptorSetLayout &layout)
-    : dev(d), layout_(layout),
+DescriptorManager::DescriptorManager(
+        const DeviceState &d,
+        const VkDescriptorSetLayout &layout,
+        DescriptorManager::MakePoolType make_pool)
+    : dev(d), layout_(layout), make_pool_(make_pool),
       free_pools_(), used_pools_()
 {}
 
@@ -45,8 +47,7 @@ DescriptorSet DescriptorManager::makeSet()
             iter = next_iter;
         }
         if (free_pools_.empty()) {
-            free_pools_.emplace_back(
-                PerSceneDescriptorLayout::makePool(dev,
+            free_pools_.emplace_back(make_pool_(dev,
                     VulkanConfig::descriptor_pool_size));
         }
     }

@@ -58,6 +58,9 @@ namespace MaterialParam {
         glm::vec4 value;
     };
 
+    using AlbedoColorTexture = DiffuseColorTexture;
+    using AlbedoColorUniform = DiffuseColorUniform;
+
     struct SpecularColorTexture {
         std::shared_ptr<Texture> value;
     };
@@ -155,6 +158,7 @@ public:
     LoaderState(const DeviceState &dev,
                 const LoaderImpl &impl,
                 const VkDescriptorSetLayout &scene_set_layout,
+                DescriptorManager::MakePoolType make_scene_pool,
                 MemoryAllocator &alc,
                 QueueManager &queue_manager,
                 const glm::mat4 &coordinateTransform);

@@ -36,10 +36,6 @@ layout (location = MATERIAL_LOC) flat in uint material_idx;
 #ifdef MATERIAL_PARAMS
 
 struct MaterialParams {
-#ifdef SHININESS_UNIFORM
-    float shininess;
-#endif
-
 #ifdef ALBEDO_COLOR_UNIFORM
     vec4 albedoColor;
 #endif
@@ -51,6 +47,11 @@ struct MaterialParams {
 #ifdef SPECULAR_COLOR_UNIFORM
     vec4 specularColor;
 #endif
+
+#ifdef SHININESS_UNIFORM
+    float shininess;
+#endif
+
 };
 
 layout (set = 1, binding = PARAM_BIND, scalar) uniform Params {
@@ -61,6 +62,7 @@ layout (set = 1, binding = PARAM_BIND, scalar) uniform Params {
 
 #ifdef HAS_TEXTURES
 layout (location = UV_LOC) in vec2 in_uv;
+
 layout (set = 1, binding = 0) uniform sampler texture_sampler;
 #endif
 
@@ -136,19 +138,23 @@ vec4 compute_color()
 #endif
     }
 
-    return Lo;
+    return vec4(Lo, 1.f);
 }
 
 #else
 
 vec4 compute_color()
 {
-#ifdef ALBEDO_TEXTURE
+#ifdef ALBEDO_COLOR_TEXTURE
     vec4 albedo = texture(sampler2D(albedo_textures[material_idx],
                                     texture_sampler), in_uv, 0.f);
 #endif
 
-#ifdef VERTEX_COLOR
+#ifdef ALBEDO_COLOR_UNIFORM
+    vec4 albedo = material_params[material_idx].albedoColor;
+#endif
+
+#ifdef ALBEDO_COLOR_VERTEX
     vec4 albedo = vec4(in_vertex_color, 1.f);
 #endif
 

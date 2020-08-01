@@ -103,16 +103,14 @@ int main(int argc, char *argv[]) {
 
     RenderDoc rdoc;
 
-    BatchPresentRenderer renderer({0, 1, 1, 1, 1024, 1024,
-        glm::mat4(1.f),
-        {
-            RenderFeatures::MeshColor::Texture,
-            RenderFeatures::Pipeline::Lit,
-            RenderFeatures::Outputs::Color,
-            RenderFeatures::Options::DoubleBuffered |
-                RenderFeatures::Options::CpuSynchronization
-        }
-    }, false);
+    using Pipeline = BlinnPhong<RenderOutputs::Color,
+                                DataSource::Texture,
+                                DataSource::Uniform,
+                                DataSource::Uniform>;
+
+    BatchPresentRenderer renderer({0, 1, 1, 1, 1024, 1024, glm::mat4(1.f) },
+        RenderFeatures<Pipeline> { RenderOptions::DoubleBuffered |
+                                   RenderOptions::CpuSynchronization }, false);
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);

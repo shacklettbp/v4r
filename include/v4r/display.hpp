@@ -27,7 +27,10 @@ friend class BatchPresentRenderer;
 
 class BatchPresentRenderer : private BatchRenderer {
 public:
-    BatchPresentRenderer(const RenderConfig &cfg, bool benchmark_mode);
+    template <typename PipelineType>
+    BatchPresentRenderer(const RenderConfig &cfg,
+                         const RenderFeatures<PipelineType> &features,
+                         bool benchmark_mode);
 
     using BatchRenderer::makeLoader;
     PresentCommandStream makeCommandStream(GLFWwindow *window);

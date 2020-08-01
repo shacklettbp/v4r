@@ -350,3 +350,5 @@ void Environment::deleteLight(uint32_t light_id)
 }
 
 }
+
+#include "v4r_instantiations.inl"

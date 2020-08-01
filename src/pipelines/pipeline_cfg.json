@@ -7,7 +7,8 @@
         "needColorOutput": null,
         "needDepthOutput": null,
         "needLighting": "LIT_PIPELINE",
-        "blinnphong": "BLINN_PHONG"
+        "blinnphong": "BLINN_PHONG",
+        "needNormalMatrix": null
     },
     "param_types" : {
         "RenderOutputs": {
@@ -33,7 +34,7 @@
                 "output": {
                     "type": "RenderOutputs"
                 },
-                "albedo": {
+                "albedo_color": {
                     "type": "DataSource",
                     "num_components": 4
                 }
@@ -43,14 +44,14 @@
                     "output": ["Color"]
                 },
                 "allowed": {
-                    "albedo": ["Vertex", "Uniform", "Texture"]
+                    "albedo_color": ["Vertex", "Uniform", "Texture"]
                 }}, {
                 "required": {
                     "output": ["Depth"]
                 },
                 "allowed": {
                     "output": ["Depth"],
-                    "albedo": ["None"]
+                    "albedo_color": ["None"]
                 }
             }],
             "shader_properties": []
@@ -73,7 +74,9 @@
                     "num_components": 1
                 },
                 "nonuniform_scale": {
-                    "type": "bool"
+                    "type": "bool",
+                    "default": false,
+                    "extra_params": ["needNormalMatrix"]
                 }
             },
             "valid_configurations": [{

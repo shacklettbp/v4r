@@ -16,21 +16,18 @@ int main(int argc, char *argv[]) {
 
     uint32_t batch_size = stoul(argv[2]);
 
+    using Pipeline = Unlit<RenderOutputs::Color | RenderOutputs::Depth,
+                           DataSource::Texture>;
+
     BatchRenderer renderer({0, 1, 1, batch_size, 256, 256,
         glm::mat4(
             1, 0, 0, 0,
             0, -1.19209e-07, -1, 0,
             0, 1, -1.19209e-07, 0,
             0, 0, 0, 1
-        ),
-        {
-            RenderFeatures::MeshColor::Texture,
-            RenderFeatures::Pipeline::Unlit,
-            RenderFeatures::Outputs::Color |
-                RenderFeatures::Outputs::Depth,
-            RenderFeatures::Options::CpuSynchronization
-        }
-    });
+        )},
+        RenderFeatures<Pipeline> { RenderOptions::CpuSynchronization }
+    );
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);

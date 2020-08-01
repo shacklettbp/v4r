@@ -1,5 +1,5 @@
 #include "vulkan_state.hpp"
-#include "pipelines/render_definitions.inl"
+#include "render_definitions.inl"
 
 #include "utils.hpp"
 #include "vk_utils.hpp"
@@ -19,37 +19,15 @@ using namespace std;
 namespace v4r {
 
 template <typename PipelineType>
-static constexpr bool isDoubleBuffered()
-{
-    return PipelineType::options & RenderOptions::DoubleBuffered;
-}
-
-template <typename PipelineType>
-static constexpr bool needCpuSync()
-{
-    return PipelineType::options & RenderOptions::CpuSynchronization;
-}
-
-template <typename PipelineType>
-static constexpr bool needColorOutput()
-{
-    return PipelineType::outputs & RenderOutputs::Color;
-}
-
-template <typename PipelineType>
-static constexpr bool needDepthOutput()
-{
-    return PipelineType::outputs & RenderOutputs::Depth;
-}
-
-template <typename PipelineType>
 FramebufferConfig PipelineImpl<PipelineType>::getFramebufferConfig(
     uint32_t batch_size, uint32_t img_width, uint32_t img_height,
-    uint32_t num_streams)
+    uint32_t num_streams, const RenderOptions &opts)
 {
-    constexpr bool need_color_output = needColorOutput<PipelineType>();
-    constexpr bool need_depth_output = needDepthOutput<PipelineType>();
-    constexpr bool is_double_buffered = isDoubleBuffered<PipelineType>();
+    using Props = PipelineProps<PipelineType>;
+    constexpr bool need_color_output = Props::needColorOutput;
+    constexpr bool need_depth_output = Props::needDepthOutput;
+    const bool is_double_buffered =
+        opts & RenderOptions::DoubleBuffered;
 
     uint32_t num_frames_per_stream =
         is_double_buffered ?
@@ -281,14 +259,15 @@ static ParamBufferConfig computeParamBufferConfig(
 template <typename PipelineType>
 RenderState PipelineImpl<PipelineType>::makeRenderState(
         const DeviceState &dev, uint32_t batch_size,
-        uint32_t num_streams, MemoryAllocator &alloc)
+        uint32_t num_streams, const RenderOptions &opts,
+        MemoryAllocator &alloc)
 {
     using Props = PipelineProps<PipelineType>;
 
     ParamBufferConfig param_positions = computeParamBufferConfig(
-            Props::needMaterials, Props::needLighting, batch_size, alloc);
+            Props::needMaterial, Props::needLighting, batch_size, alloc);
 
-    using FrameLayout = typename Props::PerFrameDescriptorLayout;
+    using FrameLayout = typename Props::PerFrameLayout;
     array<VkSampler *, FrameLayout::NumBindings> frame_layout_args;
     frame_layout_args.fill(nullptr);
 
@@ -296,16 +275,18 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
         return FrameLayout::makeSetLayout(dev, args...);
     }, frame_layout_args);
 
-    constexpr uint32_t frames_per_stream =
-        (PipelineType::options & RenderOptions::DoubleBuffered) ? 2 : 1;
+    const uint32_t frames_per_stream =
+        (opts & RenderOptions::DoubleBuffered) ? 2 : 1;
 
     VkDescriptorPool frame_descriptor_pool = FrameLayout::makePool(
             dev, num_streams * frames_per_stream);
 
     VkSampler texture_sampler = VK_NULL_HANDLE;
     VkDescriptorSetLayout scene_descriptor_layout = VK_NULL_HANDLE;
+    DescriptorManager::MakePoolType make_scene_pool = nullptr;
+
     if constexpr (Props::needTextures) {
-        using SceneLayout = typename Props::PerSceneDescriptorLayout;
+        using SceneLayout = typename Props::PerSceneLayout;
 
         texture_sampler = makeImmutableSampler(dev);
 
@@ -315,6 +296,8 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
         scene_descriptor_layout = apply([&](auto ...args) {
             return SceneLayout::makeSetLayout(dev, &texture_sampler, args...);
         }, layout_args);
+
+        make_scene_pool = SceneLayout::makePool;
     }
 
     return {
@@ -322,10 +305,11 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
         frame_descriptor_layout,
         frame_descriptor_pool,
         scene_descriptor_layout,
+        make_scene_pool,
         texture_sampler,
         makeRenderPass(dev, alloc.getFormats(),
-                       PipelineType::outputs & RenderOutputs::Color,
-                       PipelineType::outputs & RenderOutputs::Depth)
+                       Props::needColorOutput,
+                       Props::needDepthOutput)
     };
 }
 
@@ -458,10 +442,10 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
         const RenderState &render_state)
 {
     using Props = PipelineProps<PipelineType>;
-    using VertexType = typename PipelineType::VertexType;
+    using VertexType = typename PipelineType::Vertex;
 
     // Vertex input assembly
-    constexpr size_t num_bindings = Props::needMaterials ? 3 : 2;
+    constexpr size_t num_bindings = Props::needMaterial ? 3 : 2;
 
     array<VkVertexInputBindingDescription, num_bindings> input_bindings;
     input_bindings[0] = {
@@ -472,7 +456,7 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
         1, sizeof(glm::mat4x3), VK_VERTEX_INPUT_RATE_INSTANCE
     };
 
-    if constexpr (Props::needMaterials) {
+    if constexpr (Props::needMaterial) {
         input_bindings[2] = {
             2, sizeof(uint32_t), VK_VERTEX_INPUT_RATE_INSTANCE
         };
@@ -480,7 +464,7 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
 
     const auto &vertex_attributes = Props::vertexAttributes;
     constexpr size_t total_attributes = vertex_attributes.size() +
-        3 + (Props::needMaterials ? 1 : 0);
+        3 + (Props::needMaterial ? 1 : 0);
 
     array<VkVertexInputAttributeDescription, total_attributes>
         input_attributes;
@@ -489,30 +473,30 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
               input_attributes.begin());
 
     // 3 vec4s for mat4x3 transform matrix
-    for (size_t idx_offset = 0; idx_offset < 3; idx_offset++) {
+    for (uint32_t idx_offset = 0; idx_offset < 3; idx_offset++) {
         size_t attr_idx = vertex_attributes.size() + idx_offset;
-        vertex_attributes[attr_idx] = {
+        input_attributes[attr_idx] = {
             Props::transformLocationVertex + idx_offset, 1,
             VK_FORMAT_R32G32B32A32_SFLOAT,
-            idx_offset * sizeof(glm::vec4)
+            static_cast<uint32_t>(idx_offset * sizeof(glm::vec4))
         };
     }
 
     // FIXME (normal matrix)
 
-    if constexpr (Props::needMaterials) {
-        vertex_attributes[vertex_attributes.size() - 1] = {
+    if constexpr (Props::needMaterial) {
+        input_attributes[vertex_attributes.size() - 1] = {
             Props::materialLocationVertex, 2,
             VK_FORMAT_R32_UINT, 0
         };
     }
 
-    constexpr size_t total_layouts = Props::needMaterials ? 2 : 1;
+    constexpr size_t total_layouts = Props::needMaterial ? 2 : 1;
 
     array<VkDescriptorSetLayout, total_layouts> desc_layouts;
     desc_layouts[0] = render_state.frameDescriptorLayout;
 
-    if constexpr (Props::needMaterials) {
+    if constexpr (Props::needMaterial) {
         desc_layouts[1] = render_state.sceneDescriptorLayout;
     }
 
@@ -526,10 +510,10 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
     constexpr size_t num_shaders = 2;
 
     const array<pair<const char *, VkShaderStageFlagBits>,
-                num_shaders> shader_cfg = {
+                num_shaders> shader_cfg {{
         {Props::vertexShaderName, VK_SHADER_STAGE_VERTEX_BIT},
         {Props::fragmentShaderName, VK_SHADER_STAGE_FRAGMENT_BIT}
-    };
+    }};
 
     vector<VkShaderModule> shader_modules(num_shaders);
     array<VkPipelineShaderStageCreateInfo, num_shaders> shader_stages;
@@ -1066,7 +1050,7 @@ VulkanState::VulkanState(const RenderConfig &config,
     }())
 {}
 
-template <typename PipelineType, typename ImplType>
+template <typename PipelineType>
 VulkanState::VulkanState(const RenderConfig &cfg,
                          const RenderFeatures<PipelineType> &features,
                          CoreVulkanHandles &&handles)
@@ -1074,22 +1058,27 @@ VulkanState::VulkanState(const RenderConfig &cfg,
       dev(move(handles.dev)),
       queueMgr(dev),
       alloc(dev, inst),
-      fbCfg(ImplType::getFramebufferConfig(cfg.batchSize, cfg.imgWidth,
-                                           cfg.imgHeight, cfg.numStreams)),
-      renderState(ImplType::makeRenderState(dev, cfg.batchSize,
-                                            fbCfg, alloc)),
-      pipeline(ImplType::makePipeline(dev, fbCfg, renderState)),
+      fbCfg(PipelineImpl<PipelineType>::getFramebufferConfig(
+              cfg.batchSize, cfg.imgWidth,
+              cfg.imgHeight, cfg.numStreams,
+              features.options)),
+      renderState(PipelineImpl<PipelineType>::makeRenderState(
+              dev, cfg.batchSize, cfg.numStreams,
+              features.options, alloc)),
+      pipeline(PipelineImpl<PipelineType>::makePipeline(
+              dev, fbCfg, renderState)),
       fb(makeFramebuffer(dev, alloc, fbCfg, renderState.renderPass)),
       globalTransform(cfg.coordinateTransform),
-      loader_impl_(LoaderImpl::create<PipelineType::VertexType,
-                                      PipelineType::MaterialParamsType>()),
+      loader_impl_(
+              LoaderImpl::create<typename PipelineType::Vertex,
+                                 typename PipelineType::MaterialParams>()),
       num_loaders_(0),
       num_streams_(0),
       max_num_loaders_(cfg.numLoaders),
       max_num_streams_(cfg.numStreams),
       batch_size_(cfg.batchSize),
-      double_buffered_(v4r::isDoubleBuffered<PipelineType>()),
-      cpu_sync_(v4r::needCpuSync<PipelineType>())
+      double_buffered_(features.options & RenderOptions::DoubleBuffered),
+      cpu_sync_(features.options & RenderOptions::CpuSynchronization)
 {}
 
 LoaderState VulkanState::makeLoader()
@@ -1099,6 +1088,7 @@ LoaderState VulkanState::makeLoader()
 
     return LoaderState(dev, loader_impl_,
                        renderState.sceneDescriptorLayout,
+                       renderState.makeScenePool,
                        alloc, queueMgr,
                        globalTransform);
 }
@@ -1144,3 +1134,5 @@ uint64_t VulkanState::getFramebufferBytes() const
 }
 
 }
+
+#include "render_instantiations.inl"

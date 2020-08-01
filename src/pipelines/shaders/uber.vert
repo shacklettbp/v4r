@@ -52,10 +52,10 @@ layout (location = MATERIAL_LOC) out uint material_idx;
 
 void main() 
 {
-    mat4 model(vec4(txfm1.xyz,                 0.f),
-               vec4(txfm1.w, txfm2.xy,         0.f),
-               vec4(txfm2.zw, txfm3.x,         0.f),
-               vec4(txfm3.yzw,                 1.f));
+    mat4 model = mat4(vec4(txfm1.xyz,                 0.f),
+                      vec4(txfm1.w, txfm2.xy,         0.f),
+                      vec4(txfm2.zw, txfm3.x,         0.f),
+                      vec4(txfm3.yzw,                 1.f));
 
     mat4 mv = view_info[render_const.batchIdx].view * model;
 
@@ -69,7 +69,7 @@ void main()
     mat3 inv_transpose = mat3(normal_txfm1, normal_txfm2, normal_txfm3);
 #else
     mat3 inv_transpose = mat3(mv);
-##endif
+#endif
 
     out_normal = mat3(mv) * in_normal;
     out_camera_pos = camera_space.xyz;

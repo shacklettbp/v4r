@@ -451,10 +451,13 @@ CoreVulkanHandles makeCoreHandles(const RenderConfig &config,
     };
 }
 
-BatchPresentRenderer::BatchPresentRenderer(const RenderConfig &cfg,
-                                           bool benchmark_mode)
-    : BatchRenderer(make_handle<VulkanState>(cfg, makeCoreHandles(
-            cfg, getUUIDFromCudaID(cfg.gpuID)))),
+template <typename PipelineType>
+BatchPresentRenderer::BatchPresentRenderer(
+        const RenderConfig &cfg,
+        const RenderFeatures<PipelineType> &features,
+        bool benchmark_mode)
+    : BatchRenderer(make_handle<VulkanState>(cfg, features, makeCoreHandles(
+            cfg, getUUIDFromCudaID(cfg.gpuID))), cfg.gpuID),
       benchmark_mode_(benchmark_mode)
 {
     assert(benchmark_mode ||
@@ -475,3 +478,5 @@ glm::u32vec2 BatchPresentRenderer::getFrameDimensions() const
 }
 
 }
+
+#include "v4r_display_instantiations.inl"

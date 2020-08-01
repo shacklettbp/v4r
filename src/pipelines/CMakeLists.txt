@@ -7,14 +7,21 @@ set(SHADER_DEPENDENCIES
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
              pipeline_cfg.json)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-             ../scripts/gen_pipelines.py)
+             ../../scripts/gen_pipelines.py)
 
 set(CFG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/pipeline_cfg.json")
 set(VERTEX_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${VERTEX_SHADER}")
 set(FRAGMENT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${FRAGMENT_SHADER}")
 
+set(IFACE_DIR "${CMAKE_CURRENT_BINARY_DIR}/interface")
+set(IMPL_DIR "${CMAKE_CURRENT_BINARY_DIR}/implementation")
+
+file(MAKE_DIRECTORY "${IFACE_DIR}")
+file(MAKE_DIRECTORY "${IMPL_DIR}")
+
 execute_process(
-    COMMAND ../scripts/gen_pipelines.py "${CFG_FILE}" "${CMAKE_CURRENT_BINARY_DIR}"
+    COMMAND ../scripts/gen_pipelines.py "${CFG_FILE}"
+            "${IFACE_DIR}" "${IMPL_DIR}" --cmake
     OUTPUT_VARIABLE SHADER_DEFINES
     ERROR_VARIABLE CFG_ERROR
     RESULT_VARIABLE SHADER_SUCCESS)

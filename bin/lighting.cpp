@@ -10,6 +10,11 @@ using namespace v4r;
 
 constexpr uint32_t num_frames = 10000;
 
+using Pipeline = BlinnPhong<RenderOutputs::Color,
+                            DataSource::Texture,
+                            DataSource::Uniform,
+                            DataSource::Uniform>;
+
 shared_ptr<Scene> loadScene(AssetLoader &loader, const char *mesh_path,
                             const char *texture_path)
 {
@@ -20,8 +25,10 @@ shared_ptr<Scene> loadScene(AssetLoader &loader, const char *mesh_path,
 
     auto texture = loader.loadTexture(texture_path);
     materials.push_back(
-            loader.makeMaterial(LitRendererInputs::MaterialDescription {
-        move(texture)
+            loader.makeMaterial(Pipeline::MaterialParams {
+        move(texture),
+        glm::vec3(0.5f),
+        256.f
     }));
 
     SceneDescription scene_desc(move(meshes), move(materials));
@@ -53,16 +60,11 @@ int main(int argc, char *argv[]) {
         batch_size = stoul(argv[3]);
     }
 
-    BatchRenderer renderer({0, 1, 1, batch_size, 256, 256,
-        glm::mat4(1.f),
-        {
-            RenderFeatures::MeshColor::Texture,
-            RenderFeatures::Pipeline::Lit,
-            RenderFeatures::Outputs::Color ,
-            RenderFeatures::Options::CpuSynchronization |
-                RenderFeatures::Options::DoubleBuffered
+    BatchRenderer renderer({0, 1, 1, batch_size, 256, 256, glm::mat4(1.f)},
+        RenderFeatures<Pipeline> { 
+            RenderOptions::CpuSynchronization | RenderOptions::DoubleBuffered
         }
-    });
+    );
 
     auto loader = renderer.makeLoader();
     auto scene = loadScene(loader, argv[1], argv[2]);

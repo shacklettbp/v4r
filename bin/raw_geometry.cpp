@@ -14,16 +14,16 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    using Pipeline = Unlit<RenderOutputs::Color | RenderOutputs::Depth,
+                           DataSource::Texture>;
+
+    using Vertex = Pipeline::Vertex;
+    using MaterialParams = Pipeline::MaterialParams;
+
     BatchRenderer renderer({0, 1, 1, 1, 256, 256,
-        glm::mat4(1.f), // global transform is just identity
-        {
-            RenderFeatures::MeshColor::Texture,
-            RenderFeatures::Pipeline::Unlit,
-            RenderFeatures::Outputs::Color |
-                RenderFeatures::Outputs::Depth,
-            RenderFeatures::Options::CpuSynchronization
-        }
-    });
+        glm::mat4(1.f) }, // global transform is just identity
+        RenderFeatures<Pipeline> { RenderOptions::CpuSynchronization }
+    );
 
     AssetLoader loader = renderer.makeLoader();
     CommandStream cmd_stream = renderer.makeCommandStream();
@@ -34,9 +34,6 @@ int main(int argc, char *argv[]) {
 
     vector<shared_ptr<Mesh>> meshes;
     vector<shared_ptr<Material>> materials;
-
-    using Vertex = UnlitRendererInputs::TexturedVertex;
-    using MaterialDescription = UnlitRendererInputs::MaterialDescription;
 
     // This block populates the above vectors with meshes
     // and a material
@@ -96,7 +93,7 @@ int main(int argc, char *argv[]) {
         shared_ptr<Texture> texture = loader.loadTexture(argv[1]);
 
         materials.emplace_back(loader.makeMaterial(
-                    MaterialDescription { texture }));
+                    MaterialParams { texture }));
     }
 
     // Get a opaque handle to the scene (collection of meshes and materials).
@@ -132,9 +129,9 @@ int main(int argc, char *argv[]) {
 
     // Finally, move the quad mesh instance
     envs[0].updateInstanceTransform(inst_id,
-                                    glm::translate(
-                                         envs[0].getInstanceTransform(inst_id),
-                                         glm::vec3(0.5f, 0.f, 0.f)));
+            glm::translate(
+                    glm::mat4(envs[0].getInstanceTransform(inst_id)),
+                    glm::vec3(0.5f, 0.f, 0.f)));
 
     sync = cmd_stream.render(envs);
     sync.cpuWait();
