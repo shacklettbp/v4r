@@ -50,6 +50,7 @@ struct MaterialParams {
 
 #ifdef SHININESS_UNIFORM
     float shininess;
+    vec3 pad;
 #endif
 
 };

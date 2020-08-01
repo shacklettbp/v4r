@@ -460,8 +460,7 @@ BatchPresentRenderer::BatchPresentRenderer(
             cfg, getUUIDFromCudaID(cfg.gpuID))), cfg.gpuID),
       benchmark_mode_(benchmark_mode)
 {
-    assert(benchmark_mode ||
-           cfg.features.outputs & RenderFeatures::Outputs::Color);
+    assert(benchmark_mode || state_->fbCfg.colorOutput);
 }
 
 PresentCommandStream BatchPresentRenderer::makeCommandStream(

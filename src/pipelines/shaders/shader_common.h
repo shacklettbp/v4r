@@ -16,6 +16,6 @@ struct LightProperties {
 };
 
 #define MAX_MATERIALS (10000)
-#define MAX_LIGHTS (10000)
+#define MAX_LIGHTS (2000)
 
 #endif

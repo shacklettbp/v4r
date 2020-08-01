@@ -227,21 +227,22 @@ static ParamBufferConfig computeParamBufferConfig(
     cfg.totalTransformBytes = sizeof(glm::mat4x3) * 
         VulkanConfig::max_instances;
 
-    cfg.viewOffset = alloc.alignUniformBufferOffset(cfg.totalTransformBytes);
-
-    cfg.totalViewBytes = sizeof(ViewInfo) * batch_size;
-
-    VkDeviceSize cur_offset = cfg.viewOffset + cfg.totalViewBytes;
+    VkDeviceSize cur_offset = cfg.totalTransformBytes;
 
     if (need_materials) {
-        cfg.materialIndicesOffset =
-            alloc.alignStorageBufferOffset(cur_offset);
+        cfg.materialIndicesOffset = cur_offset;
 
         cfg.totalMaterialIndexBytes = sizeof(uint32_t) *
             VulkanConfig::max_instances;
 
         cur_offset = cfg.materialIndicesOffset + cfg.totalMaterialIndexBytes;
     }
+
+
+    cfg.viewOffset = alloc.alignUniformBufferOffset(cur_offset);
+    cfg.totalViewBytes = sizeof(ViewInfo) * batch_size;
+
+    cur_offset = cfg.viewOffset + cfg.totalViewBytes;
 
     if (need_lighting) {
         cfg.lightsOffset = alloc.alignUniformBufferOffset(cur_offset);
@@ -251,7 +252,9 @@ static ParamBufferConfig computeParamBufferConfig(
         cur_offset = cfg.lightsOffset + cfg.totalLightParamBytes;
     }
 
-    cfg.totalParamBytes = cur_offset;
+    // Ensure that full block is aligned to maximum requirement
+    cfg.totalParamBytes = alloc.alignStorageBufferOffset(
+        alloc.alignUniformBufferOffset(cur_offset));
 
     return  cfg;
 }
@@ -485,7 +488,7 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
     // FIXME (normal matrix)
 
     if constexpr (Props::needMaterial) {
-        input_attributes[vertex_attributes.size() - 1] = {
+        input_attributes[input_attributes.size() - 1] = {
             Props::materialLocationVertex, 2,
             VK_FORMAT_R32_UINT, 0
         };
@@ -975,7 +978,7 @@ CommandStreamState::CommandStreamState(
       fb_cfg_(fb_cfg),
       fb_(framebuffer),
       render_pass_(render_state.renderPass),
-      per_render_buffer_(alloc.makeShaderBuffer(
+      per_render_buffer_(alloc.makeHostBuffer(
                 render_state.paramPositions.totalParamBytes *
                     num_frames_inflight)),
       render_size_(fb_cfg.imgWidth, fb_cfg.imgHeight),

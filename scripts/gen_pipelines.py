@@ -181,7 +181,7 @@ f"""
 """
 
 MaterialParam = namedtuple('MaterialParam',
-        ['name', 'value_type','attr_type', 'is_texture'])
+        ['name', 'value_type', 'qual_type', 'attr_type', 'is_texture'])
 
 class Material:
     def __init__(self):
@@ -189,9 +189,9 @@ class Material:
         self.num_textures = 0
         self.num_params = 0
 
-    def add_param(self, name, value_type, attr_type, is_texture):
+    def add_param(self, name, value_type, qual_type, attr_type, is_texture):
         self.params.append(MaterialParam(name=name,
-            value_type=value_type, attr_type=attr_type,
+            value_type=value_type, qual_type=qual_type, attr_type=attr_type,
             is_texture=is_texture))
 
         if is_texture:
@@ -200,7 +200,7 @@ class Material:
             self.num_params += 1
 
     def gen_struct(self):
-        members = [ f"{param.value_type} {param.name}"
+        members = [ f"{param.qual_type} {param.name}"
                 for param in self.params]
         sep = ";\n        "
         return \
@@ -215,16 +215,31 @@ f"""    struct MaterialParams {{
         uniform_init = []
         generic_params = []
 
-        for name, value_type, attr_type, is_texture in self.params:
+        uniform_bytes = 0
+
+        for name, value_type, qual_type, attr_type, is_texture in self.params:
             if is_texture: 
                 texture_moves.append(f"std::move(params.{name})")
             else:
-                uniform_members.append(f"{value_type} {name}")
+                uniform_members.append(f"{qual_type} {name}")
                 uniform_init.append(f"params.{name}")
+
+                if value_type == 'vec4':
+                    uniform_bytes += 16
+                elif value_type == 'vec3':
+                    uniform_bytes += 12
+                elif value_type == 'vec2':
+                    uniform_bytes += 8
+                elif value_type == 'float':
+                    uniform_bytes += 4
 
             generic_params.append(
                     f"std::move(std::get<typename MaterialParam::{attr_type}&>\
 (tuple_args).value)")
+
+        if uniform_bytes % 16 != 0:
+            num_pad = 16 - (uniform_bytes % 16)
+            uniform_members.append(f"char pad[{num_pad}] {{}}")
 
         generic_sep = ",\n            "
         texture_sep = ",\n                "
@@ -232,7 +247,7 @@ f"""    struct MaterialParams {{
                 {texture_sep.join(texture_moves)}
             }}"""
 
-        if len(uniform_init) > 0:
+        if len(uniform_members) > 0:
             block_sep = ";\n            " 
             block_members = block_sep.join(uniform_members)
             block_init = ", ".join(uniform_init)
@@ -583,6 +598,7 @@ def generate_pipelines(cfg_file, interface_path, implementation_path, cmake):
 
                             material.add_param(param_name,
                                     "std::shared_ptr<Texture>",
+                                    "std::shared_ptr<Texture>",
                                     attr_type, True)
                         elif param_value == "Uniform":
                             num_components = pipeline_params[
@@ -590,11 +606,13 @@ def generate_pipelines(cfg_file, interface_path, implementation_path, cmake):
 
                             if num_components == 1:
                                 mat_type = "float"
+                                qual_type = mat_type
                             else:
-                                mat_type = f"glm::vec{num_components}"
+                                mat_type = f"vec{num_components}"
+                                qual_type = f"glm::{mat_type}"
 
                             material.add_param(param_name, mat_type,
-                                    attr_type, False)
+                                    qual_type, attr_type, False)
 
                     flag_defines.append(param_define)
                     props = props.union(param_definitions[param_type][

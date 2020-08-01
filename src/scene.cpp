@@ -148,7 +148,7 @@ static StagedScene stageScene(
         move(inline_meshes),
         total_vertex_bytes,
         material_offset,
-        total_geometry_bytes
+        total_bytes
     };
 }
 
