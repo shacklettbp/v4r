@@ -11,24 +11,22 @@ using namespace v4r;
 constexpr uint32_t num_frames = 10000;
 
 using Pipeline = BlinnPhong<RenderOutputs::Color,
-                            DataSource::Texture,
+                            DataSource::Uniform,
                             DataSource::Uniform,
                             DataSource::Uniform>;
 
-shared_ptr<Scene> loadScene(AssetLoader &loader, const char *mesh_path,
-                            const char *texture_path)
+shared_ptr<Scene> loadScene(AssetLoader &loader, const char *mesh_path)
 {
     vector<shared_ptr<Mesh>> meshes;
     vector<shared_ptr<Material>> materials;
 
     meshes.push_back(loader.loadMesh(mesh_path));
 
-    auto texture = loader.loadTexture(texture_path);
     materials.push_back(
             loader.makeMaterial(Pipeline::MaterialParams {
-        move(texture),
-        glm::vec3(0.5f),
-        256.f
+        glm::vec3(1.f),
+        glm::vec3(1.f),
+        128.f
     }));
 
     SceneDescription scene_desc(move(meshes), move(materials));
@@ -44,20 +42,20 @@ shared_ptr<Scene> loadScene(AssetLoader &loader, const char *mesh_path,
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 4) {
-        cerr << argv[0] << " geometry_path texture_path batch_size | save" <<
+    if (argc < 3) {
+        cerr << argv[0] << " geometry_path batch_size | save" <<
             endl;
         exit(EXIT_FAILURE);
     }
 
     bool bench;
     uint32_t batch_size;
-    if (!strcmp(argv[3], "save")) {
+    if (!strcmp(argv[2], "save")) {
         bench = false;
         batch_size = 1;
     }  else {
         bench = true;
-        batch_size = stoul(argv[3]);
+        batch_size = stoul(argv[2]);
     }
 
     BatchRenderer renderer({0, 1, 1, batch_size, 256, 256, glm::mat4(1.f)},
@@ -67,7 +65,7 @@ int main(int argc, char *argv[]) {
     );
 
     auto loader = renderer.makeLoader();
-    auto scene = loadScene(loader, argv[1], argv[2]);
+    auto scene = loadScene(loader, argv[1]);
 
     CommandStream cmd_stream = renderer.makeCommandStream();
     vector<Environment> envs;

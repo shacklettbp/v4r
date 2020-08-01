@@ -288,16 +288,20 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
     VkDescriptorSetLayout scene_descriptor_layout = VK_NULL_HANDLE;
     DescriptorManager::MakePoolType make_scene_pool = nullptr;
 
-    if constexpr (Props::needTextures) {
+    if constexpr (Props::needMaterial) {
         using SceneLayout = typename Props::PerSceneLayout;
 
-        texture_sampler = makeImmutableSampler(dev);
 
-        array<VkSampler *, SceneLayout::NumBindings - 1> layout_args;
+        array<VkSampler *, SceneLayout::NumBindings> layout_args;
         layout_args.fill(nullptr);
 
+        if constexpr (Props::needTextures) {
+            texture_sampler = makeImmutableSampler(dev);
+            layout_args[0] = &texture_sampler;
+        }
+
         scene_descriptor_layout = apply([&](auto ...args) {
-            return SceneLayout::makeSetLayout(dev, &texture_sampler, args...);
+            return SceneLayout::makeSetLayout(dev, args...);
         }, layout_args);
 
         make_scene_pool = SceneLayout::makePool;

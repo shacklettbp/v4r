@@ -183,6 +183,114 @@ f"""
 MaterialParam = namedtuple('MaterialParam',
         ['name', 'value_type', 'qual_type', 'attr_type', 'is_texture'])
 
+def compute_bytes(type_str):
+    if type_str == 'vec4':
+        return 16
+    elif type_str == 'vec3':
+        return 12
+    elif type_str == 'vec2':
+        return 8
+    elif type_str == 'float':
+        return 4
+    else:
+        raise Exception(f"Don't know size of {type_str}")
+
+class PackedMaterial:
+    def __init__(self, params):
+        params = [p for p in params if not p.is_texture]
+
+        param_bytes = [compute_bytes(p.value_type) for p in params]
+        self.total_bytes = sum(param_bytes)
+        self.end_pad = 0
+        self.locations = {}
+
+        if self.total_bytes == 0:
+            return
+
+        if self.total_bytes % 16 != 0:
+            self.end_pad = 16 - (self.total_bytes % 16)
+
+        self.total_bytes += self.end_pad
+
+        assert((self.total_bytes % 16) == 0)
+
+        self.num_vecs = self.total_bytes // 16
+
+        sized_params = { 1: [], 2: [], 3: [], 4: [] }
+
+        for param, num_bytes in zip(params, param_bytes):
+            assert(num_bytes % 4 == 0)
+            sized_params[num_bytes // 4].append(param)
+
+        cur_offset = 0
+        cur_vec4 = 0
+        cur_bytes = 0
+        while cur_bytes + self.end_pad < self.total_bytes:
+            remaining = 4 - cur_offset
+
+            def param_in_range(min_components, max_components):
+                for num_components in reversed(range(min_components,
+                                                     max_components + 1)):
+                    if len(sized_params[num_components]) > 0:
+                        return (sized_params[num_components].pop(), 
+                                num_components)
+
+                return None
+
+            optimal = param_in_range(1, remaining)
+            if optimal != None:
+                param, components_used = optimal
+            else:
+                param, components_used = param_in_range(2, 3)
+
+            if components_used > remaining:
+                loc = [(cur_vec4, cur_offset, remaining)]
+
+                components_used -= remaining
+                cur_vec4 += 1
+                loc.append((cur_vec4, 0, components_used))
+            else:
+                loc = [(cur_vec4, cur_offset, components_used)]
+            
+            self.locations[param] = loc
+
+            if remaining - components_used == 0:
+                cur_vec4 += 1
+                cur_offset = 0
+            else:
+                cur_offset += components_used
+
+            cur_bytes = (cur_vec4 * 4 + cur_offset) * 4
+
+    def num_param_vecs(self):
+        return self.num_vecs
+
+    def num_end_bytes(self):
+        return self.end_pad
+
+    def gen_access_flags(self):
+        flags = []
+        for param, loc in self.locations.items():
+            total_components = sum([l[2] for l in loc])
+            if total_components == 1:
+                aggregate = "float"
+            else:
+                aggregate = f"vec{total_components}"
+
+            swizzle = "xyzw"
+
+            access_fragments = []
+            for base, offset, size in loc:
+                swizzle_fragment = swizzle[offset:offset+size]
+                access_fragments.append(
+                    f"params.data[{base}].{swizzle_fragment}")
+
+            access_code = f"{aggregate}({', '.join(access_fragments)})"
+
+            flags.append(f'{param.name.upper()}_ACCESS="\\"{access_code}\\""')
+
+        return flags
+
 class Material:
     def __init__(self):
         self.params = []
@@ -208,37 +316,31 @@ f"""    struct MaterialParams {{
         {sep.join(members)};
     }};"""
 
-    def gen_impl(self, parent_type):
+
+    def pack(self):
+        return PackedMaterial(self.params)
+
+    def gen_impl(self, parent_type, packed):
         texture_moves = []
 
         uniform_members = []
         uniform_init = []
         generic_params = []
 
-        uniform_bytes = 0
-
-        for name, value_type, qual_type, attr_type, is_texture in self.params:
+        for name, _, qual_type, attr_type, is_texture in self.params:
             if is_texture: 
                 texture_moves.append(f"std::move(params.{name})")
-            else:
-                uniform_members.append(f"{qual_type} {name}")
-                uniform_init.append(f"params.{name}")
-
-                if value_type == 'vec4':
-                    uniform_bytes += 16
-                elif value_type == 'vec3':
-                    uniform_bytes += 12
-                elif value_type == 'vec2':
-                    uniform_bytes += 8
-                elif value_type == 'float':
-                    uniform_bytes += 4
 
             generic_params.append(
                     f"std::move(std::get<typename MaterialParam::{attr_type}&>\
 (tuple_args).value)")
 
-        if uniform_bytes % 16 != 0:
-            num_pad = 16 - (uniform_bytes % 16)
+        for param in packed.locations.keys():
+            uniform_members.append(f"{param.qual_type} {param.name}")
+            uniform_init.append(f"params.{param.name}")
+
+        num_pad = packed.num_end_bytes()
+        if num_pad > 0:
             uniform_members.append(f"char pad[{num_pad}] {{}}")
 
         generic_sep = ",\n            "
@@ -562,7 +664,7 @@ def generate_pipelines(cfg_file, interface_path, implementation_path, cmake):
             iface = InterfaceTracker()
             iface.bind(0) # set 0 binding 0 is ViewInfo
             iface.bind(0) # set 0 binding 1 is LightingInfo
-            iface.bind(1) # set 1 binding 0 is texture sampler
+            sampler_bound = False
             
             shader_name = pipeline_name
 
@@ -591,6 +693,10 @@ def generate_pipelines(cfg_file, interface_path, implementation_path, cmake):
                         attr_type += param_value
 
                         if param_value == "Texture":
+                            if not sampler_bound:
+                                iface.bind(1) # set 1 bind 0: texture sampler
+                                sampler_bound = True
+
                             texture_bind_num = iface.bind(1)
                             param_bind_define = \
                                 f"{param_define}_BIND={texture_bind_num}"
@@ -657,9 +763,12 @@ def generate_pipelines(cfg_file, interface_path, implementation_path, cmake):
                 flag_defines.append(
                         f"MATERIAL_IN_LOC={material_input_location}")
                 flag_defines.append(f"MATERIAL_LOC={iface.vert_out()}")
+                
+                packed_material = material.pack()
 
                 material_defn = material.gen_struct()
-                material_impl = material.gen_impl(pipeline_type)
+                material_impl = material.gen_impl(pipeline_type,
+                                                  packed_material)
             else:
                 material_defn = "using MaterialParams = NoMaterial;"
                 material_impl = None
@@ -670,6 +779,10 @@ def generate_pipelines(cfg_file, interface_path, implementation_path, cmake):
                 material_param_bind = f"PARAM_BIND={param_bind_num}"
                 flag_defines.append(material_param_bind)
 
+                flag_defines += packed_material.gen_access_flags()
+                flag_defines.append(
+                    f"NUM_PARAM_VECS={packed_material.num_param_vecs()}")
+                
             if "needLighting" in props:
                 flag_defines.append(f"CAMERA_POS_LOC={iface.vert_out()}")
 

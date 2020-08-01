@@ -36,7 +36,7 @@
                 },
                 "albedo_color": {
                     "type": "DataSource",
-                    "num_components": 4
+                    "num_components": 3
                 }
             },
             "valid_configurations": [{
@@ -86,7 +86,8 @@
                 "allowed": {
                     "diffuse_color": ["Uniform", "Texture"],
                     "specular_color": ["Uniform", "Texture"],
-                    "shininess": ["Uniform"]
+                    "shininess": ["Uniform"],
+                    "nonuniform_scale": [false]
                 }
             }],
             "shader_properties": [

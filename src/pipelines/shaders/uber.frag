@@ -36,23 +36,7 @@ layout (location = MATERIAL_LOC) flat in uint material_idx;
 #ifdef MATERIAL_PARAMS
 
 struct MaterialParams {
-#ifdef ALBEDO_COLOR_UNIFORM
-    vec4 albedoColor;
-#endif
-
-#ifdef DIFFUSE_COLOR_UNIFORM
-    vec4 diffuseColor;
-#endif 
-
-#ifdef SPECULAR_COLOR_UNIFORM
-    vec4 specularColor;
-#endif
-
-#ifdef SHININESS_UNIFORM
-    float shininess;
-    vec3 pad;
-#endif
-
+    vec4 data[NUM_PARAM_VECS];
 };
 
 layout (set = 1, binding = PARAM_BIND, scalar) uniform Params {
@@ -109,18 +93,18 @@ vec4 compute_color()
     vec3 diffuse = texture(sampler2D(diffuse_textures[material_idx],
                                      texture_sampler), in_uv, 0.f).xyz;
 #elif defined(DIFFUSE_COLOR_UNIFORM)
-    vec3 diffuse = params.diffuseColor.xyz;
+    vec3 diffuse = DIFFUSE_COLOR_ACCESS;
 #endif
 
 #if defined(SPECULAR_COLOR_TEXTURE)
     vec3 specular = texture(sampler2D(specular_textures[material_idx],
                                       texture_sampler), in_uv, 0.f).xyz;
 #elif defined(SPECULAR_COLOR_UNIFORM)
-    vec3 specular = params.specularColor.xyz;
+    vec3 specular = SPECULAR_COLOR_ACCESS;
 #endif
 
 #if defined(SHININESS_UNIFORM)
-    float shininess = params.shininess;
+    float shininess = SHININESS_ACCESS;
 #endif
 
     vec3 Lo = vec3(0.0);
@@ -152,7 +136,9 @@ vec4 compute_color()
 #endif
 
 #ifdef ALBEDO_COLOR_UNIFORM
-    vec4 albedo = material_params[material_idx].albedoColor;
+    MaterialParams params = material_params[material_idx];
+    vec4 albedo = vec4(ALBEDO_COLOR_ACCESS, 1.f);
+
 #endif
 
 #ifdef ALBEDO_COLOR_VERTEX

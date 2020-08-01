@@ -657,10 +657,10 @@ shared_ptr<Scene> LoaderState::makeScene(
 
     // FIXME null descriptorManager feels a bit indirect
     if (material_set.hdl != VK_NULL_HANDLE && materials.size() > 0) {
-        // The assumption in this code is that the shader expects the
-        // sampler in binding = 0, and then each of the required
-        // texture arrays in bindings 1, 2, ..., followed ultimately
-        // by the (optional) material params in the final binding
+        // If there are textures the layout is
+        // 0: sampler
+        // 1 .. # textures: texture arrays
+        // Final: material params
         vector<VkDescriptorImageInfo> descriptor_views;
         const size_t textures_per_material = materials[0]->textures.size();
         descriptor_views.reserve(materials.size() * textures_per_material);
@@ -698,6 +698,11 @@ shared_ptr<Scene> LoaderState::makeScene(
         }
 
         if (material_params.size() > 0) {
+            uint32_t param_binding = 0;
+            if (textures_per_material > 0) {
+                param_binding = 1 + textures_per_material;
+            }
+
             VkDescriptorBufferInfo material_buffer_info;
             material_buffer_info.buffer = data.buffer;
             material_buffer_info.offset = staged.paramBufferOffset;
@@ -707,7 +712,7 @@ shared_ptr<Scene> LoaderState::makeScene(
             desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             desc_update.pNext = nullptr;
             desc_update.dstSet = material_set.hdl;
-            desc_update.dstBinding = 1 + textures_per_material;
+            desc_update.dstBinding = param_binding;
             desc_update.dstArrayElement = 0;
             desc_update.descriptorCount = 1;
             desc_update.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
