@@ -21,10 +21,10 @@ add_custom_command(
 add_custom_command(
     OUTPUT dispatch/dispatch_device_impl.hpp dispatch/dispatch_device_impl.cpp
            dispatch/dispatch_instance_impl.hpp dispatch/dispatch_instance_impl.cpp
-    COMMAND ${CMAKE_SOURCE_DIR}/scripts/gen_vk_dispatch.py
-                ${CMAKE_CURRENT_BINARY_DIR}/dispatch/dispatch.template dispatch
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/gen_vk_dispatch.py
+            ${CMAKE_CURRENT_BINARY_DIR}/dispatch/dispatch.template dispatch
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/dispatch/dispatch.template
-            ${CMAKE_SOURCE_DIR}/scripts/gen_vk_dispatch.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/../scripts/gen_vk_dispatch.py
 )
 
 add_custom_target( generate_vk_dispatch DEPENDS
@@ -35,7 +35,7 @@ add_custom_target( generate_vk_dispatch DEPENDS
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/dispatch)
 
 # Build shaders
-set(SHADER_DIR "${CMAKE_BINARY_DIR}/shaders/")
+set(SHADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/../shaders/")
 add_definitions("-DSHADER_DIR=${SHADER_DIR}")
 add_subdirectory(pipelines)
 
