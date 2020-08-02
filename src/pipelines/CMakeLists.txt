@@ -20,8 +20,8 @@ file(MAKE_DIRECTORY "${IFACE_DIR}")
 file(MAKE_DIRECTORY "${IMPL_DIR}")
 
 execute_process(
-    COMMAND ../scripts/gen_pipelines.py "${CFG_FILE}"
-            "${IFACE_DIR}" "${IMPL_DIR}" --cmake
+    COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/gen_pipelines.py"
+            "${CFG_FILE}" "${IFACE_DIR}" "${IMPL_DIR}" --cmake
     OUTPUT_VARIABLE SHADER_DEFINES
     ERROR_VARIABLE CFG_ERROR
     RESULT_VARIABLE SHADER_SUCCESS)
