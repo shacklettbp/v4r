@@ -68,6 +68,16 @@ add_dependencies(v4r generate_vk_dispatch compile_shaders)
 
 target_link_libraries(v4r Vulkan::Vulkan CUDA::cudart Threads::Threads assimp::assimp)
 
+set(FINAL_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/../include")
+file(MAKE_DIRECTORY "${FINAL_INCLUDE_DIR}")
+add_custom_command(TARGET v4r POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/../include"
+        "${FINAL_INCLUDE_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_BINARY_DIR}/pipelines/interface"
+        "${FINAL_INCLUDE_DIR}/v4r")
+
 if (glfw3_FOUND)
     add_library(v4r_display SHARED
         v4r_display.cpp ../include/v4r/display.hpp
