@@ -41,6 +41,8 @@ add_subdirectory(pipelines)
 
 # Main library
 
+SET(MAIN_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../include")
+
 add_library(v4r SHARED
     asset_load.hpp asset_load.inl
     cuda_state.hpp cuda_state.cpp
@@ -61,8 +63,11 @@ add_library(v4r SHARED
 )
 
 target_include_directories(v4r
-    PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/pipelines/interface
-    PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/pipelines/implementation)
+    PUBLIC 
+        ${MAIN_INCLUDE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/pipelines/interface
+    PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/pipelines/implementation)
 
 add_dependencies(v4r generate_vk_dispatch compile_shaders)
 
@@ -99,6 +104,8 @@ add_library(v4r_debug SHARED
 )
 
 target_link_libraries(v4r_debug CUDA::cudart)
+target_include_directories(v4r_debug
+    PUBLIC ${MAIN_INCLUDE_DIR})
 
 list(APPEND V4R_HEADLESS_LIBS v4r) 
 
