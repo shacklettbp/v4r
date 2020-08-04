@@ -752,7 +752,8 @@ def generate_pipelines(cfg_file, interface_path, implementation_path, cmake):
                 flag_defines.append(f"NORMAL_TXFM3_LOC={iface.vert_in()}")
 
             # Miscellaneous flags
-            flag_defines.append(f"COLOR_OUT_LOC={iface.frag_out()}")
+            if "needColorOutput" in props:
+                flag_defines.append(f"COLOR_OUT_LOC={iface.frag_out()}")
 
             if "needDepthOutput" in props:
                 flag_defines.append(f"DEPTH_LOC={iface.vert_out()}")
