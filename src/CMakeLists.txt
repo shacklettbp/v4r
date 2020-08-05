@@ -74,6 +74,10 @@ add_dependencies(v4r generate_vk_dispatch compile_shaders)
 
 target_link_libraries(v4r Vulkan::Vulkan CUDA::cudart Threads::Threads assimp::assimp)
 
+add_library(v4r_headless INTERFACE)
+add_dependencies(v4r_headless v4r)
+target_link_libraries(v4r_headless INTERFACE v4r)
+
 set(FINAL_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/../include")
 file(MAKE_DIRECTORY "${FINAL_INCLUDE_DIR}")
 add_custom_command(TARGET v4r POST_BUILD
@@ -108,8 +112,6 @@ target_link_libraries(v4r_debug CUDA::cudart)
 target_include_directories(v4r_debug
     PUBLIC ${MAIN_INCLUDE_DIR})
 
-list(APPEND V4R_HEADLESS_LIBS v4r) 
-
 # Hacks
 
 # if nvidia libEGL exists, apply nvidia workarounds
@@ -119,10 +121,7 @@ if (NVIDIA_EGL)
     add_library(v4r_headless_hacks SHARED
         linux_hacks.cpp
     )
-endif()
 
-if (TARGET v4r_headless_hacks)
-    list(PREPEND V4R_HEADLESS_LIBS v4r_headless_hacks)
+    add_dependencies(v4r_headless v4r_headless_hacks)
+    target_link_libraries(v4r_headless INTERFACE v4r_headless_hacks)
 endif()
-
-set(V4R_HEADLESS_LIBS ${V4R_HEADLESS_LIBS} PARENT_SCOPE)

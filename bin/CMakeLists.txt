@@ -1,32 +1,32 @@
 add_executable(bench
     bench.cpp
 )
-target_link_libraries(bench ${V4R_HEADLESS_LIBS} v4r_debug)
+target_link_libraries(bench v4r_headless v4r_debug)
 
 add_executable(save_frame
     save_frame.cpp
 )
-target_link_libraries(save_frame ${V4R_HEADLESS_LIBS} v4r_debug)
+target_link_libraries(save_frame v4r_headless v4r_debug)
 
 add_executable(raw_geometry
     raw_geometry.cpp
 )
-target_link_libraries(raw_geometry ${V4R_HEADLESS_LIBS} v4r_debug)
+target_link_libraries(raw_geometry v4r_headless v4r_debug)
 
 add_executable(singlebench
     singlebench.cpp
 )
-target_link_libraries(singlebench ${V4R_HEADLESS_LIBS})
+target_link_libraries(singlebench v4r_headless)
 
 add_executable(double_buffer
     double_buffer.cpp
 )
-target_link_libraries(double_buffer ${V4R_HEADLESS_LIBS})
+target_link_libraries(double_buffer v4r_headless)
 
 add_executable(lighting
     lighting.cpp
 )
-target_link_libraries(lighting ${V4R_HEADLESS_LIBS} v4r_debug)
+target_link_libraries(lighting v4r_headless v4r_debug)
 
 if (TARGET v4r_display)
     add_executable(display

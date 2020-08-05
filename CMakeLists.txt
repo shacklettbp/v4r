@@ -79,5 +79,3 @@ find_package(glfw3 3.3 QUIET)
 
 add_subdirectory(src)
 add_subdirectory(bin)
-
-set(V4R_HEADLESS_LIBS "${V4R_HEADLESS_LIBS}" PARENT_SCOPE)
