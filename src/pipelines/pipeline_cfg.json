@@ -73,7 +73,7 @@
                     "type": "DataSource",
                     "num_components": 1
                 },
-                "nonuniform_scale": {
+                "use_normal_matrix": {
                     "type": "bool",
                     "default": false,
                     "extra_params": ["needNormalMatrix"]
@@ -87,7 +87,7 @@
                     "diffuse_color": ["Uniform", "Texture"],
                     "specular_color": ["Uniform", "Texture"],
                     "shininess": ["Uniform"],
-                    "nonuniform_scale": [false]
+                    "use_normal_matrix": [false]
                 }
             }],
             "shader_properties": [

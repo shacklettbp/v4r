@@ -23,7 +23,7 @@ layout (location = NORMAL_IN_LOC) in vec3 in_normal;
 layout (location = NORMAL_LOC) out vec3 out_normal;
 layout (location = CAMERA_POS_LOC) out vec3 out_camera_pos;
 
-#ifdef NONUNIFORM_SCALE
+#ifdef USE_NORMAL_MATRIX
 layout (location = NORMAL_TXFM1_LOC) in vec3 normal_txfm1;
 layout (location = NORMAL_TXFM2_LOC) in vec3 normal_txfm2;
 layout (location = NORMAL_TXFM3_LOC) in vec3 normal_txfm3;
@@ -65,13 +65,17 @@ void main()
 
 #ifdef LIT_PIPELINE
 
-#ifdef NONUNIFORM_SCALE
-    mat3 inv_transpose = mat3(normal_txfm1, normal_txfm2, normal_txfm3);
+#ifdef USE_NORMAL_MATRIX
+    mat3 normal_mat = mat3(normal_txfm1, normal_txfm2, normal_txfm3);
+    out_normal = normal_mat * in_normal;
 #else
-    mat3 inv_transpose = mat3(mv);
+    mat3 normal_mat = mat3(mv);
+    vec3 normal_scale = vec3(1.f / dot(normal_mat[0], normal_mat[0]),
+                             1.f / dot(normal_mat[1], normal_mat[1]),
+                             1.f / dot(normal_mat[2], normal_mat[2]));
+    out_normal = normal_mat * in_normal * normal_scale;
 #endif
 
-    out_normal = mat3(mv) * in_normal;
     out_camera_pos = camera_space.xyz;
 
 #endif
