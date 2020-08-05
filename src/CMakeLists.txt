@@ -65,6 +65,7 @@ add_library(v4r SHARED
 target_include_directories(v4r
     PUBLIC 
         ${MAIN_INCLUDE_DIR}
+        ${GLM_INCLUDE_OVERRIDE}
         ${CMAKE_CURRENT_BINARY_DIR}/pipelines/interface
     PRIVATE
         ${CMAKE_CURRENT_BINARY_DIR}/pipelines/implementation)

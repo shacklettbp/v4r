@@ -54,7 +54,9 @@ ENDIF()
 
 IF (NOT glm_FOUND OR USE_BUNDLED)
     message(STATUS "Using bundled GLM")
-    include_directories(external/glm)
+    set(GLM_INCLUDE_OVERRIDE "external/glm")
+ELSE ()
+    set(GLM_INCLUDE_INCLUDE_OVERRIDE "")
 ENDIF()
 
 IF (NOT USE_BUNDLED)
@@ -77,3 +79,5 @@ find_package(glfw3 3.3 QUIET)
 
 add_subdirectory(src)
 add_subdirectory(bin)
+
+set(V4R_HEADLESS_LIBS "${V4R_HEADLESS_LIBS}" PARENT_SCOPE)
