@@ -119,7 +119,6 @@ public:
 };
 
 struct PerFrameState {
-    VkSemaphore semaphore;
     VkFence fence;
     std::array<VkCommandBuffer, 2> commands;
     
@@ -188,8 +187,6 @@ public:
     {
         return frame_states_[frame_idx].fence;
     }
-
-    int getSemaphoreFD(uint32_t frame_idx) const;
 
     uint32_t getCurrentFrame() const {
         return cur_frame_;

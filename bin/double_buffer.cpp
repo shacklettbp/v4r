@@ -77,12 +77,12 @@ int main(int argc, char *argv[]) {
 
     uint32_t num_iters = num_frames / batch_size;
 
-    RenderSync prevsync = cmd_stream.render(envs);
+    uint32_t prev_frame = cmd_stream.render(envs);
 
     for (uint32_t i = 1; i < num_iters; i++) {
-        RenderSync newsync = cmd_stream.render(envs);
-        prevsync.cpuWait();
-        prevsync = move(newsync);
+        uint32_t new_frame = cmd_stream.render(envs);
+        cmd_stream.waitForFrame(prev_frame);
+        prev_frame = new_frame;
     }
 
     auto end = chrono::steady_clock::now();

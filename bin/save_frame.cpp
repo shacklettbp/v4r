@@ -1,4 +1,4 @@
-#include <v4r.hpp>
+#include <v4r/cuda.hpp>
 #include <v4r/debug.hpp>
 #include <iostream>
 #include <cstdlib>
@@ -17,7 +17,7 @@ int main(int argc, char *argv[]) {
     using Pipeline = Unlit<RenderOutputs::Color | RenderOutputs::Depth,
                            DataSource::Texture>;
 
-    BatchRenderer renderer({0, 1, 1, batch_size, 256, 256,
+    BatchRendererCUDA renderer({0, 1, 1, batch_size, 256, 256,
         glm::mat4(
             1, 0, 0, 0,
             0, -1.19209e-07, -1, 0,
@@ -49,12 +49,12 @@ int main(int argc, char *argv[]) {
                             glm::vec3(0.f, 0.f, 1.f)));
     }
 
-    auto sync = cmd_stream.render(envs);
-    sync.cpuWait();
+    cmd_stream.render(envs);
+    cmd_stream.waitForFrame();
     rdoc.endFrame();
 
-    uint8_t *base_color_ptr = cmd_stream.getColorDevPtr();
-    float *base_depth_ptr = cmd_stream.getDepthDevPtr();
+    uint8_t *base_color_ptr = cmd_stream.getColorDevicePtr();
+    float *base_depth_ptr = cmd_stream.getDepthDevicePtr();
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         saveFrame(("/tmp/out_color_" + to_string(batch_idx) + ".bmp").c_str(),

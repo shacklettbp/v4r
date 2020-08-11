@@ -1,4 +1,4 @@
-#include <v4r.hpp>
+#include <v4r/cuda.hpp>
 #include <v4r/debug.hpp>
 
 #include <iostream>
@@ -20,13 +20,13 @@ int main(int argc, char *argv[]) {
     using Vertex = Pipeline::Vertex;
     using MaterialParams = Pipeline::MaterialParams;
 
-    BatchRenderer renderer({0, 1, 1, 1, 256, 256,
+    BatchRendererCUDA renderer({0, 1, 1, 1, 256, 256,
         glm::mat4(1.f) }, // global transform is just identity
         RenderFeatures<Pipeline> { RenderOptions::CpuSynchronization }
     );
 
     AssetLoader loader = renderer.makeLoader();
-    CommandStream cmd_stream = renderer.makeCommandStream();
+    CommandStreamCUDA cmd_stream = renderer.makeCommandStream();
 
     // Renderdoc entry points (ignore)
     RenderDoc rdoc {};
@@ -116,16 +116,16 @@ int main(int argc, char *argv[]) {
     envs[0].setCameraView(glm::mat4(1.f)); // Set view matrix to identity
 
     // Render the environment (unchanged from default)
-    auto sync = cmd_stream.render(envs);
-    sync.cpuWait();
-    saveFrame("/tmp/out_0.bmp", cmd_stream.getColorDevPtr(), 256, 256, 4);
+    cmd_stream.render(envs);
+    cmd_stream.waitForFrame();
+    saveFrame("/tmp/out_0.bmp", cmd_stream.getColorDevicePtr(), 256, 256, 4);
 
     // Now add in an instance of the quad mesh
     uint32_t inst_id = envs[0].addInstance(1, 0, glm::mat4(1.f));
 
-    sync = cmd_stream.render(envs);
-    sync.cpuWait();
-    saveFrame("/tmp/out_1.bmp", cmd_stream.getColorDevPtr(), 256, 256, 4);
+    cmd_stream.render(envs);
+    cmd_stream.waitForFrame();
+    saveFrame("/tmp/out_1.bmp", cmd_stream.getColorDevicePtr(), 256, 256, 4);
 
     // Finally, move the quad mesh instance
     envs[0].updateInstanceTransform(inst_id,
@@ -133,9 +133,9 @@ int main(int argc, char *argv[]) {
                     glm::mat4(envs[0].getInstanceTransform(inst_id)),
                     glm::vec3(0.5f, 0.f, 0.f)));
 
-    sync = cmd_stream.render(envs);
-    sync.cpuWait();
-    saveFrame("/tmp/out_2.bmp", cmd_stream.getColorDevPtr(), 256, 256, 4);
+    cmd_stream.render(envs);
+    cmd_stream.waitForFrame();
+    saveFrame("/tmp/out_2.bmp", cmd_stream.getColorDevicePtr(), 256, 256, 4);
 
     rdoc.endFrame();
 }

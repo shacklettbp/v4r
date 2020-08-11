@@ -142,7 +142,7 @@ int main(int argc, char *argv[]) {
     }
 
     rdoc.startFrame();
-    RenderSync prevsync = cmd_stream.render(envs);
+    uint32_t prev_frame = cmd_stream.render(envs);
     rdoc.endFrame();
 
     auto time_prev = chrono::steady_clock::now();
@@ -189,9 +189,9 @@ int main(int argc, char *argv[]) {
         envs[0].setCameraView(cam.eye, cam.look, cam.up);
 
         rdoc.startFrame();
-        RenderSync newsync = cmd_stream.render(envs);
+        uint32_t new_frame = cmd_stream.render(envs);
         rdoc.endFrame();
-        prevsync.cpuWait();
-        prevsync = move(newsync);
+        cmd_stream.waitForFrame(prev_frame);
+        prev_frame = new_frame;
     }
 }

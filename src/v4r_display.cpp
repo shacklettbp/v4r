@@ -1,7 +1,6 @@
 #include <v4r/display.hpp>
 
 #include "cuda_state.hpp"
-#include "v4r_utils.hpp"
 #include "vulkan_state.hpp"
 
 #include <cstring>
@@ -264,7 +263,7 @@ PresentCommandStream::PresentCommandStream(CommandStream &&base,
     }
 }
 
-RenderSync PresentCommandStream::render(const vector<Environment> &elems)
+uint32_t PresentCommandStream::render(const vector<Environment> &elems)
 {
     uint32_t frame_idx = state_->getCurrentFrame();
 
@@ -282,11 +281,13 @@ RenderSync PresentCommandStream::render(const vector<Environment> &elems)
     VkImage swapchain_img = presentation_state_->images[swapchain_idx];
 
     state_->render(elems, [&, dev=&state_->dev](
+                              uint32_t frame_id,
                               uint32_t num_commands,
                               const VkCommandBuffer *commands,
-                              VkSemaphore external_semaphore,
                               VkFence fence) {
-        array render_signals { external_semaphore, render_ready };
+        (void)frame_id;
+
+        array render_signals { render_ready };
 
         if (benchmark_mode_) {
             VkSubmitInfo gfx_submit {
@@ -434,7 +435,7 @@ RenderSync PresentCommandStream::render(const vector<Environment> &elems)
 
     state_->gfxQueue.presentSubmit(state_->dev, &present_info);
 
-    return RenderSync(&sync_[frame_idx]);
+    return frame_idx;
 }
 
 CoreVulkanHandles makeCoreHandles(const RenderConfig &config,
@@ -457,7 +458,7 @@ BatchPresentRenderer::BatchPresentRenderer(
         const RenderFeatures<PipelineType> &features,
         bool benchmark_mode)
     : BatchRenderer(make_handle<VulkanState>(cfg, features, makeCoreHandles(
-            cfg, getUUIDFromCudaID(cfg.gpuID))), cfg.gpuID),
+            cfg, getUUIDFromCudaID(cfg.gpuID)))),
       benchmark_mode_(benchmark_mode)
 {
     assert(benchmark_mode || state_->fbCfg.colorOutput);

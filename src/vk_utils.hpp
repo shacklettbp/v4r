@@ -67,6 +67,7 @@ inline VkQueue makeQueue(const DeviceState &dev,
 inline VkSemaphore makeBinarySemaphore(const DeviceState &dev);
 
 inline VkSemaphore makeBinaryExternalSemaphore(const DeviceState &dev);
+int exportBinarySemaphore(const DeviceState &dev, VkSemaphore semaphore);
 
 inline VkFence makeFence(const DeviceState &dev, bool pre_signal=false);
 

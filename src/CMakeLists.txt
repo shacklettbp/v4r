@@ -55,11 +55,12 @@ add_library(v4r SHARED
     vulkan_handles.hpp vulkan_handles.cpp
     vulkan_memory.hpp vulkan_memory.cpp
     vulkan_state.hpp vulkan_state.cpp
-    ../include/v4r.hpp v4r.cpp v4r_utils.hpp
+    ../include/v4r.hpp v4r.cpp
     ../include/v4r/environment.hpp ../include/v4r/environment.inl
     ../include/v4r/assets.hpp ../include/v4r/assets.inl
     ../include/v4r/config.hpp
     ../include/v4r/fwd.hpp ../include/v4r/utils.hpp
+    ../include/v4r/cuda.hpp v4r_cuda.cpp
 )
 
 target_include_directories(v4r

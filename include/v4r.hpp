@@ -7,8 +7,6 @@
 #include <v4r/fwd.hpp>
 #include <v4r/utils.hpp>
 
-#include <cuda.h>
-#include <cuda_runtime.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <vector>
@@ -45,41 +43,22 @@ private:
 friend class BatchRenderer;
 };
 
-class RenderSync {
-public:
-    RenderSync(const SyncState *state);
-    RenderSync(RenderSync &&) = default;
-    RenderSync & operator=(RenderSync &&) = default;
-
-    void gpuWait(cudaStream_t strm);
-    void cpuWait();
-
-private:
-    const SyncState *state_;
-};
-
 class CommandStream {
 public:
     Environment makeEnvironment(const std::shared_ptr<Scene> &scene,
                                 float hfov, float near = 0.001f,
                                 float far = 10000.f);
     // Render batch
-    RenderSync render(const std::vector<Environment> &elems);
+    uint32_t render(const std::vector<Environment> &elems);
 
-    // Fixed CUDA device pointers to result buffers
-    uint8_t * getColorDevPtr(bool alternate_buffer = false) const;
-    float * getDepthDevPtr(bool alternate_buffer = false) const;
+    void waitForFrame(uint32_t frame_id = 0);
 
 protected:
     CommandStream(Handle<CommandStreamState> &&state,
-                  const CudaState &cuda_global,
                   uint32_t render_width,
-                  uint32_t render_height,
-                  bool double_buffered);
+                  uint32_t render_height);
 
     Handle<CommandStreamState> state_;
-    Handle<CudaStreamState[]> cuda_;
-    Handle<SyncState[]> sync_;
 
 private:
     uint32_t render_width_;
@@ -98,11 +77,8 @@ public:
     CommandStream makeCommandStream();
 
 protected:
-    BatchRenderer(Handle<VulkanState> &&vk_state, int gpu_id);
+    BatchRenderer(Handle<VulkanState> &&vk_state);
     Handle<VulkanState> state_;
-
-private:
-    Handle<CudaState> cuda_;
 };
 
 }

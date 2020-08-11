@@ -145,12 +145,13 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
     // FIXME 
     per_render_buffer_.flush(dev);
 
-    submit_func(frame_state.commands.size(),
+    uint32_t rendered_frame_idx = cur_frame_;
+
+    submit_func(rendered_frame_idx,
+                frame_state.commands.size(),
                 frame_state.commands.data(),
-                frame_state.semaphore,
                 frame_state.fence);
 
-    uint32_t rendered_frame_idx = cur_frame_;
     cur_frame_ = (cur_frame_ + 1) % frame_states_.size();
 
     return rendered_frame_idx;

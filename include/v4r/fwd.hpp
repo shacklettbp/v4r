@@ -20,11 +20,6 @@ struct Scene;
 class EnvironmentState;
 class Environment;
 
-class CudaStreamState;
-class CudaState;
-
-struct SyncState;
-
 class CommandStream;
 
 class BatchRenderer;

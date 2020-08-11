@@ -1,10 +1,9 @@
 #include <v4r.hpp>
 
-#include "cuda_state.hpp"
 #include "dispatch.hpp"
-#include "v4r_utils.hpp"
 #include "vulkan_state.hpp"
 #include "scene.hpp"
+#include "cuda_state.hpp"
 
 #include <cassert>
 #include <fstream>
@@ -17,10 +16,7 @@ namespace v4r {
 
 template struct HandleDeleter<LoaderState>;
 template struct HandleDeleter<CommandStreamState>;
-template struct HandleDeleter<CudaStreamState[]>;
-template struct HandleDeleter<SyncState[]>;
 template struct HandleDeleter<VulkanState>;
-template struct HandleDeleter<CudaState>;
 template struct HandleDeleter<EnvironmentState>;
 
 static glm::mat4 makePerspectiveMatrix(float hfov, uint32_t width,
@@ -91,95 +87,18 @@ shared_ptr<Scene> AssetLoader::loadScene(
     return state_->loadScene(scene_path);
 }
 
-RenderSync::RenderSync(const SyncState *state)
-    : state_(state)
-{}
-
-void RenderSync::gpuWait(cudaStream_t strm)
+void CommandStream::waitForFrame(uint32_t frame_id)
 {
-    cudaGPUWait(state_->cudaSemaphore, strm);
-}
-
-void RenderSync::cpuWait()
-{
-    assert(state_->fence != VK_NULL_HANDLE);
-    waitForFenceInfinitely(state_->dev, state_->fence);
-    resetFence(state_->dev, state_->fence);
-}
-
-static CudaStreamState * makeCudaStreamStates(
-        const CommandStreamState &cmd_stream,
-        const CudaState &cuda_global,
-        bool double_buffered)
-{
-    cuda_global.setActiveDevice();
-
-    if (double_buffered) {
-        return new CudaStreamState[2] {
-            CudaStreamState {
-                (uint8_t *)cuda_global.getPointer(
-                        cmd_stream.getColorOffset(0)),
-                (float *)cuda_global.getPointer(
-                        cmd_stream.getDepthOffset(0)),
-                cmd_stream.getSemaphoreFD(0)
-            },
-            CudaStreamState {
-                (uint8_t *)cuda_global.getPointer(
-                        cmd_stream.getColorOffset(1)),
-                (float *)cuda_global.getPointer(
-                        cmd_stream.getDepthOffset(1)),
-                cmd_stream.getSemaphoreFD(1)
-            }
-        };
-    } else {
-        return new CudaStreamState[1] {
-            CudaStreamState {
-                (uint8_t *)cuda_global.getPointer(
-                        cmd_stream.getColorOffset(0)),
-                (float *)cuda_global.getPointer(
-                        cmd_stream.getDepthOffset(0)),
-                cmd_stream.getSemaphoreFD(0)
-            }
-        };
-    }
-}
-
-static SyncState * makeSyncs(const CommandStreamState &cmd_stream,
-                             const Handle<CudaStreamState[]> &cuda_states,
-                             bool double_buffered)
-{
-    if (double_buffered) {
-        return new SyncState[2] {
-            SyncState {
-                cmd_stream.dev,
-                cmd_stream.getFence(0),
-                cuda_states[0].getSemaphore()
-            }, 
-            SyncState {
-                cmd_stream.dev,
-                cmd_stream.getFence(1),
-                cuda_states[1].getSemaphore()
-            }
-        };
-    } else {
-        return new SyncState[1] {
-            SyncState {
-                cmd_stream.dev,
-                cmd_stream.getFence(0),
-                cuda_states[0].getSemaphore()
-            }
-        };
-    }
+    VkFence fence = state_->getFence(frame_id);
+    assert(fence != VK_NULL_HANDLE);
+    waitForFenceInfinitely(state_->dev, fence);
+    resetFence(state_->dev, fence);
 }
 
 CommandStream::CommandStream(Handle<CommandStreamState> &&state,
-                             const CudaState &cuda_global,
                              uint32_t render_width,
-                             uint32_t render_height,
-                             bool double_buffered)
+                             uint32_t render_height)
     : state_(move(state)),
-      cuda_(makeCudaStreamStates(*state_, cuda_global, double_buffered)),
-      sync_(makeSyncs(*state_, cuda_, double_buffered)),
       render_width_(render_width),
       render_height_(render_height)
 {}
@@ -194,21 +113,9 @@ Environment CommandStream::makeEnvironment(const shared_ptr<Scene> &scene,
     return Environment(make_handle<EnvironmentState>(scene, perspective));
 }
 
-uint8_t * CommandStream::getColorDevPtr(bool alternate_buffer) const
+uint32_t CommandStream::render(const std::vector<Environment> &elems)
 {
-    return cuda_[alternate_buffer].getColor();
-}
-
-float * CommandStream::getDepthDevPtr(bool alternate_buffer) const
-{
-    return cuda_[alternate_buffer].getDepth();
-}
-
-RenderSync CommandStream::render(const std::vector<Environment> &elems)
-{
-    uint32_t frame_idx = state_->render(elems);
-
-    return RenderSync(&sync_[frame_idx]);
+    return  state_->render(elems);
 }
 
 template <typename PipelineType>
@@ -216,16 +123,11 @@ BatchRenderer::BatchRenderer(const RenderConfig &cfg,
                              const RenderFeatures<PipelineType> &features)
     : BatchRenderer(
             make_handle<VulkanState>(cfg, features, 
-                                     getUUIDFromCudaID(cfg.gpuID)),
-            cfg.gpuID)
+                                     getUUIDFromCudaID(cfg.gpuID)))
 {}
 
-BatchRenderer::BatchRenderer(Handle<VulkanState> &&vk_state,
-                             int gpu_id)
-    : state_(move(vk_state)),
-      cuda_(make_handle<CudaState>(gpu_id,
-                                   state_->getFramebufferFD(),
-                                   state_->getFramebufferBytes()))
+BatchRenderer::BatchRenderer(Handle<VulkanState> &&vk_state)
+    : state_(move(vk_state))
 {}
 
 AssetLoader BatchRenderer::makeLoader()
@@ -240,9 +142,8 @@ CommandStream BatchRenderer::makeCommandStream()
 
     glm::u32vec2 img_dim = state_->getImageDimensions();
 
-    return CommandStream(move(stream_state), *cuda_,
-                         img_dim.x, img_dim.y,
-                         state_->isDoubleBuffered());
+    return CommandStream(move(stream_state),
+                         img_dim.x, img_dim.y);
 }
 
 Environment::Environment(Handle<EnvironmentState> &&state)

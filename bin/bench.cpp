@@ -96,8 +96,8 @@ int main(int argc, char *argv[]) {
                     auto mat = cam_views[i];
                     envs[0].setCameraView(mat);
 
-                    auto sync = cmd_stream.render(envs);
-                    sync.cpuWait();
+                    cmd_stream.render(envs);
+                    cmd_stream.waitForFrame();
                 }
 
                 pthread_barrier_wait(&end_barrier);

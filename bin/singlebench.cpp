@@ -51,8 +51,8 @@ int main(int argc, char *argv[]) {
     uint32_t num_iters = num_frames / batch_size;
 
     for (uint32_t i = 0; i < num_iters; i++) {
-        auto sync = cmd_stream.render(envs);
-        sync.cpuWait();
+        cmd_stream.render(envs);
+        cmd_stream.waitForFrame();
     }
 
     auto end = chrono::steady_clock::now();

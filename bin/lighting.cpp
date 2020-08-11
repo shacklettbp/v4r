@@ -1,4 +1,4 @@
-#include <v4r.hpp>
+#include <v4r/cuda.hpp>
 #include <v4r/debug.hpp>
 #include <iostream>
 #include <cstdlib>
@@ -58,7 +58,7 @@ int main(int argc, char *argv[]) {
         batch_size = stoul(argv[2]);
     }
 
-    BatchRenderer renderer({0, 1, 1, batch_size, 256, 256, glm::mat4(1.f)},
+    BatchRendererCUDA renderer({0, 1, 1, batch_size, 256, 256, glm::mat4(1.f)},
         RenderFeatures<Pipeline> { 
             RenderOptions::CpuSynchronization | RenderOptions::DoubleBuffered
         }
@@ -67,7 +67,7 @@ int main(int argc, char *argv[]) {
     auto loader = renderer.makeLoader();
     auto scene = loadScene(loader, argv[1]);
 
-    CommandStream cmd_stream = renderer.makeCommandStream();
+    CommandStreamCUDA cmd_stream = renderer.makeCommandStream();
     vector<Environment> envs;
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
@@ -81,12 +81,12 @@ int main(int argc, char *argv[]) {
 
         uint32_t num_iters = num_frames / batch_size;
 
-        RenderSync prevsync = cmd_stream.render(envs);
+        uint32_t prev_frame = cmd_stream.render(envs);
 
         for (uint32_t i = 1; i < num_iters; i++) {
-            RenderSync newsync = cmd_stream.render(envs);
-            prevsync.cpuWait();
-            prevsync = move(newsync);
+            uint32_t new_frame = cmd_stream.render(envs);
+            cmd_stream.waitForFrame(prev_frame);
+            prev_frame = new_frame;
         }
 
         auto end = chrono::steady_clock::now();
@@ -98,9 +98,10 @@ int main(int argc, char *argv[]) {
         RenderDoc rdoc {};
         rdoc.startFrame();
 
-        auto sync = cmd_stream.render(envs);
-        sync.cpuWait();
-        saveFrame("/tmp/out_color.bmp", cmd_stream.getColorDevPtr(),
+        cmd_stream.render(envs);
+        cmd_stream.waitForFrame();
+
+        saveFrame("/tmp/out_color.bmp", cmd_stream.getColorDevicePtr(),
                   256, 256, 4);
 
         rdoc.endFrame();

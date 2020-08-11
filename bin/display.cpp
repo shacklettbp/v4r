@@ -130,7 +130,7 @@ int main(int argc, char *argv[]) {
     uint32_t num_iters = num_frames / batch_size;
 
     rdoc.startFrame();
-    RenderSync prevsync = cmd_stream.render(envs);
+    uint32_t prev_frame = cmd_stream.render(envs);
     rdoc.endFrame();
 
     uint32_t view_idx = 0;
@@ -141,10 +141,10 @@ int main(int argc, char *argv[]) {
         }
 
         rdoc.startFrame();
-        RenderSync newsync = cmd_stream.render(envs);
+        uint32_t new_frame = cmd_stream.render(envs);
         rdoc.endFrame();
-        prevsync.cpuWait();
-        prevsync = move(newsync);
+        cmd_stream.waitForFrame(new_frame);
+        prev_frame = new_frame;
     }
 
     auto end = chrono::steady_clock::now();

@@ -9,7 +9,6 @@ using namespace std;
 
 namespace v4r {
 
-
 static cudaExternalSemaphore_t importSemaphore(int sem_fd)
 {
     cudaExternalSemaphoreHandleDesc cuda_ext_info {};

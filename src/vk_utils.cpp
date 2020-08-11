@@ -37,6 +37,20 @@ QueueState & QueueManager::allocateQueue(uint32_t qf_idx,
     return cur_queue;
 }
 
+int exportBinarySemaphore(const DeviceState &dev, VkSemaphore semaphore)
+{
+    VkSemaphoreGetFdInfoKHR fd_info;
+    fd_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR;
+    fd_info.pNext = nullptr;
+    fd_info.semaphore = semaphore;
+    fd_info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
+
+    int fd;
+    REQ_VK(dev.dt.getSemaphoreFdKHR(dev.hdl, &fd_info, &fd));
+
+    return fd;
+}
+
 void printVkError(VkResult res, const char *msg)
 {
 #define ERR_CASE(val) case VK_##val: cerr << #val; break

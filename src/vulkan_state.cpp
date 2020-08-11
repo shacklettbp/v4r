@@ -830,7 +830,6 @@ static PerFrameState makeFrameState(const DeviceState &dev,
             frame_set_updates.data(), 0, nullptr);
 
     return PerFrameState {
-        makeBinaryExternalSemaphore(dev),
         cpu_sync ? makeFence(dev) : VK_NULL_HANDLE,
         { render_command, copy_command },
         base_fb_offset,
@@ -1011,35 +1010,22 @@ CommandStreamState::CommandStreamState(
 
 uint32_t CommandStreamState::render(const vector<Environment> &envs)
 {
-    return render(envs, [this](uint32_t num_commands,
+    return render(envs, [this](uint32_t frame_id,
+                               uint32_t num_commands,
                                const VkCommandBuffer *commands,
-                               VkSemaphore semaphore,
                                VkFence fence) {
+        (void)frame_id;
 
         VkSubmitInfo gfx_submit {
             VK_STRUCTURE_TYPE_SUBMIT_INFO,
             nullptr,
             0, nullptr, nullptr,
             num_commands, commands,
-            1, &semaphore
+            0, nullptr
         };
 
         gfxQueue.submit(dev, 1, &gfx_submit, fence);
     });
-}
-
-int CommandStreamState::getSemaphoreFD(uint32_t frame_idx) const
-{
-    VkSemaphoreGetFdInfoKHR fd_info;
-    fd_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR;
-    fd_info.pNext = nullptr;
-    fd_info.semaphore = frame_states_[frame_idx].semaphore;
-    fd_info.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
-
-    int fd;
-    REQ_VK(dev.dt.getSemaphoreFdKHR(dev.hdl, &fd_info, &fd));
-
-    return fd;
 }
 
 template <typename PipelineType>

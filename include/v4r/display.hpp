@@ -14,7 +14,7 @@ class BatchPresentRenderer;
 class PresentCommandStream : public CommandStream {
 public:
 
-    RenderSync render(const std::vector<Environment> &elems);
+    uint32_t render(const std::vector<Environment> &elems);
 
 private:
     PresentCommandStream(CommandStream &&base, GLFWwindow *window,
