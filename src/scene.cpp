@@ -170,11 +170,12 @@ static shared_ptr<Mesh> makeSharedMesh(vector<VertexType> vertices,
 }
 
 template <typename VertexType>
-static shared_ptr<Mesh> loadMesh(const string &geometry_path)
+static shared_ptr<Mesh> loadMesh(const string_view &geometry_path)
 {
     Assimp::Importer importer;
     int flags = aiProcess_PreTransformVertices | aiProcess_Triangulate;
-    const aiScene *raw_scene = importer.ReadFile(geometry_path.c_str(), flags);
+    const aiScene *raw_scene =
+        importer.ReadFile(string(geometry_path), flags);
     if (!raw_scene) {
         cerr << "Failed to load geometry file " << geometry_path << ": " <<
             importer.GetErrorString() << endl;
@@ -201,12 +202,13 @@ static void deleter_hack(void *ptr)
 }
 
 template <typename VertexType, typename MaterialParamsType>
-static SceneDescription parseAssimpScene(const string &scene_path,
+static SceneDescription parseAssimpScene(const string_view &scene_path,
                                          const glm::mat4 &coordinate_txfm)
 {
     Assimp::Importer importer;
     int flags = aiProcess_JoinIdenticalVertices | aiProcess_Triangulate;
-    const aiScene *raw_scene = importer.ReadFile(scene_path.c_str(), flags);
+    const aiScene *raw_scene =
+        importer.ReadFile(string(scene_path), flags);
     if (!raw_scene) {
         cerr << "Failed to load scene " << scene_path << ": " <<
             importer.GetErrorString() << endl;
@@ -368,7 +370,7 @@ static void generateMips(const DeviceState &dev,
     }
 }
 
-shared_ptr<Scene> LoaderState::loadScene(const std::string &scene_path)
+shared_ptr<Scene> LoaderState::loadScene(const string_view &scene_path)
 {
     SceneDescription desc = impl_.parseScene(scene_path,
                                              coordinateTransform);
@@ -752,7 +754,7 @@ shared_ptr<Material> LoaderState::makeMaterial(MaterialParamsType params)
     return MaterialImpl<MaterialParamsType>::make(move(params));
 }
 
-std::shared_ptr<Mesh> LoaderState::loadMesh(const std::string &geometry_path)
+std::shared_ptr<Mesh> LoaderState::loadMesh(const string_view &geometry_path)
 {
     return impl_.loadMesh(geometry_path);
 }

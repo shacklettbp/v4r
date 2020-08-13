@@ -143,7 +143,7 @@ int main(int argc, char *argv[]) {
         rdoc.startFrame();
         uint32_t new_frame = cmd_stream.render(envs);
         rdoc.endFrame();
-        cmd_stream.waitForFrame(new_frame);
+        cmd_stream.waitForFrame(prev_frame);
         prev_frame = new_frame;
     }
 

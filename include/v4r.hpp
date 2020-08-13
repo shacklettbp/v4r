@@ -9,6 +9,7 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <string_view>
 #include <vector>
 
 namespace v4r {
@@ -16,14 +17,14 @@ namespace v4r {
 class AssetLoader {
 public:
     std::shared_ptr<Mesh> loadMesh(
-            const std::string &geometry_path);
+            const std::string_view &geometry_path);
 
     template <typename VertexType>
     std::shared_ptr<Mesh> loadMesh(
             std::vector<VertexType> vertices,
             std::vector<uint32_t> indices);
 
-    std::shared_ptr<Texture> loadTexture(const std::string &texture_path);
+    std::shared_ptr<Texture> loadTexture(const std::string_view &texture_path);
 
     template <typename MaterialParamsType>
     std::shared_ptr<Material> makeMaterial(
@@ -33,7 +34,7 @@ public:
             const SceneDescription &desc);
 
     // Shortcut for Gibson style scene files
-    std::shared_ptr<Scene> loadScene(const std::string &scene_path);
+    std::shared_ptr<Scene> loadScene(const std::string_view &scene_path);
 
 private:
     AssetLoader(Handle<LoaderState> &&state);

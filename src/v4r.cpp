@@ -6,6 +6,7 @@
 #include "cuda_state.hpp"
 
 #include <cassert>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <vector>
@@ -36,7 +37,7 @@ AssetLoader::AssetLoader(Handle<LoaderState> &&state)
 {}
 
 shared_ptr<Mesh>
-AssetLoader::loadMesh(const string &geometry_path)
+AssetLoader::loadMesh(const string_view &geometry_path)
 {
     return state_->loadMesh(geometry_path);
 }
@@ -49,9 +50,10 @@ shared_ptr<Mesh> AssetLoader::loadMesh(
 }
 
 shared_ptr<Texture> AssetLoader::loadTexture(
-        const string &texture_path)
+        const string_view &texture_path)
 {
-    ifstream texture_file(texture_path, ios::in | ios::binary);
+    ifstream texture_file(filesystem::path(texture_path),
+                          ios::in | ios::binary);
     if (!texture_file) {
         cerr << "Failed to read texture at " << texture_path << endl;
         fatalExit();
@@ -82,7 +84,7 @@ shared_ptr<Scene> AssetLoader::makeScene(
 }
 
 shared_ptr<Scene> AssetLoader::loadScene(
-        const string &scene_path)
+        const string_view &scene_path)
 {
     return state_->loadScene(scene_path);
 }
