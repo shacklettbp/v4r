@@ -37,7 +37,7 @@ AssetLoader::AssetLoader(Handle<LoaderState> &&state)
 {}
 
 shared_ptr<Mesh>
-AssetLoader::loadMesh(const string_view &geometry_path)
+AssetLoader::loadMesh(string_view geometry_path)
 {
     return state_->loadMesh(geometry_path);
 }
@@ -50,7 +50,7 @@ shared_ptr<Mesh> AssetLoader::loadMesh(
 }
 
 shared_ptr<Texture> AssetLoader::loadTexture(
-        const string_view &texture_path)
+        string_view texture_path)
 {
     ifstream texture_file(filesystem::path(texture_path),
                           ios::in | ios::binary);
@@ -84,7 +84,7 @@ shared_ptr<Scene> AssetLoader::makeScene(
 }
 
 shared_ptr<Scene> AssetLoader::loadScene(
-        const string_view &scene_path)
+        string_view scene_path)
 {
     return state_->loadScene(scene_path);
 }

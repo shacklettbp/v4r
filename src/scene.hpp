@@ -143,11 +143,11 @@ struct LoaderImpl {
             stageScene;
 
     std::add_pointer_t<
-        SceneDescription(const std::string_view &, const glm::mat4 &)>
+        SceneDescription(std::string_view, const glm::mat4 &)>
             parseScene;
 
     std::add_pointer_t<
-        std::shared_ptr<Mesh>(const std::string_view &)>
+        std::shared_ptr<Mesh>(std::string_view)>
             loadMesh;
 
     template <typename VertexType, typename MaterialParamsType>
@@ -165,7 +165,7 @@ public:
                 const glm::mat4 &coordinateTransform);
 
 
-    std::shared_ptr<Scene> loadScene(const std::string_view &scene_path);
+    std::shared_ptr<Scene> loadScene(std::string_view scene_path);
 
     std::shared_ptr<Scene> makeScene(
             const SceneDescription &scene_desc);
@@ -176,7 +176,7 @@ public:
     template <typename MaterialParamsType>
     std::shared_ptr<Material> makeMaterial(MaterialParamsType params);
 
-    std::shared_ptr<Mesh> loadMesh(const std::string_view &geometry_path);
+    std::shared_ptr<Mesh> loadMesh(std::string_view geometry_path);
 
     template <typename VertexType>
     std::shared_ptr<Mesh> makeMesh(std::vector<VertexType> vertices,

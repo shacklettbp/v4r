@@ -170,7 +170,7 @@ static shared_ptr<Mesh> makeSharedMesh(vector<VertexType> vertices,
 }
 
 template <typename VertexType>
-static shared_ptr<Mesh> loadMesh(const string_view &geometry_path)
+static shared_ptr<Mesh> loadMesh(string_view geometry_path)
 {
     Assimp::Importer importer;
     int flags = aiProcess_PreTransformVertices | aiProcess_Triangulate;
@@ -202,7 +202,7 @@ static void deleter_hack(void *ptr)
 }
 
 template <typename VertexType, typename MaterialParamsType>
-static SceneDescription parseAssimpScene(const string_view &scene_path,
+static SceneDescription parseAssimpScene(string_view scene_path,
                                          const glm::mat4 &coordinate_txfm)
 {
     Assimp::Importer importer;
@@ -370,7 +370,7 @@ static void generateMips(const DeviceState &dev,
     }
 }
 
-shared_ptr<Scene> LoaderState::loadScene(const string_view &scene_path)
+shared_ptr<Scene> LoaderState::loadScene(string_view scene_path)
 {
     SceneDescription desc = impl_.parseScene(scene_path,
                                              coordinateTransform);
@@ -754,7 +754,7 @@ shared_ptr<Material> LoaderState::makeMaterial(MaterialParamsType params)
     return MaterialImpl<MaterialParamsType>::make(move(params));
 }
 
-std::shared_ptr<Mesh> LoaderState::loadMesh(const string_view &geometry_path)
+std::shared_ptr<Mesh> LoaderState::loadMesh(string_view geometry_path)
 {
     return impl_.loadMesh(geometry_path);
 }

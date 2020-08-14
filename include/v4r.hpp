@@ -16,15 +16,14 @@ namespace v4r {
 
 class AssetLoader {
 public:
-    std::shared_ptr<Mesh> loadMesh(
-            const std::string_view &geometry_path);
+    std::shared_ptr<Mesh> loadMesh(std::string_view geometry_path);
 
     template <typename VertexType>
     std::shared_ptr<Mesh> loadMesh(
             std::vector<VertexType> vertices,
             std::vector<uint32_t> indices);
 
-    std::shared_ptr<Texture> loadTexture(const std::string_view &texture_path);
+    std::shared_ptr<Texture> loadTexture(std::string_view texture_path);
 
     template <typename MaterialParamsType>
     std::shared_ptr<Material> makeMaterial(
@@ -34,7 +33,7 @@ public:
             const SceneDescription &desc);
 
     // Shortcut for Gibson style scene files
-    std::shared_ptr<Scene> loadScene(const std::string_view &scene_path);
+    std::shared_ptr<Scene> loadScene(std::string_view scene_path);
 
 private:
     AssetLoader(Handle<LoaderState> &&state);
