@@ -46,6 +46,11 @@ void Environment::setCameraView(const glm::vec3 &eye, const glm::vec3 &look,
     setCameraView(glm::lookAt(eye, look, up));
 }
 
+const glm::mat4 &Environment::getCameraView() const
+{
+    return view_;
+}
+
 void Environment::setCameraView(const glm::mat4 &m)
 {
     view_ = m;

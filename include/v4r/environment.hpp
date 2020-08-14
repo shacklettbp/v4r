@@ -35,6 +35,8 @@ public:
     inline void setInstanceMaterial(uint32_t inst_id, uint32_t material_idx);
 
     // Camera transformations
+    inline const glm::mat4 &getCameraView() const;
+
     inline void setCameraView(const glm::vec3 &eye, const glm::vec3 &look,
                               const glm::vec3 &up);
 
