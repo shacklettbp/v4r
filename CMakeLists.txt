@@ -54,7 +54,7 @@ ENDIF()
 
 IF (NOT glm_FOUND OR USE_BUNDLED)
     message(STATUS "Using bundled GLM")
-    set(GLM_INCLUDE_OVERRIDE "external/glm")
+    set(GLM_INCLUDE_OVERRIDE "${CMAKE_CURRENT_SOURCE_DIR}/external/glm")
 ELSE ()
     set(GLM_INCLUDE_INCLUDE_OVERRIDE "")
 ENDIF()
