@@ -73,7 +73,8 @@ target_include_directories(v4r
 
 add_dependencies(v4r generate_vk_dispatch compile_shaders)
 
-target_link_libraries(v4r Vulkan::Vulkan CUDA::cudart Threads::Threads assimp::assimp)
+target_link_libraries(v4r Vulkan::Vulkan CUDA::cudart
+    Threads::Threads assimp::assimp simdjson basis_universal)
 
 add_library(v4r_headless INTERFACE)
 add_dependencies(v4r_headless v4r)

@@ -77,5 +77,17 @@ ENDIF()
 
 find_package(glfw3 3.3 QUIET)
 
+set(SIMDJSON_JUST_LIBRARY ON CACHE INTERNAL "")
+set(SIMDJSON_BUILD_STATIC ON CACHE INTERNAL "")
+add_subdirectory(external/simdjson)
+
+add_library(basis_universal SHARED
+    external/basis_universal/transcoder/basisu_transcoder.cpp
+    external/basis_universal_shim/transcoder_init.cpp)
+set_target_properties(basis_universal PROPERTIES LIBRARY_OUTPUT_DIRECTORY
+    ${CMAKE_CURRENT_BINARY_DIR}/external/basis_universal)
+target_include_directories(basis_universal SYSTEM PUBLIC
+    external/basis_universal/transcoder/)
+
 add_subdirectory(src)
 add_subdirectory(bin)

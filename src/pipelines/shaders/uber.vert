@@ -92,7 +92,7 @@ void main()
     out_linear_depth = gl_Position.w;
 #endif
 
-#ifdef MATERIAL_PARAMS
+#ifdef HAS_MATERIALS
     material_idx = in_material_idx;
 #endif
 }

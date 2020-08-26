@@ -170,7 +170,7 @@ static shared_ptr<Mesh> makeSharedMesh(vector<VertexType> vertices,
 }
 
 template <typename VertexType>
-static shared_ptr<Mesh> loadMesh(string_view geometry_path)
+static shared_ptr<Mesh> loadMeshAssimp(string_view geometry_path)
 {
     Assimp::Importer importer;
     int flags = aiProcess_PreTransformVertices | aiProcess_Triangulate;
@@ -193,6 +193,36 @@ static shared_ptr<Mesh> loadMesh(string_view geometry_path)
     auto [vertices, indices] = assimpParseMesh<VertexType>(raw_mesh);
 
     return makeSharedMesh(move(vertices), move(indices));
+}
+
+template <typename VertexType>
+static shared_ptr<Mesh> loadMeshGLTF(string_view geometry_path)
+{
+    auto scene = gltfLoad(geometry_path);
+
+    if (scene.meshes.size() == 0) {
+        cerr << "No meshes in file " << geometry_path << endl;
+    }
+
+    auto [vertices, indices] = gltfParseMesh<VertexType>(scene, 0);
+
+    return makeSharedMesh(move(vertices), move(indices));
+}
+
+static bool isGLTF(string_view gltf_path)
+{
+    auto suffix = gltf_path.substr(gltf_path.find('.') + 1);
+    return suffix == "glb" || suffix == "gltf";
+}
+
+template <typename VertexType>
+static shared_ptr<Mesh> loadMesh(string_view geometry_path)
+{
+    if (isGLTF(geometry_path)) {
+        return loadMeshGLTF<VertexType>(geometry_path);
+    } else {
+        return loadMeshAssimp<VertexType>(geometry_path);
+    }
 }
 
 // FIXME remove
@@ -229,7 +259,6 @@ static SceneDescription parseAssimpScene(string_view scene_path,
             1,
             1,
             4,
-
             ManagedArray(new uint8_t[4], deleter_hack)
         });
 
@@ -264,11 +293,70 @@ static SceneDescription parseAssimpScene(string_view scene_path,
 }
 
 template <typename VertexType, typename MaterialParamsType>
+static SceneDescription parseGLTFScene(string_view scene_path,
+                                       const glm::mat4 &coordinate_txfm)
+{
+    auto raw_scene = gltfLoad(scene_path);
+
+    constexpr bool need_materials = !is_same_v<MaterialParamsType,
+                                               NoMaterial>;
+
+    vector<shared_ptr<Material>> materials;
+    vector<shared_ptr<Mesh>> geometry;
+    geometry.reserve(raw_scene.meshes.size());
+
+    if constexpr (need_materials) {
+        // FIXME remove
+        shared_ptr<Texture> default_diffuse(new Texture {
+            1,
+            1,
+            4,
+            ManagedArray(new uint8_t[4], deleter_hack)
+        });
+
+        default_diffuse->raw_image[0] = 127;
+        default_diffuse->raw_image[1] = 127;
+        default_diffuse->raw_image[2] = 127;
+        default_diffuse->raw_image[3] = 127;
+
+        materials = gltfParseMaterials<MaterialParamsType>(
+                raw_scene, default_diffuse);
+    }
+
+    for (uint32_t mesh_idx = 0; mesh_idx < raw_scene.meshes.size();
+         mesh_idx++) {
+        auto [vertices, indices] =
+            gltfParseMesh<VertexType>(raw_scene, mesh_idx);
+        geometry.emplace_back(makeSharedMesh(move(vertices), move(indices)));
+    }
+
+    SceneDescription scene_desc(move(geometry), move(materials));
+
+    gltfParseInstances(scene_desc, raw_scene, coordinate_txfm);
+
+    return scene_desc;
+}
+
+template <typename VertexType, typename MaterialParamsType>
+static SceneDescription parseScene(string_view scene_path,
+                                   const glm::mat4 &coordinate_txfm)
+{
+    if (isGLTF(scene_path)) {
+        return parseGLTFScene<VertexType, MaterialParamsType>(
+                scene_path, coordinate_txfm);
+    } else {
+        return parseAssimpScene<VertexType, MaterialParamsType>(
+                scene_path, coordinate_txfm);
+    }
+}
+
+
+template <typename VertexType, typename MaterialParamsType>
 LoaderImpl LoaderImpl::create()
 {
     return {
         v4r::stageScene<VertexType>,
-        v4r::parseAssimpScene<VertexType, MaterialParamsType>,
+        v4r::parseScene<VertexType, MaterialParamsType>,
         v4r::loadMesh<VertexType>
     };
 }
