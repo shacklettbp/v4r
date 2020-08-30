@@ -7,7 +7,7 @@
 using namespace std;
 using namespace v4r;
 
-constexpr uint32_t num_frames = 10000;
+constexpr uint32_t num_frames = 1000000;
 
 BatchRenderer makeRenderer(const RenderConfig &cfg,
                            RenderOutputs desired_outputs,

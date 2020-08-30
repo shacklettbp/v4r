@@ -6,7 +6,7 @@
 using namespace std;
 using namespace v4r;
 
-constexpr uint32_t num_frames = 10000;
+constexpr uint32_t num_frames = 1000000;
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
