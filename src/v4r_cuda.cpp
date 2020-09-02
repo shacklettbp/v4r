@@ -299,7 +299,7 @@ CommandStreamCUDA::CommandStreamCUDA(CommandStream &&base,
                                           state_->getNumFrames()))))
 {
     const DeviceState &dev = state_->dev;
-    VkFence fence = state_->getFence(0);
+    VkFence fence = makeFence(dev);
 
     VkCommandBuffer transition_cmd = makeCmdBuffer(dev,
                                                    state_->gfxPool);
@@ -351,6 +351,8 @@ CommandStreamCUDA::CommandStreamCUDA(CommandStream &&base,
 
     dev.dt.freeCommandBuffers(dev.hdl, state_->gfxPool,
                               1u, &transition_cmd);
+
+    dev.dt.destroyFence(dev.hdl, fence, nullptr);
 }
 
 uint32_t CommandStreamCUDA::render(const vector<Environment> &envs)
