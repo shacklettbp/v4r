@@ -114,7 +114,7 @@ public:
 
     VkFramebuffer hdl;
 
-    LocalBuffer resultBuffer;
+    HostBuffer resultBuffer;
     VkDeviceMemory resultMem;
 };
 
@@ -243,6 +243,7 @@ public:
     CommandStreamState makeStream();
 
     int getFramebufferFD() const;
+    void *getResultBuffer() const { return fb.resultBuffer.ptr; }
     uint64_t getFramebufferBytes() const;
 
     glm::u32vec2 getImageDimensions() const

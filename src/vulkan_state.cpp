@@ -395,15 +395,15 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     VkFramebuffer fb_handle;
     REQ_VK(dev.dt.createFramebuffer(dev.hdl, &fb_info, nullptr, &fb_handle));
 
-    auto [result_buffer, result_mem] =
-        alloc.makeDedicatedBuffer(fb_cfg.totalLinearBytes);
+    auto result_buffer =
+        alloc.makeHostBuffer(fb_cfg.totalLinearBytes);
 
     return FramebufferState {
         move(attachments),
         attachment_views,
         fb_handle,
         move(result_buffer),
-        result_mem
+        VK_NULL_HANDLE
     };
 }
 

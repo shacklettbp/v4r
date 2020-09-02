@@ -99,11 +99,23 @@ void CommandStream::waitForFrame(uint32_t frame_id)
 
 CommandStream::CommandStream(Handle<CommandStreamState> &&state,
                              uint32_t render_width,
-                             uint32_t render_height)
+                             uint32_t render_height,
+                             void *base_ptr,
+                             bool is_double_buffered)
     : state_(move(state)),
       render_width_(render_width),
       render_height_(render_height)
-{}
+{
+    if (is_double_buffered) {
+        rgb_[0] = (uint8_t *)base_ptr + state_->getColorOffset(0);
+        rgb_[1] = (uint8_t *)base_ptr + state_->getColorOffset(1);
+        depth_[0] = (float *)((uint8_t *)base_ptr + state_->getDepthOffset(0));
+        depth_[1] = (float *)((uint8_t *)base_ptr + state_->getDepthOffset(1));
+    } else {
+        rgb_[0] = (uint8_t *)base_ptr + state_->getColorOffset(0);
+        depth_[0] = (float *)((uint8_t *)base_ptr + state_->getDepthOffset(0));
+    }
+}
 
 Environment CommandStream::makeEnvironment(const shared_ptr<Scene> &scene,
                                            float hfov, float near, float far)
@@ -145,7 +157,9 @@ CommandStream BatchRenderer::makeCommandStream()
     glm::u32vec2 img_dim = state_->getImageDimensions();
 
     return CommandStream(move(stream_state),
-                         img_dim.x, img_dim.y);
+                         img_dim.x, img_dim.y,
+                         state_->getResultBuffer(),
+                         state_->isDoubleBuffered());
 }
 
 Environment::Environment(Handle<EnvironmentState> &&state)

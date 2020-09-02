@@ -53,16 +53,23 @@ public:
 
     void waitForFrame(uint32_t frame_id = 0);
 
+    const uint8_t *getRGB(uint32_t frame_id = 0) { return rgb_[frame_id]; }
+    const float *getDepth(uint32_t frame_id = 0) { return depth_[frame_id]; }
+
 protected:
     CommandStream(Handle<CommandStreamState> &&state,
                   uint32_t render_width,
-                  uint32_t render_height);
+                  uint32_t render_height,
+                  void *base_ptr,
+                  bool double_buffered);
 
     Handle<CommandStreamState> state_;
 
 private:
     uint32_t render_width_;
     uint32_t render_height_;
+    std::array<uint8_t *, 2> rgb_;
+    std::array<float *, 2> depth_;
 
 friend class BatchRenderer;
 };
