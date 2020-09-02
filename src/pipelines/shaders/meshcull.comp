@@ -1,0 +1,51 @@
+#version 450
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_KHR_shader_subgroup_ballot : require
+
+#include "mesh_common.h"
+
+struct DrawCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    uint vertexOffset;
+    uint firstInstance;
+};
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, scalar) readonly buffer MeshInfos {
+    MeshInfo meshes[];
+};
+
+layout(set = 0, binding = 1, scalar) readonly buffer InputCommands {
+    uint numInputCommands;
+    DrawInput inputCommands[];
+};
+
+layout(set = 0, binding = 2, scalar) writeonly buffer OutputCommands {
+    uint numOutputCommands;
+    DrawCommand outputCommands[];
+};
+
+void main()
+{
+    uint draw_id = gl_GlobalInvocationID.x;
+
+    // Out of bounds exit
+    if (draw_id >= numInputCommands) {
+        return;
+    }
+
+    uint mesh_id = inputCommands[draw_id].meshID;
+    
+    // FIXME optimize across subgroup
+    uint out_idx = atomicAdd(numOutputCommands, 1);
+
+    outputCommands[out_idx].indexCount = meshes[mesh_id].indexCount;
+    outputCommands[out_idx].instanceCount = 1;
+    outputCommands[out_idx].firstIndex = meshes[mesh_id].indexOffset;
+    outputCommands[out_idx].vertexOffset = meshes[mesh_id].vertexOffset;
+    outputCommands[out_idx].firstInstance = draw_id;
+}

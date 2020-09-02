@@ -1,6 +1,7 @@
 #ifndef VK_UTILS_INL_INCLUDED
 #define VK_UTILS_INL_INCLUDED
 
+#include "shader.hpp"
 #include "vk_utils.hpp"
 
 namespace v4r {
@@ -166,6 +167,12 @@ void waitForFenceInfinitely(const DeviceState &dev, VkFence fence)
 void resetFence(const DeviceState &dev, VkFence fence)
 {
     dev.dt.resetFences(dev.hdl, 1, &fence);
+}
+
+uint32_t getWorkgroupSize(uint32_t num_items)
+{
+    return (num_items + VulkanConfig::compute_workgroup_size - 1) /
+        VulkanConfig::compute_workgroup_size;
 }
 
 }

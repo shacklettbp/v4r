@@ -44,76 +44,38 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
         static_cast<uint32_t>(fb_cfg_.clearValues.size());
     render_begin.pClearValues = fb_cfg_.clearValues.data();
 
-    dev.dt.cmdBeginRenderPass(render_cmd, &render_begin,
-                              VK_SUBPASS_CONTENTS_INLINE);
-
-    uint32_t cur_instance = 0;
+    uint32_t draw_id = 0;
     glm::mat4x3 *transform_ptr = frame_state.transformPtr;
     uint32_t *material_ptr = frame_state.materialPtr;
     LightProperties *light_ptr = frame_state.lightPtr;
     ViewInfo *view_ptr = frame_state.viewPtr;
     for (uint32_t batch_idx = 0; batch_idx < envs.size(); batch_idx++) {
         const Environment &env = envs[batch_idx];
-
         const Scene &scene = *(envs[batch_idx].state_->scene);
-        if (scene.materialSet.hdl != VK_NULL_HANDLE) {
-            dev.dt.cmdBindDescriptorSets(render_cmd,
-                                         VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                         pipeline.gfxLayout, 1,
-                                         1, &scene.materialSet.hdl,
-                                         0, nullptr);
-        }
 
         view_ptr->view = env.view_;
         view_ptr->projection = env.state_->projection;
         view_ptr++;
 
-        RenderPushConstant push_const {
-            batch_idx
-        };
-
-        dev.dt.cmdPushConstants(render_cmd, pipeline.gfxLayout,
-                                VK_SHADER_STAGE_VERTEX_BIT |
-                                    VK_SHADER_STAGE_FRAGMENT_BIT,
-                                0,
-                                sizeof(RenderPushConstant),
-                                &push_const);
-
-        glm::u32vec2 batch_offset = frame_state.batchFBOffsets[batch_idx];
-
-        VkViewport viewport;
-        viewport.x = batch_offset.x;
-        viewport.y = batch_offset.y;
-        viewport.width = render_size_.x;
-        viewport.height = render_size_.y;
-        viewport.minDepth = 0.f;
-        viewport.maxDepth = 1.f;
-
-        dev.dt.cmdSetViewport(render_cmd, 0, 1, &viewport);
-
-        frame_state.vertexBuffers[0] = scene.data.buffer;
-        dev.dt.cmdBindVertexBuffers(render_cmd, 0,
-                                    frame_state.vertexBuffers.size(),
-                                    frame_state.vertexBuffers.data(),
-                                    frame_state.vertexOffsets.data());
-        dev.dt.cmdBindIndexBuffer(render_cmd, scene.data.buffer,
-                                  scene.indexOffset, VK_INDEX_TYPE_UINT32);
-
         for (uint32_t mesh_idx = 0; mesh_idx < scene.meshes.size();
-                mesh_idx++) {
+             mesh_idx++) {
             uint32_t num_instances = env.transforms_[mesh_idx].size();
             if (num_instances == 0) continue;
 
             auto &mesh = scene.meshes[mesh_idx];
 
-            dev.dt.cmdDrawIndexed(render_cmd, mesh.numIndices, num_instances,
-                                  mesh.startIndex, mesh.vertexOffset,
-                                  cur_instance);
+            for (uint32_t inst_idx = 0; inst_idx < num_instances; inst_idx++) {
+                frame_state.drawPtr[draw_id] = DrawInput {
+                    mesh.vertexOffset,
+                    mesh.startIndex,
+                    mesh.numIndices,
+                };
+                draw_id++;
+            }
 
             memcpy(transform_ptr, env.transforms_[mesh_idx].data(),
                    sizeof(glm::mat4x3) * num_instances);
 
-            cur_instance += num_instances;
             transform_ptr += num_instances;
 
             if (material_ptr) {
@@ -136,11 +98,71 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
         }
     }
 
+    uint32_t total_draws = draw_id;
+
+    assert(total_draws < VulkanConfig::max_instances);
+
+    dev.dt.cmdBindPipeline(render_cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                           pipeline.meshCullPipeline);
+    dev.dt.cmdDispatch(render_cmd, getWorkgroupSize(total_draws), 1, 1);
+
+    dev.dt.cmdBeginRenderPass(render_cmd, &render_begin,
+                              VK_SUBPASS_CONTENTS_INLINE);
+
+    // 1 indirect draw per batch elem
+    for (uint32_t batch_idx = 0; batch_idx < envs.size(); batch_idx++) {
+        RenderPushConstant push_const {
+            batch_idx,
+        };
+
+        dev.dt.cmdPushConstants(render_cmd, pipeline.gfxLayout,
+                                VK_SHADER_STAGE_VERTEX_BIT |
+                                    VK_SHADER_STAGE_FRAGMENT_BIT,
+                                0,
+                                sizeof(RenderPushConstant),
+                                &push_const);
+
+        const Scene &scene = *(envs[batch_idx].state_->scene);
+
+        if (scene.materialSet.hdl != VK_NULL_HANDLE) {
+            dev.dt.cmdBindDescriptorSets(render_cmd,
+                                         VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                         pipeline.gfxLayout, 1,
+                                         1, &scene.materialSet.hdl,
+                                         0, nullptr);
+        }
+
+        glm::u32vec2 batch_offset = frame_state.batchFBOffsets[batch_idx];
+        VkViewport viewport;
+        viewport.x = batch_offset.x;
+        viewport.y = batch_offset.y;
+        viewport.width = render_size_.x;
+        viewport.height = render_size_.y;
+        viewport.minDepth = 0.f;
+        viewport.maxDepth = 1.f;
+        dev.dt.cmdSetViewport(render_cmd, 0, 1, &viewport);
+
+        frame_state.vertexBuffers[0] = scene.data.buffer;
+        dev.dt.cmdBindVertexBuffers(render_cmd, 0,
+                                    frame_state.vertexBuffers.size(),
+                                    frame_state.vertexBuffers.data(),
+                                    frame_state.vertexOffsets.data());
+        dev.dt.cmdBindIndexBuffer(render_cmd, scene.data.buffer,
+                                  scene.indexOffset, VK_INDEX_TYPE_UINT32);
+
+        uint32_t max_batch_draws = 0;
+
+        dev.dt.cmdDrawIndexedIndirectCount(render_cmd,
+            frame_state.finalDrawBuffer.buffer,
+            frame_state.drawBufferOffsets[batch_idx],
+            frame_state.drawCountBuffer.buffer,
+            frame_state.drawCountOffsets[batch_idx],
+            max_batch_draws, 0);
+    }
+
     dev.dt.cmdEndRenderPass(render_cmd);
 
     REQ_VK(dev.dt.endCommandBuffer(render_cmd));
-
-    assert(cur_instance < VulkanConfig::max_instances);
 
     // FIXME 
     per_render_buffer_.flush(dev);

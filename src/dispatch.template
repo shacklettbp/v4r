@@ -17,6 +17,7 @@ device:
 - vkDestroyPipelineLayout
 - vkCreatePipelineCache
 - vkDestroyPipelineCache
+- vkCreateComputePipelines
 - vkCreateGraphicsPipelines
 - vkDestroyPipeline
 - vkCreateShaderModule
@@ -58,8 +59,9 @@ device:
 - vkCmdBindPipeline
 - vkCmdBindVertexBuffers
 - vkCmdBindIndexBuffer
+- vkCmdDispatch
 - vkCmdDrawIndexed
-- vkCmdDrawIndexedIndirect
+- vkCmdDrawIndexedIndirectCount
 - vkCmdBeginRenderPass
 - vkCmdEndRenderPass
 - vkCmdPushConstants

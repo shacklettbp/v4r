@@ -55,8 +55,12 @@ struct PipelineState {
     std::vector<VkShaderModule> shaders;
 
     VkPipelineCache pipelineCache;
+
     VkPipelineLayout gfxLayout;
     VkPipeline gfxPipeline;
+
+    VkPipelineLayout meshCullLayout;
+    VkPipeline meshCullPipeline;
 };
 
 struct ParamBufferConfig {
@@ -79,6 +83,9 @@ struct RenderState {
 
     VkDescriptorSetLayout frameDescriptorLayout;
     VkDescriptorPool frameDescriptorPool;
+
+    VkDescriptorSetLayout meshCullDescriptorLayout;
+    VkDescriptorPool meshCullDescriptorPool;
 
     VkDescriptorSetLayout sceneDescriptorLayout;
     DescriptorManager::MakePoolType makeScenePool;
@@ -121,6 +128,12 @@ public:
 struct PerFrameState {
     VkFence fence;
     std::array<VkCommandBuffer, 2> commands;
+    HostBuffer inputDrawBuffer;
+    LocalBuffer finalDrawBuffer;
+    DynArray<uint32_t> drawBufferOffsets;
+    LocalBuffer drawCountBuffer;
+    DynArray<uint32_t> drawCountOffsets;
+    DynArray<uint32_t> maxDrawCounts;
     
     glm::u32vec2 baseFBOffset;
     DynArray<glm::u32vec2> batchFBOffsets;
@@ -129,6 +142,7 @@ struct PerFrameState {
     VkDeviceSize depthBufferOffset;
 
     VkDescriptorSet frameSet;
+    VkDescriptorSet meshCullSet;
 
     DynArray<VkBuffer> vertexBuffers;
     DynArray<VkDeviceSize> vertexOffsets;
@@ -137,6 +151,7 @@ struct PerFrameState {
     uint32_t *materialPtr;
     LightProperties *lightPtr;
     uint32_t *numLightsPtr;
+    DrawInput *drawPtr;
 };
 
 class CommandStreamState {
@@ -188,15 +203,18 @@ public:
         return frame_states_[frame_idx].fence;
     }
 
-    uint32_t getCurrentFrame() const {
+    uint32_t getCurrentFrame() const
+    {
         return cur_frame_;
     }
 
-    uint32_t getNumFrames() const {
+    uint32_t getNumFrames() const
+    {
         return frame_states_.size();
     }
 
-    glm::u32vec2 getFrameExtent() const {
+    glm::u32vec2 getFrameExtent() const
+    {
         return render_extent_;
     }
 

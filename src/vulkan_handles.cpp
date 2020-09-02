@@ -189,7 +189,8 @@ DeviceState InstanceState::makeDevice(
     vector<const char *> extensions {
         VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
         VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
-        VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME
+        VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
+        VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME,
     };
 
     bool need_present = present_check != nullptr;
@@ -305,6 +306,10 @@ DeviceState InstanceState::makeDevice(
     requested_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     requested_features.pNext = &desc_idx_features;
     requested_features.features.samplerAnisotropy = false;
+
+    // Current indirect draw setup uses instance index as basically
+    // draw index for retrieving transform, materials etc
+    requested_features.features.drawIndirectFirstInstance = true;
     dev_create_info.pNext = &requested_features;
 
     VkDevice dev;

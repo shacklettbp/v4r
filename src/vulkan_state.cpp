@@ -284,6 +284,23 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
     VkDescriptorPool frame_descriptor_pool = FrameLayout::makePool(
             dev, num_streams * frames_per_stream);
 
+    // Descriptor sets for mesh culling
+    using MeshCullLayout = DescriptorLayout<
+        BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                      VK_SHADER_STAGE_COMPUTE_BIT>,
+        BindingConfig<1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                      VK_SHADER_STAGE_COMPUTE_BIT>,
+        BindingConfig<2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                      VK_SHADER_STAGE_COMPUTE_BIT>
+    >;
+
+    VkDescriptorSetLayout mesh_cull_descriptor_layout =
+        MeshCullLayout::makeSetLayout(dev, nullptr, nullptr, nullptr);
+
+    VkDescriptorPool mesh_cull_descriptor_pool = MeshCullLayout::makePool(
+            dev, num_streams * frames_per_stream);
+
+    // Conditional scene set
     VkSampler texture_sampler = VK_NULL_HANDLE;
     VkDescriptorSetLayout scene_descriptor_layout = VK_NULL_HANDLE;
     DescriptorManager::MakePoolType make_scene_pool = nullptr;
@@ -311,6 +328,8 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
         param_positions,
         frame_descriptor_layout,
         frame_descriptor_pool,
+        mesh_cull_descriptor_layout,
+        mesh_cull_descriptor_pool,
         scene_descriptor_layout,
         make_scene_pool,
         texture_sampler,
@@ -500,11 +519,11 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
 
     constexpr size_t total_layouts = Props::needMaterial ? 2 : 1;
 
-    array<VkDescriptorSetLayout, total_layouts> desc_layouts;
-    desc_layouts[0] = render_state.frameDescriptorLayout;
+    array<VkDescriptorSetLayout, total_layouts> gfx_desc_layouts;
+    gfx_desc_layouts[0] = render_state.frameDescriptorLayout;
 
     if constexpr (Props::needMaterial) {
-        desc_layouts[1] = render_state.sceneDescriptorLayout;
+        gfx_desc_layouts[1] = render_state.sceneDescriptorLayout;
     }
 
     // Pipeline cache (FIXME)
@@ -514,13 +533,13 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
     REQ_VK(dev.dt.createPipelineCache(dev.hdl, &pcache_info,
                                       nullptr, &pipeline_cache));
 
-    constexpr size_t num_shaders = 2;
-
-    const array<pair<const char *, VkShaderStageFlagBits>,
-                num_shaders> shader_cfg {{
+    const array<pair<const char *, VkShaderStageFlagBits>, 3> shader_cfg {{
         {Props::vertexShaderName, VK_SHADER_STAGE_VERTEX_BIT},
-        {Props::fragmentShaderName, VK_SHADER_STAGE_FRAGMENT_BIT}
+        {Props::fragmentShaderName, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {"meshcull.comp", VK_SHADER_STAGE_COMPUTE_BIT},
     }};
+
+    constexpr size_t num_shaders = shader_cfg.size();
 
     vector<VkShaderModule> shader_modules(num_shaders);
     array<VkPipelineShaderStageCreateInfo, num_shaders> shader_stages;
@@ -651,53 +670,87 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
     };
 
     // Layout configuration
-    VkPipelineLayoutCreateInfo pipeline_layout_info;
-    pipeline_layout_info.sType =
+    VkPipelineLayoutCreateInfo gfx_layout_info;
+    gfx_layout_info.sType =
         VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipeline_layout_info.pNext = nullptr;
-    pipeline_layout_info.flags = 0;
-    pipeline_layout_info.setLayoutCount =
-        static_cast<uint32_t>(desc_layouts.size());
-    pipeline_layout_info.pSetLayouts = desc_layouts.data();
-    pipeline_layout_info.pushConstantRangeCount = 1;
-    pipeline_layout_info.pPushConstantRanges = &push_const;
+    gfx_layout_info.pNext = nullptr;
+    gfx_layout_info.flags = 0;
+    gfx_layout_info.setLayoutCount =
+        static_cast<uint32_t>(gfx_desc_layouts.size());
+    gfx_layout_info.pSetLayouts = gfx_desc_layouts.data();
+    gfx_layout_info.pushConstantRangeCount = 1;
+    gfx_layout_info.pPushConstantRanges = &push_const;
 
-    VkPipelineLayout pipeline_layout;
-    REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &pipeline_layout_info,
-                                       nullptr, &pipeline_layout));
+    VkPipelineLayout gfx_layout;
+    REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &gfx_layout_info,
+                                       nullptr, &gfx_layout));
 
 
-    VkGraphicsPipelineCreateInfo pipeline_info;
-    pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipeline_info.pNext = nullptr;
-    pipeline_info.flags = 0;
-    pipeline_info.stageCount = static_cast<uint32_t>(shader_stages.size());
-    pipeline_info.pStages = shader_stages.data();
-    pipeline_info.pVertexInputState = &vert_info;
-    pipeline_info.pInputAssemblyState = &input_assembly_info;
-    pipeline_info.pTessellationState = nullptr;
-    pipeline_info.pViewportState = &viewport_info;
-    pipeline_info.pRasterizationState = &raster_info;
-    pipeline_info.pMultisampleState = &multisample_info;
-    pipeline_info.pDepthStencilState = &depth_info;
-    pipeline_info.pColorBlendState = &blend_info;
-    pipeline_info.pDynamicState = &dyn_info;
-    pipeline_info.layout = pipeline_layout;
-    pipeline_info.renderPass = render_state.renderPass;
-    pipeline_info.subpass = 0;
-    pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
-    pipeline_info.basePipelineIndex = -1;
+    VkGraphicsPipelineCreateInfo gfx_info;
+    gfx_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    gfx_info.pNext = nullptr;
+    gfx_info.flags = 0;
+    gfx_info.stageCount = 2;
+    gfx_info.pStages = shader_stages.data();
+    gfx_info.pVertexInputState = &vert_info;
+    gfx_info.pInputAssemblyState = &input_assembly_info;
+    gfx_info.pTessellationState = nullptr;
+    gfx_info.pViewportState = &viewport_info;
+    gfx_info.pRasterizationState = &raster_info;
+    gfx_info.pMultisampleState = &multisample_info;
+    gfx_info.pDepthStencilState = &depth_info;
+    gfx_info.pColorBlendState = &blend_info;
+    gfx_info.pDynamicState = &dyn_info;
+    gfx_info.layout = gfx_layout;
+    gfx_info.renderPass = render_state.renderPass;
+    gfx_info.subpass = 0;
+    gfx_info.basePipelineHandle = VK_NULL_HANDLE;
+    gfx_info.basePipelineIndex = -1;
 
-    VkPipeline pipeline;
+    VkPipeline gfx_pipeline;
     REQ_VK(dev.dt.createGraphicsPipelines(dev.hdl, pipeline_cache, 1,
-                                          &pipeline_info, nullptr,
-                                          &pipeline));
+                                          &gfx_info, nullptr,
+                                          &gfx_pipeline));
+
+    // Compute shaders for culling
+    VkPipelineLayoutCreateInfo mesh_cull_layout_info;
+    mesh_cull_layout_info.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    mesh_cull_layout_info.pNext = nullptr;
+    mesh_cull_layout_info.flags = 0;
+    mesh_cull_layout_info.setLayoutCount = 1;
+    mesh_cull_layout_info.pSetLayouts = &render_state.meshCullDescriptorLayout;
+    mesh_cull_layout_info.pushConstantRangeCount = 0;
+    mesh_cull_layout_info.pPushConstantRanges = nullptr;
+
+    VkPipelineLayout mesh_cull_layout;
+    REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &mesh_cull_layout_info,
+                                       nullptr, &mesh_cull_layout));
+  
+    array<VkComputePipelineCreateInfo, 1> compute_infos;
+    VkComputePipelineCreateInfo &mesh_cull_info = compute_infos[0];
+    mesh_cull_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    mesh_cull_info.pNext = nullptr;
+    mesh_cull_info.flags = 0;
+    mesh_cull_info.stage = shader_stages[2];
+    mesh_cull_info.layout = mesh_cull_layout;
+    mesh_cull_info.basePipelineHandle = VK_NULL_HANDLE;
+    mesh_cull_info.basePipelineIndex = -1;
+
+    array<VkPipeline, compute_infos.size()> compute_pipelines;
+    REQ_VK(dev.dt.createComputePipelines(dev.hdl, pipeline_cache, 
+                                         compute_pipelines.size(),
+                                         compute_infos.data(), 
+                                         nullptr,
+                                         compute_pipelines.data()));
 
     return PipelineState {
         shader_modules,
         pipeline_cache,
-        pipeline_layout,
-        pipeline
+        gfx_layout,
+        gfx_pipeline,
+        mesh_cull_layout,
+        compute_pipelines[0]
     };
 }
 
