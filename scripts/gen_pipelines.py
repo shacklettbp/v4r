@@ -557,7 +557,7 @@ struct PipelineProps<{specialization_type}> {{
 }};
 """
 
-def write_template_instantiations(type_str, v4r, v4r_display,
+def write_template_instantiations(type_str, v4r, v4r_display, v4r_cuda,
         render, loader, has_material):
     entry_instantiate = \
 f"""template BatchRenderer::BatchRenderer(const RenderConfig &,
@@ -580,6 +580,11 @@ template std::shared_ptr<Material> AssetLoader::makeMaterial(
 f"""template BatchPresentRenderer::BatchPresentRenderer(const RenderConfig &,
     const RenderFeatures<{type_str}> &, bool);
 """, file=v4r_display)
+
+    print(
+f"""template BatchRendererCUDA::BatchRendererCUDA(const RenderConfig &,
+    const RenderFeatures<{type_str}> &);
+""", file=v4r_cuda)
 
     print(
 f"""template VulkanState::VulkanState(const RenderConfig &,
@@ -640,9 +645,12 @@ def generate_pipelines(cfg_file, interface_path, implementation_path, cmake):
     display_entry_file = open(os.path.join(implementation_path,
         'v4r_display_instantiations.inl'), 'w')
 
+    cuda_entry_file = open(os.path.join(implementation_path,
+        'v4r_cuda_instantiations.inl'), 'w')
+
     all_files = (config_file, specializations_file, render_defn_file,
                  loader_defn_file, render_inst_file, loader_inst_file,
-                 entry_file, display_entry_file)
+                 entry_file, display_entry_file, cuda_entry_file)
 
     for f in all_files:
         print("namespace v4r {\n", file=f)
@@ -808,7 +816,7 @@ def generate_pipelines(cfg_file, interface_path, implementation_path, cmake):
             print(props_specialization, file=render_defn_file)
 
             write_template_instantiations(pipeline_type,
-                    entry_file, display_entry_file,
+                    entry_file, display_entry_file, cuda_entry_file,
                     render_inst_file, loader_inst_file,
                     "needMaterial" in props)
 

@@ -11,6 +11,7 @@ namespace v4r {
 struct CudaStreamState;
 struct CudaState;
 struct SyncState;
+struct PresentationState;
 
 class BatchRendererCUDA;
 
@@ -32,6 +33,7 @@ private:
 
     Handle<SyncState[]> syncs_;
     Handle<CudaStreamState[]> cuda_;
+    Handle<PresentationState> presentation_state_;
 
 friend class BatchRendererCUDA;
 };
@@ -40,15 +42,11 @@ class BatchRendererCUDA : public BatchRenderer {
 public:
     template <typename PipelineType>
     BatchRendererCUDA(const RenderConfig &cfg,
-                      const RenderFeatures<PipelineType> &features)
-        : BatchRendererCUDA(BatchRenderer(cfg, features),
-                            cfg.gpuID)
-    {}
+                      const RenderFeatures<PipelineType> &features);
 
     CommandStreamCUDA makeCommandStream();
 
 private:
-    BatchRendererCUDA(BatchRenderer &&base, int gpu_id);
 
     Handle<CudaState> cuda_;
 };

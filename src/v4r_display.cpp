@@ -24,7 +24,7 @@ struct PresentationState {
 
 template struct HandleDeleter<PresentationState>;
 
-vector<const char *> getGLFWPresentationExtensions()
+static vector<const char *> getGLFWPresentationExtensions()
 {
     uint32_t count;
     const char **names = glfwGetRequiredInstanceExtensions(&count);
@@ -43,7 +43,7 @@ static VkBool32 presentationSupportWrapper(VkInstance inst,
     return glfw_ret == GLFW_TRUE ? VK_TRUE : VK_FALSE;
 }
 
-VkSurfaceKHR getWindowSurface(const InstanceState &inst, GLFWwindow *window)
+static VkSurfaceKHR getWindowSurface(const InstanceState &inst, GLFWwindow *window)
 {
     VkSurfaceKHR surface;
     REQ_VK(glfwCreateWindowSurface(inst.hdl, window, nullptr, &surface));
@@ -51,7 +51,7 @@ VkSurfaceKHR getWindowSurface(const InstanceState &inst, GLFWwindow *window)
     return surface;
 }
 
-VkSurfaceFormatKHR selectSwapchainFormat(const InstanceState &inst,
+static VkSurfaceFormatKHR selectSwapchainFormat(const InstanceState &inst,
                                          VkPhysicalDevice phy,
                                          VkSurfaceKHR surface)
 {
@@ -79,7 +79,7 @@ VkSurfaceFormatKHR selectSwapchainFormat(const InstanceState &inst,
     return formats[0];
 }
 
-VkPresentModeKHR selectSwapchainMode(const InstanceState &inst,
+static VkPresentModeKHR selectSwapchainMode(const InstanceState &inst,
                                      VkPhysicalDevice phy,
                                      VkSurfaceKHR surface)
 {
@@ -101,10 +101,10 @@ VkPresentModeKHR selectSwapchainMode(const InstanceState &inst,
     fatalExit();
 }
 
-PresentationState makePresentationState(const InstanceState &inst,
-                                        const DeviceState &dev,
-                                        GLFWwindow *window,
-                                        uint32_t num_frames_inflight)
+static PresentationState makePresentationState(const InstanceState &inst,
+                                               const DeviceState &dev,
+                                               GLFWwindow *window,
+                                               uint32_t num_frames_inflight)
 {
     VkSurfaceKHR surface = getWindowSurface(inst, window);
 
@@ -438,7 +438,7 @@ uint32_t PresentCommandStream::render(const vector<Environment> &elems)
     return frame_idx;
 }
 
-CoreVulkanHandles makeCoreHandles(const RenderConfig &config,
+static CoreVulkanHandles makeCoreHandles(const RenderConfig &config,
                                   const DeviceUUID &dev_id) {
     InstanceState inst_state(true, getGLFWPresentationExtensions());
 

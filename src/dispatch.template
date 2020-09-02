@@ -83,7 +83,6 @@ instance:
 - vkCreateDevice
 - vkDestroyInstance
 - need_present:
-    - vkDestroySurfaceKHR
     - vkGetPhysicalDeviceSurfaceCapabilitiesKHR
     - vkGetPhysicalDeviceSurfaceFormatsKHR
     - vkGetPhysicalDeviceSurfacePresentModesKHR

@@ -74,7 +74,7 @@ target_include_directories(v4r
 add_dependencies(v4r generate_vk_dispatch compile_shaders)
 
 target_link_libraries(v4r Vulkan::Vulkan CUDA::cudart
-    Threads::Threads assimp::assimp simdjson basis_universal)
+    Threads::Threads assimp::assimp simdjson basis_universal glfw)
 
 add_library(v4r_headless INTERFACE)
 add_dependencies(v4r_headless v4r)
@@ -113,17 +113,3 @@ add_library(v4r_debug SHARED
 target_link_libraries(v4r_debug CUDA::cudart)
 target_include_directories(v4r_debug
     PUBLIC ${MAIN_INCLUDE_DIR})
-
-# Hacks
-
-# if nvidia libEGL exists, apply nvidia workarounds
-find_library(NVIDIA_EGL "libEGL_nvidia.so")
-
-if (NVIDIA_EGL)
-    add_library(v4r_headless_hacks SHARED
-        linux_hacks.cpp
-    )
-
-    add_dependencies(v4r_headless v4r_headless_hacks)
-    target_link_libraries(v4r_headless INTERFACE v4r_headless_hacks)
-endif()
