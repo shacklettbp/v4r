@@ -390,11 +390,14 @@ uint32_t CommandStreamCUDA::render(const vector<Environment> &envs)
         state_->gfxQueue.submit(state_->dev, 1, &gfx_submit, fence);
     });
 
+    array present_waits { render_ready, swapchain_ready };
+
     VkPresentInfoKHR present_info;
     present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     present_info.pNext = nullptr;
-    present_info.waitSemaphoreCount = 1;
-    present_info.pWaitSemaphores = &render_ready; 
+    present_info.waitSemaphoreCount =
+        static_cast<uint32_t>(present_waits.size());
+    present_info.pWaitSemaphores = present_waits.data();
     present_info.swapchainCount = 1u;
     present_info.pSwapchains = &presentation_state_->swapchain;
     present_info.pImageIndices = &swapchain_idx;
