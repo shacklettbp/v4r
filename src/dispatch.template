@@ -1,5 +1,6 @@
 device:
 - vkCreateCommandPool
+- vkDestroyCommandPool
 - vkGetDeviceQueue2
 - vkCreateImage
 - vkDestroyImage
@@ -61,7 +62,7 @@ device:
 - vkCmdBindIndexBuffer
 - vkCmdDispatch
 - vkCmdDrawIndexed
-- vkCmdDrawIndexedIndirectCount
+- vkCmdDrawIndexedIndirectCountKHR
 - vkCmdBeginRenderPass
 - vkCmdEndRenderPass
 - vkCmdPushConstants

@@ -55,7 +55,7 @@ static VkInstance createInstance(bool enable_validation,
     app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     app_info.pApplicationName = "v4r";
     app_info.pEngineName = "v4r";
-    app_info.apiVersion = VK_API_VERSION_1_2;
+    app_info.apiVersion = VK_API_VERSION_1_1;
 
     vector<const char *> layers;
     vector<const char *> extensions(extra_exts);
@@ -297,6 +297,7 @@ DeviceState InstanceState::makeDevice(
     VkPhysicalDeviceDescriptorIndexingFeatures desc_idx_features {};
     desc_idx_features.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+    desc_idx_features.pNext = nullptr;
     desc_idx_features.runtimeDescriptorArray = true;
     desc_idx_features.shaderStorageBufferArrayNonUniformIndexing = true;
     desc_idx_features.shaderSampledImageArrayNonUniformIndexing = true;

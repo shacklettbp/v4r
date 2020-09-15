@@ -2,6 +2,7 @@ set(VERTEX_SHADER shaders/uber.vert)
 set(FRAGMENT_SHADER shaders/uber.frag)
 set(SHADER_DEPENDENCIES
     shaders/shader_common.h
+    shaders/mesh_common.h
     shaders/brdf.glsl)
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
@@ -44,7 +45,7 @@ function(add_shader SHADER_NAME SHADER_SRC COMPILER_ARGS)
         OUTPUT
             ${COMPILED_SHADER}
         COMMAND
-            ${GLSLC} -c ${SHADER_SRC} -o ${COMPILED_SHADER} ${COMPILER_ARGS}
+            ${GLSLC} -c ${SHADER_SRC} -o ${COMPILED_SHADER} --target-env=vulkan1.1 ${COMPILER_ARGS}
         DEPENDS
             ${SHADER_SRC} ${SHADER_DEPENDENCIES}
     )
@@ -58,5 +59,7 @@ FOREACH(CFG_STR ${SHADER_DEFINES})
     add_shader("${SHADER_NAME}.vert" "${VERTEX_SRC}" "${SHADER_ARGS}")
     add_shader("${SHADER_NAME}.frag" "${FRAGMENT_SRC}" "${SHADER_ARGS}")
 ENDFOREACH()
+
+add_shader("meshcull.comp" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/meshcull.comp" "")
 
 add_custom_target(compile_shaders DEPENDS ${COMPILED_SHADERS})

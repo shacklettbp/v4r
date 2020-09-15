@@ -36,12 +36,6 @@ struct VertexMesh : public Mesh {
 template <typename VertexType>
 struct VertexImpl;
 
-struct InlineMesh {
-    uint32_t vertexOffset;
-    uint32_t startIndex;
-    uint32_t numIndices;
-};
-
 struct Texture {
     uint32_t width;
     uint32_t height;
@@ -104,9 +98,10 @@ struct Scene {
     std::vector<LocalImage> textures;
     std::vector<VkImageView> texture_views;
     DescriptorSet materialSet;
+    DescriptorSet cullSet;
     LocalBuffer data;
     VkDeviceSize indexOffset;
-    std::vector<InlineMesh> meshes;
+    uint32_t numMeshes;
     EnvironmentInit envDefaults;
 };
 
@@ -128,9 +123,10 @@ public:
 
 struct StagedScene {
     HostBuffer buffer;
-    std::vector<InlineMesh> meshPositions;
     VkDeviceSize indexBufferOffset;
     VkDeviceSize paramBufferOffset;
+    VkDeviceSize meshInfoOffset;
+    uint32_t numMeshes;
     VkDeviceSize totalBytes;
 };
 
@@ -160,6 +156,8 @@ public:
                 const LoaderImpl &impl,
                 const VkDescriptorSetLayout &scene_set_layout,
                 DescriptorManager::MakePoolType make_scene_pool,
+                const VkDescriptorSetLayout &mesh_cull_scene_set_layout,
+                DescriptorManager::MakePoolType make_mesh_cull_scene_pool,
                 MemoryAllocator &alc,
                 QueueManager &queue_manager,
                 const glm::mat4 &coordinateTransform);
@@ -197,6 +195,7 @@ public:
 
     MemoryAllocator &alloc;
     DescriptorManager descriptorManager;
+    DescriptorManager cullDescriptorManager;
 
     glm::mat4 coordinateTransform;
 

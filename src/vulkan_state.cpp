@@ -252,9 +252,25 @@ static ParamBufferConfig computeParamBufferConfig(
         cur_offset = cfg.lightsOffset + cfg.totalLightParamBytes;
     }
 
+    cfg.cullInputOffset = alloc.alignStorageBufferOffset(cur_offset);
+    cfg.totalCullInputBytes = sizeof(DrawInput) * VulkanConfig::max_instances;
+    cur_offset = cfg.cullInputOffset + cfg.totalCullInputBytes;
+
     // Ensure that full block is aligned to maximum requirement
     cfg.totalParamBytes = alloc.alignStorageBufferOffset(
         alloc.alignUniformBufferOffset(cur_offset));
+
+    cfg.countIndirectOffset = 0;
+    cfg.totalCountIndirectBytes = sizeof(uint32_t) * batch_size;
+
+    cfg.drawIndirectOffset = alloc.alignStorageBufferOffset(
+        alloc.alignUniformBufferOffset(cfg.totalCountIndirectBytes));
+    cfg.totalDrawIndirectBytes =
+        sizeof(VkDrawIndexedIndirectCommand) * VulkanConfig::max_instances;
+
+    cfg.totalIndirectBytes = alloc.alignStorageBufferOffset(
+        alloc.alignUniformBufferOffset(cfg.drawIndirectOffset +
+                                       cfg.totalDrawIndirectBytes));
 
     return  cfg;
 }
@@ -291,14 +307,29 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
         BindingConfig<1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
                       VK_SHADER_STAGE_COMPUTE_BIT>,
         BindingConfig<2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                      VK_SHADER_STAGE_COMPUTE_BIT>,
+        BindingConfig<3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                      VK_SHADER_STAGE_COMPUTE_BIT>,
+        BindingConfig<4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
                       VK_SHADER_STAGE_COMPUTE_BIT>
     >;
 
     VkDescriptorSetLayout mesh_cull_descriptor_layout =
-        MeshCullLayout::makeSetLayout(dev, nullptr, nullptr, nullptr);
+        MeshCullLayout::makeSetLayout(dev, nullptr, nullptr, nullptr,
+                                      nullptr, nullptr);
 
     VkDescriptorPool mesh_cull_descriptor_pool = MeshCullLayout::makePool(
             dev, num_streams * frames_per_stream);
+
+    using MeshCullSceneLayout = DescriptorLayout<
+        BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                      VK_SHADER_STAGE_COMPUTE_BIT>>;
+
+    VkDescriptorSetLayout mesh_cull_scene_descriptor_layout =
+        MeshCullSceneLayout::makeSetLayout(dev, nullptr);
+
+    DescriptorManager::MakePoolType make_mesh_cull_scene_pool =
+        MeshCullSceneLayout::makePool;
 
     // Conditional scene set
     VkSampler texture_sampler = VK_NULL_HANDLE;
@@ -326,10 +357,12 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
 
     return {
         param_positions,
-        frame_descriptor_layout,
-        frame_descriptor_pool,
         mesh_cull_descriptor_layout,
         mesh_cull_descriptor_pool,
+        mesh_cull_scene_descriptor_layout,
+        make_mesh_cull_scene_pool,
+        frame_descriptor_layout,
+        frame_descriptor_pool,
         scene_descriptor_layout,
         make_scene_pool,
         texture_sampler,
@@ -536,7 +569,7 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
     const array<pair<const char *, VkShaderStageFlagBits>, 3> shader_cfg {{
         {Props::vertexShaderName, VK_SHADER_STAGE_VERTEX_BIT},
         {Props::fragmentShaderName, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {"meshcull.comp", VK_SHADER_STAGE_COMPUTE_BIT},
+        {"meshcull.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT},
     }};
 
     constexpr size_t num_shaders = shader_cfg.size();
@@ -713,15 +746,25 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
                                           &gfx_pipeline));
 
     // Compute shaders for culling
+    array cull_layouts { render_state.meshCullDescriptorLayout,
+                         render_state.meshCullSceneDescriptorLayout };
+
+
+    VkPushConstantRange cull_const {
+        VK_SHADER_STAGE_COMPUTE_BIT,
+        0,
+        sizeof(CullPushConstant)
+    };
+
     VkPipelineLayoutCreateInfo mesh_cull_layout_info;
     mesh_cull_layout_info.sType =
         VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     mesh_cull_layout_info.pNext = nullptr;
     mesh_cull_layout_info.flags = 0;
-    mesh_cull_layout_info.setLayoutCount = 1;
-    mesh_cull_layout_info.pSetLayouts = &render_state.meshCullDescriptorLayout;
-    mesh_cull_layout_info.pushConstantRangeCount = 0;
-    mesh_cull_layout_info.pPushConstantRanges = nullptr;
+    mesh_cull_layout_info.setLayoutCount = cull_layouts.size();
+    mesh_cull_layout_info.pSetLayouts = cull_layouts.data();
+    mesh_cull_layout_info.pushConstantRangeCount = 1;
+    mesh_cull_layout_info.pPushConstantRanges = &cull_const;
 
     VkPipelineLayout mesh_cull_layout;
     REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &mesh_cull_layout_info,
@@ -767,9 +810,12 @@ static PerFrameState makeFrameState(const DeviceState &dev,
                                     const FramebufferConfig &fb_cfg,
                                     const ParamBufferConfig &param_config,
                                     const HostBuffer &param_buffer,
+                                    const LocalBuffer &indirect_buffer,
                                     VkCommandPool gfx_pool,
                                     VkDescriptorPool frame_set_pool,
                                     VkDescriptorSetLayout frame_set_layout,
+                                    VkDescriptorPool mesh_cull_set_pool,
+                                    VkDescriptorSetLayout mesh_cull_set_layout,
                                     bool cpu_sync,
                                     uint32_t batch_size,
                                     uint32_t frame_idx,
@@ -802,7 +848,8 @@ static PerFrameState makeFrameState(const DeviceState &dev,
 
     VkDescriptorSet frame_set = makeDescriptorSet(dev, frame_set_pool,
                                                   frame_set_layout);
-    vector<VkWriteDescriptorSet> frame_set_updates;
+    vector<VkWriteDescriptorSet> desc_set_updates;
+    desc_set_updates.reserve(2 + 5); // Frame set + cull set
 
     const size_t num_vertex_inputs = use_materials ? 3 : 2;
 
@@ -844,7 +891,7 @@ static PerFrameState makeFrameState(const DeviceState &dev,
     binding_update.pImageInfo = nullptr;
     binding_update.pBufferInfo = &view_buffer_info;
     binding_update.pTexelBufferView = nullptr;
-    frame_set_updates.push_back(binding_update);
+    desc_set_updates.push_back(binding_update);
 
     uint32_t *material_ptr = nullptr;
     LightProperties *light_ptr = nullptr;
@@ -875,20 +922,95 @@ static PerFrameState makeFrameState(const DeviceState &dev,
         binding_update.dstBinding = 1;
         binding_update.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         binding_update.pBufferInfo = &light_info;
-        frame_set_updates.push_back(binding_update);
+        desc_set_updates.push_back(binding_update);
     }
 
+    // Indirect draw stuff
+    
+    DrawInput *draw_ptr = reinterpret_cast<DrawInput *>(
+            base_ptr + param_config.cullInputOffset);
+
+    VkDeviceSize base_indirect_offset =
+        param_config.totalIndirectBytes * frame_idx;
+
+    VkDeviceSize count_indirect_offset = 
+        base_indirect_offset + param_config.countIndirectOffset;
+
+    VkDeviceSize draw_indirect_offset = 
+        base_indirect_offset + param_config.drawIndirectOffset;
+
+    VkDescriptorSet cull_set = makeDescriptorSet(dev, mesh_cull_set_pool,
+                                                 mesh_cull_set_layout);
+
+    VkDescriptorBufferInfo transform_info {
+        param_buffer.buffer,
+        base_offset,
+        param_config.totalTransformBytes
+    };
+    
+    binding_update.dstSet = cull_set;
+    binding_update.dstBinding = 0;
+    binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    binding_update.pBufferInfo = &transform_info;
+    desc_set_updates.push_back(binding_update);
+
+    binding_update.dstBinding = 1;
+    binding_update.pBufferInfo = &view_buffer_info;
+    desc_set_updates.push_back(binding_update);
+
+    VkDescriptorBufferInfo indirect_input_buffer_info {
+        param_buffer.buffer,
+        param_config.cullInputOffset,
+        param_config.totalCullInputBytes
+    };
+
+    binding_update.dstBinding = 2;
+    binding_update.pBufferInfo = &indirect_input_buffer_info;
+    desc_set_updates.push_back(binding_update);
+
+    VkDescriptorBufferInfo indirect_output_buffer_info {
+        indirect_buffer.buffer,
+        draw_indirect_offset,
+        param_config.totalDrawIndirectBytes
+    };
+
+    binding_update.dstBinding = 3;
+    binding_update.pBufferInfo = &indirect_output_buffer_info;
+    desc_set_updates.push_back(binding_update);
+
+    VkDescriptorBufferInfo indirect_count_buffer_info {
+        indirect_buffer.buffer,
+        count_indirect_offset,
+        param_config.totalCountIndirectBytes
+    };
+
+    binding_update.dstBinding = 4;
+    binding_update.pBufferInfo = &indirect_count_buffer_info;
+    desc_set_updates.push_back(binding_update);
+
     dev.dt.updateDescriptorSets(dev.hdl,
-            static_cast<uint32_t>(frame_set_updates.size()),
-            frame_set_updates.data(), 0, nullptr);
+            static_cast<uint32_t>(desc_set_updates.size()),
+            desc_set_updates.data(), 0, nullptr);
+
+    VkBufferCopy count_reset_copy;
+    count_reset_copy.srcOffset =
+        num_frames_per_stream * param_config.totalIndirectBytes;
+    count_reset_copy.dstOffset = count_indirect_offset;
+    count_reset_copy.size = sizeof(uint32_t) * batch_size;
 
     return PerFrameState {
         cpu_sync ? makeFence(dev) : VK_NULL_HANDLE,
         { render_command, copy_command },
+        count_indirect_offset,
+        draw_indirect_offset,
+        count_reset_copy,
+        DynArray<uint32_t>(batch_size),
+        DynArray<uint32_t>(batch_size),
         base_fb_offset,
         move(batch_fb_offsets),
         color_buffer_offset,
         depth_buffer_offset,
+        cull_set,
         frame_set,
         move(vertex_buffers),
         move(vertex_offsets),
@@ -896,7 +1018,8 @@ static PerFrameState makeFrameState(const DeviceState &dev,
         view_ptr,
         material_ptr,
         light_ptr,
-        num_lights_ptr
+        num_lights_ptr,
+        draw_ptr
     };
 }
 
@@ -1035,8 +1158,12 @@ CommandStreamState::CommandStreamState(
       fb_(framebuffer),
       render_pass_(render_state.renderPass),
       per_render_buffer_(alloc.makeHostBuffer(
-                render_state.paramPositions.totalParamBytes *
-                    num_frames_inflight)),
+          render_state.paramPositions.totalParamBytes *
+              num_frames_inflight)),
+      indirect_draw_buffer_(alloc.makeIndirectBuffer( 
+          render_state.paramPositions.totalIndirectBytes *
+              num_frames_inflight +
+          sizeof(uint32_t) * batch_size)), // Extra space for count reset
       render_size_(fb_cfg.imgWidth, fb_cfg.imgHeight),
       render_extent_(render_size_.x * fb_cfg.numImagesWidePerBatch,
                      render_size_.y * fb_cfg.numImagesTallPerBatch),
@@ -1050,15 +1177,56 @@ CommandStreamState::CommandStreamState(
                 fb_cfg,
                 render_state.paramPositions,
                 per_render_buffer_,
+                indirect_draw_buffer_,
                 gfxPool,
                 render_state.frameDescriptorPool,
                 render_state.frameDescriptorLayout,
+                render_state.meshCullDescriptorPool,
+                render_state.meshCullDescriptorLayout,
                 cpu_sync, batch_size,
                 frame_idx, num_frames_inflight, stream_idx));
 
         recordFBToLinearCopy(dev, frame_states_.back(), fb_cfg_, fb_);
     }
 
+    // Zero out count reset info
+    HostBuffer init_buffer = alloc.makeStagingBuffer(
+            sizeof(uint32_t) * batch_size);
+    memset(init_buffer.ptr, 0, sizeof(uint32_t) * batch_size);
+
+    VkFence init_fence = makeFence(dev);
+    VkCommandPool init_pool = makeCmdPool(dev, dev.gfxQF);
+    VkCommandBuffer init_cmd = makeCmdBuffer(dev, init_pool);
+
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    REQ_VK(dev.dt.beginCommandBuffer(init_cmd, &begin_info));
+
+    VkBufferCopy zero_region {
+        0, 
+        render_state.paramPositions.totalIndirectBytes * num_frames_inflight,
+        sizeof(uint32_t) * batch_size
+    };
+
+    dev.dt.cmdCopyBuffer(init_cmd, init_buffer.buffer,
+                         indirect_draw_buffer_.buffer,
+                         1, &zero_region);
+
+    REQ_VK(dev.dt.endCommandBuffer(init_cmd));
+
+    VkSubmitInfo init_submit {
+        VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        nullptr,
+        0, nullptr, nullptr,
+        1, &init_cmd,
+        0, nullptr
+    };
+
+    gfxQueue.submit(dev, 1, &init_submit, init_fence);
+    waitForFenceInfinitely(dev, init_fence);
+
+    dev.dt.destroyCommandPool(dev.hdl, init_pool, nullptr);
+    dev.dt.destroyFence(dev.hdl, init_fence, nullptr);
 }
 
 uint32_t CommandStreamState::render(const vector<Environment> &envs)
@@ -1135,6 +1303,8 @@ LoaderState VulkanState::makeLoader()
     return LoaderState(dev, loader_impl_,
                        renderState.sceneDescriptorLayout,
                        renderState.makeScenePool,
+                       renderState.meshCullSceneDescriptorLayout,
+                       renderState.makeMeshCullScenePool,
                        alloc, queueMgr,
                        globalTransform);
 }

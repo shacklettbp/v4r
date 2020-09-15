@@ -3,6 +3,7 @@
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_KHR_shader_subgroup_ballot : require
 
+#include "shader_common.h"
 #include "mesh_common.h"
 
 struct DrawCommand {
@@ -13,35 +14,74 @@ struct DrawCommand {
     uint firstInstance;
 };
 
-layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+layout (local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
 
-layout(set = 0, binding = 0, scalar) readonly buffer MeshInfos {
-    MeshInfo meshes[];
+layout (push_constant, scalar) uniform readonly PushConstant {
+    CullPushConstant cull_const;
 };
 
-layout(set = 0, binding = 1, scalar) readonly buffer InputCommands {
-    uint numInputCommands;
+layout (set = 0, binding = 0, scalar) readonly buffer Transforms {
+    mat4x3 modelTransforms[];
+};
+
+layout (set = 0, binding = 1) readonly buffer ViewInfos {
+    ViewInfo view_info[];
+};
+
+layout (set = 0, binding = 2, scalar) readonly buffer InputCommands {
     DrawInput inputCommands[];
 };
 
-layout(set = 0, binding = 2, scalar) writeonly buffer OutputCommands {
-    uint numOutputCommands;
+layout (set = 0, binding = 3, scalar) writeonly buffer OutputCommands {
     DrawCommand outputCommands[];
+};
+
+layout (set = 0, binding = 4) buffer Counts {
+    uint numOutputCommands[MAX_BATCH_SIZE];
+};
+
+layout (set = 1, binding = 0, scalar) readonly buffer MeshInfos {
+    MeshInfo meshes[];
 };
 
 void main()
 {
-    uint draw_id = gl_GlobalInvocationID.x;
-
     // Out of bounds exit
-    if (draw_id >= numInputCommands) {
+    if (gl_GlobalInvocationID.x >= cull_const.numDrawCommands) {
         return;
     }
 
+    uint draw_id = cull_const.baseDrawID + gl_GlobalInvocationID.x;
+
     uint mesh_id = inputCommands[draw_id].meshID;
     
-    // FIXME optimize across subgroup
-    uint out_idx = atomicAdd(numOutputCommands, 1);
+    bool should_render = true;
+
+	uvec4 cull_ballot = subgroupBallot(should_render);
+	uint subgroup_count = subgroupBallotBitCount(cull_ballot);
+
+	if (subgroup_count == 0) {
+		return;
+    }
+
+	uint subgroup_base = 0;
+
+	if (gl_LocalInvocationID.x == 0) {
+        // Thread 0
+		subgroup_base = atomicAdd(numOutputCommands[cull_const.batchIdx],
+                                  subgroup_count);
+    }
+    subgroup_base = subgroupBroadcastFirst(subgroup_base);
+
+    uint subgroup_offset = subgroupBallotExclusiveBitCount(cull_ballot);
+
+    uint batch_offset = subgroup_base + subgroup_offset;
+
+    uint out_idx = cull_const.baseDrawID + batch_offset;
+
+    if (!should_render) {
+        return;
+    }
 
     outputCommands[out_idx].indexCount = meshes[mesh_id].indexCount;
     outputCommands[out_idx].instanceCount = 1;

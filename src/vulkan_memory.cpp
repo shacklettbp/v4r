@@ -25,6 +25,13 @@ namespace BufferFlags {
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
         VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
 
+    static constexpr VkBufferUsageFlags indirectUsage =
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+
     static constexpr VkBufferUsageFlags localGenericUsage =
         geometryUsage | shaderUsage;
 
@@ -338,6 +345,14 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             dev_mem_props);
 
+    VkMemoryRequirements indirect_reqs =
+        getBufferMemReqs(dev, BufferFlags::geometryUsage);
+
+    uint32_t indirect_type_idx = findMemoryTypeIndex(
+            indirect_reqs.memoryTypeBits,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            dev_mem_props);
+
     VkMemoryRequirements local_generic_reqs =
         getBufferMemReqs(dev, BufferFlags::localGenericUsage);
 
@@ -395,6 +410,7 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
         shader_type_idx,
         host_generic_type_idx,
         geometry_type_idx,
+        indirect_type_idx,
         local_generic_type_idx,
         dedicated_type_idx,
         texture_precomp_idx,
@@ -522,6 +538,13 @@ LocalBuffer MemoryAllocator::makeGeometryBuffer(VkDeviceSize num_bytes)
     return makeLocalBuffer(num_bytes, BufferFlags::geometryUsage,
                            type_indices_.localGeometryBuffer);
 }
+
+LocalBuffer MemoryAllocator::makeIndirectBuffer(VkDeviceSize num_bytes)
+{
+    return makeLocalBuffer(num_bytes, BufferFlags::indirectUsage,
+                           type_indices_.localIndirectBuffer);
+}
+
 
 pair<LocalBuffer, VkDeviceMemory> MemoryAllocator::makeDedicatedBuffer(
         VkDeviceSize num_bytes)

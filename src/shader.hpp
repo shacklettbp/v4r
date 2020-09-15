@@ -15,6 +15,7 @@ using uint = uint32_t;
 
 using Shader::ViewInfo;
 using Shader::RenderPushConstant;
+using Shader::CullPushConstant;
 using Shader::DrawInput;
 using Shader::MeshInfo;
 

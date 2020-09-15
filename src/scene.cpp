@@ -93,26 +93,27 @@ static StagedScene stageScene(
         total_bytes = material_offset + param_bytes.size();
     }
 
-    HostBuffer staging = alloc.makeStagingBuffer(total_bytes);
+    VkDeviceSize mesh_info_offset =
+        alloc.alignStorageBufferOffset(total_bytes);
 
-    vector<InlineMesh> inline_meshes;
-    inline_meshes.reserve(meshes.size());
+    total_bytes = mesh_info_offset + (sizeof(MeshInfo) * meshes.size());
+
+    HostBuffer staging = alloc.makeStagingBuffer(total_bytes);
 
     // Copy all vertices
     uint32_t vertex_offset = 0;
     uint8_t *staging_start = reinterpret_cast<uint8_t *>(staging.ptr);
     uint8_t *cur_ptr = staging_start;
+    MeshInfo *mesh_infos = reinterpret_cast<MeshInfo *>(
+            staging_start + mesh_info_offset);
 
-    for (const auto &generic_mesh : meshes) {
+    for (uint32_t mesh_idx = 0; mesh_idx < meshes.size(); mesh_idx++) {
+        const auto &generic_mesh = meshes[mesh_idx];
         auto mesh = static_cast<const MeshT *>(generic_mesh.get());
         VkDeviceSize vertex_bytes = sizeof(VertexType) * mesh->vertices.size();
         memcpy(cur_ptr, mesh->vertices.data(), vertex_bytes);
 
-        inline_meshes.emplace_back(InlineMesh {
-            vertex_offset,
-            0,
-            0
-        });
+        mesh_infos[mesh_idx].vertexOffset = vertex_offset;
 
         cur_ptr += vertex_bytes;
         vertex_offset += mesh->vertices.size();
@@ -127,8 +128,8 @@ static StagedScene stageScene(
             sizeof(uint32_t) * mesh->indices.size();
         memcpy(cur_ptr, mesh->indices.data(), index_bytes);
 
-        inline_meshes[mesh_idx].startIndex = cur_mesh_index;
-        inline_meshes[mesh_idx].numIndices = 
+        mesh_infos[mesh_idx].indexOffset = cur_mesh_index;
+        mesh_infos[mesh_idx].indexCount = 
             static_cast<uint32_t>(mesh->indices.size());
 
         cur_ptr += index_bytes;
@@ -145,9 +146,10 @@ static StagedScene stageScene(
 
     return { 
         move(staging), 
-        move(inline_meshes),
         total_vertex_bytes,
         material_offset,
+        mesh_info_offset,
+        static_cast<uint32_t>(meshes.size()),
         total_bytes
     };
 }
@@ -365,6 +367,10 @@ LoaderState::LoaderState(const DeviceState &d,
                          const LoaderImpl &impl,
                          const VkDescriptorSetLayout &scene_set_layout,
                          DescriptorManager::MakePoolType make_scene_pool,
+                         const VkDescriptorSetLayout &
+                            mesh_cull_scene_set_layout,
+                         DescriptorManager::MakePoolType
+                            make_mesh_cull_scene_pool,
                          MemoryAllocator &alc,
                          QueueManager &queue_manager,
                          const glm::mat4 &coordinate_transform)
@@ -379,6 +385,8 @@ LoaderState::LoaderState(const DeviceState &d,
       fence(makeFence(dev)),
       alloc(alc),
       descriptorManager(dev, scene_set_layout, make_scene_pool),
+      cullDescriptorManager(dev, mesh_cull_scene_set_layout,
+                            make_mesh_cull_scene_pool),
       coordinateTransform(coordinate_transform),
       impl_(impl)
 {}
@@ -787,13 +795,13 @@ shared_ptr<Scene> LoaderState::makeScene(
             desc_updates.push_back(desc_update);
         }
 
+        VkDescriptorBufferInfo material_buffer_info;
         if (material_params.size() > 0) {
             uint32_t param_binding = 0;
             if (textures_per_material > 0) {
                 param_binding = 1 + textures_per_material;
             }
 
-            VkDescriptorBufferInfo material_buffer_info;
             material_buffer_info.buffer = data.buffer;
             material_buffer_info.offset = staged.paramBufferOffset;
             material_buffer_info.range = material_params.size();
@@ -817,13 +825,36 @@ shared_ptr<Scene> LoaderState::makeScene(
                                     desc_updates.data(), 0, nullptr);
     }
 
+    DescriptorSet cull_set = cullDescriptorManager.makeSet();
+
+    VkDescriptorBufferInfo mesh_info_buffer_info;
+    mesh_info_buffer_info.buffer = data.buffer;
+    mesh_info_buffer_info.offset = staged.meshInfoOffset;
+    mesh_info_buffer_info.range =
+        sizeof(MeshInfo) * staged.numMeshes;
+
+    VkWriteDescriptorSet cull_desc_update;
+    cull_desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    cull_desc_update.pNext = nullptr;
+    cull_desc_update.dstSet = cull_set.hdl;
+    cull_desc_update.dstBinding = 0;
+    cull_desc_update.dstArrayElement = 0;
+    cull_desc_update.descriptorCount = 1;
+    cull_desc_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    cull_desc_update.pImageInfo = nullptr;
+    cull_desc_update.pBufferInfo = &mesh_info_buffer_info;
+    cull_desc_update.pTexelBufferView = nullptr;
+
+    dev.dt.updateDescriptorSets(dev.hdl, 1, &cull_desc_update, 0, nullptr);
+
     return make_shared<Scene>(Scene {
         move(gpu_textures),
         move(texture_views),
         move(material_set),
+        move(cull_set),
         move(data),
         staged.indexBufferOffset,
-        move(staged.meshPositions),
+        staged.numMeshes,
         EnvironmentInit(scene_desc.getDefaultInstances(),
                         scene_desc.getDefaultLights(),
                         cpu_meshes.size())

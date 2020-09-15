@@ -75,17 +75,31 @@ struct ParamBufferConfig {
     VkDeviceSize lightsOffset;
     VkDeviceSize totalLightParamBytes;
 
+    VkDeviceSize cullInputOffset;
+    VkDeviceSize totalCullInputBytes;
+
     VkDeviceSize totalParamBytes;
+
+    VkDeviceSize countIndirectOffset;
+    VkDeviceSize totalCountIndirectBytes;
+
+    VkDeviceSize drawIndirectOffset;
+    VkDeviceSize totalDrawIndirectBytes;
+
+    VkDeviceSize totalIndirectBytes;
 };
 
 struct RenderState {
     ParamBufferConfig paramPositions;
 
-    VkDescriptorSetLayout frameDescriptorLayout;
-    VkDescriptorPool frameDescriptorPool;
-
     VkDescriptorSetLayout meshCullDescriptorLayout;
     VkDescriptorPool meshCullDescriptorPool;
+
+    VkDescriptorSetLayout meshCullSceneDescriptorLayout;
+    DescriptorManager::MakePoolType makeMeshCullScenePool;
+
+    VkDescriptorSetLayout frameDescriptorLayout;
+    VkDescriptorPool frameDescriptorPool;
 
     VkDescriptorSetLayout sceneDescriptorLayout;
     DescriptorManager::MakePoolType makeScenePool;
@@ -128,12 +142,13 @@ public:
 struct PerFrameState {
     VkFence fence;
     std::array<VkCommandBuffer, 2> commands;
-    HostBuffer inputDrawBuffer;
-    LocalBuffer finalDrawBuffer;
-    DynArray<uint32_t> drawBufferOffsets;
-    LocalBuffer drawCountBuffer;
-    DynArray<uint32_t> drawCountOffsets;
-    DynArray<uint32_t> maxDrawCounts;
+    // indirectDrawBuffer starts with batch_size draw counts,
+    // followed by the actual indirect draw commands
+    VkDeviceSize indirectCountBaseOffset;
+    VkDeviceSize indirectBaseOffset;
+    VkBufferCopy countResetCopy;
+    DynArray<uint32_t> drawOffsets;
+    DynArray<uint32_t> maxNumDraws;
     
     glm::u32vec2 baseFBOffset;
     DynArray<glm::u32vec2> batchFBOffsets;
@@ -141,8 +156,8 @@ struct PerFrameState {
     VkDeviceSize colorBufferOffset;
     VkDeviceSize depthBufferOffset;
 
+    VkDescriptorSet cullSet;
     VkDescriptorSet frameSet;
-    VkDescriptorSet meshCullSet;
 
     DynArray<VkBuffer> vertexBuffers;
     DynArray<VkDeviceSize> vertexOffsets;
@@ -233,6 +248,7 @@ private:
     const FramebufferState &fb_;
     VkRenderPass render_pass_;
     HostBuffer per_render_buffer_;
+    LocalBuffer indirect_draw_buffer_;
 
     glm::u32vec2 render_size_;
     glm::u32vec2 render_extent_;

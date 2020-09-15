@@ -11,4 +11,11 @@ struct MeshInfo {
     uint indexCount;
 };
 
+struct CullPushConstant {
+    uint batchIdx;
+    uint baseDrawID;
+    uint numDrawCommands;
+};
+
+
 #endif
