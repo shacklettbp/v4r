@@ -5,10 +5,6 @@
 #include "shader.hpp"
 #include "utils.hpp"
 
-#include <assimp/Importer.hpp>
-#include <assimp/postprocess.h>
-#include <assimp/scene.h>
-
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/string_cast.hpp>
 
@@ -19,6 +15,11 @@
 using namespace std;
 
 namespace v4r {
+
+Texture::~Texture()
+{
+    ktxTexture_Destroy(data);
+}
 
 EnvironmentInit::EnvironmentInit(
         const vector<pair<uint32_t, InstanceProperties>> &instances,
@@ -172,32 +173,6 @@ static shared_ptr<Mesh> makeSharedMesh(vector<VertexType> vertices,
 }
 
 template <typename VertexType>
-static shared_ptr<Mesh> loadMeshAssimp(string_view geometry_path)
-{
-    Assimp::Importer importer;
-    int flags = aiProcess_PreTransformVertices | aiProcess_Triangulate;
-    const aiScene *raw_scene =
-        importer.ReadFile(string(geometry_path), flags);
-    if (!raw_scene) {
-        cerr << "Failed to load geometry file " << geometry_path << ": " <<
-            importer.GetErrorString() << endl;
-        fatalExit();
-    }
-
-    if (raw_scene->mNumMeshes == 0) {
-        cerr << "No meshes in file " << geometry_path << endl;
-        fatalExit();
-    }
-
-    // FIXME probably should just union all meshes into one mesh here
-    aiMesh *raw_mesh = raw_scene->mMeshes[0];
-
-    auto [vertices, indices] = assimpParseMesh<VertexType>(raw_mesh);
-
-    return makeSharedMesh(move(vertices), move(indices));
-}
-
-template <typename VertexType>
 static shared_ptr<Mesh> loadMeshGLTF(string_view geometry_path)
 {
     auto scene = gltfLoad(geometry_path);
@@ -223,75 +198,9 @@ static shared_ptr<Mesh> loadMesh(string_view geometry_path)
     if (isGLTF(geometry_path)) {
         return loadMeshGLTF<VertexType>(geometry_path);
     } else {
-        return loadMeshAssimp<VertexType>(geometry_path);
+        cerr << "Only GLTF is supported" << endl;
+        abort();
     }
-}
-
-// FIXME remove
-static void deleter_hack(void *ptr)
-{
-    delete[] (uint8_t *)ptr;
-}
-
-template <typename VertexType, typename MaterialParamsType>
-static SceneDescription parseAssimpScene(string_view scene_path,
-                                         const glm::mat4 &coordinate_txfm)
-{
-    Assimp::Importer importer;
-    int flags = aiProcess_JoinIdenticalVertices | aiProcess_Triangulate;
-    const aiScene *raw_scene =
-        importer.ReadFile(string(scene_path), flags);
-    if (!raw_scene) {
-        cerr << "Failed to load scene " << scene_path << ": " <<
-            importer.GetErrorString() << endl;
-        fatalExit();
-    }
-
-    constexpr bool need_materials = !is_same_v<MaterialParamsType,
-                                               NoMaterial>;
-
-    vector<shared_ptr<Material>> materials;
-    vector<shared_ptr<Mesh>> geometry;
-    vector<uint32_t> mesh_materials;
-    geometry.reserve(raw_scene->mNumMeshes);
-
-    if constexpr (need_materials) {
-        // FIXME remove
-        shared_ptr<Texture> default_diffuse(new Texture {
-            1,
-            1,
-            4,
-            ManagedArray(new uint8_t[4], deleter_hack)
-        });
-
-        default_diffuse->raw_image[0] = 127;
-        default_diffuse->raw_image[1] = 127;
-        default_diffuse->raw_image[2] = 127;
-        default_diffuse->raw_image[3] = 127;
-
-        materials = assimpParseMaterials<MaterialParamsType>(
-                raw_scene, default_diffuse);
-
-        mesh_materials.reserve(raw_scene->mNumMeshes);
-    }
-
-    for (uint32_t mesh_idx = 0; mesh_idx < raw_scene->mNumMeshes; mesh_idx++) {
-        aiMesh *raw_mesh = raw_scene->mMeshes[mesh_idx];
-
-        if constexpr (need_materials) {
-            mesh_materials.push_back(raw_mesh->mMaterialIndex);
-        }
-
-        auto [vertices, indices] = assimpParseMesh<VertexType>(raw_mesh);
-        geometry.emplace_back(makeSharedMesh(move(vertices), move(indices)));
-    }
-
-    SceneDescription scene_desc(move(geometry), move(materials));
-
-    assimpParseInstances(scene_desc, raw_scene, mesh_materials,
-                         coordinate_txfm);
-
-    return scene_desc;
 }
 
 template <typename VertexType, typename MaterialParamsType>
@@ -308,21 +217,8 @@ static SceneDescription parseGLTFScene(string_view scene_path,
     geometry.reserve(raw_scene.meshes.size());
 
     if constexpr (need_materials) {
-        // FIXME remove
-        shared_ptr<Texture> default_diffuse(new Texture {
-            1,
-            1,
-            4,
-            ManagedArray(new uint8_t[4], deleter_hack)
-        });
-
-        default_diffuse->raw_image[0] = 127;
-        default_diffuse->raw_image[1] = 127;
-        default_diffuse->raw_image[2] = 127;
-        default_diffuse->raw_image[3] = 127;
-
-        materials = gltfParseMaterials<MaterialParamsType>(
-                raw_scene, default_diffuse);
+        materials =
+            gltfParseMaterials<MaterialParamsType>(raw_scene);
     }
 
     for (uint32_t mesh_idx = 0; mesh_idx < raw_scene.meshes.size();
@@ -347,8 +243,8 @@ static SceneDescription parseScene(string_view scene_path,
         return parseGLTFScene<VertexType, MaterialParamsType>(
                 scene_path, coordinate_txfm);
     } else {
-        return parseAssimpScene<VertexType, MaterialParamsType>(
-                scene_path, coordinate_txfm);
+        cerr << "Only GLTF is supported" << endl;
+        abort();
     }
 }
 
@@ -391,81 +287,6 @@ LoaderState::LoaderState(const DeviceState &d,
       impl_(impl)
 {}
 
-static uint32_t getMipLevels(const Texture &texture)
-{
-    return static_cast<uint32_t>(
-        floor(log2(max(texture.width, texture.height)))) + 1;
-}
-
-static void generateMips(const DeviceState &dev,
-                         const VkCommandBuffer copy_cmd,
-                         const vector<LocalImage> &gpu_textures,
-                         DynArray<VkImageMemoryBarrier> &barriers)
-{
-    for (size_t texture_idx = 0; texture_idx < gpu_textures.size();
-            texture_idx++) {
-        const LocalImage &gpu_texture = gpu_textures[texture_idx];
-        VkImageMemoryBarrier &barrier = barriers[texture_idx];
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-
-        for (uint32_t mip_level = 1; mip_level < gpu_texture.mipLevels;
-                mip_level++) {
-            VkImageBlit blit_spec {};
-            
-            // Src
-            blit_spec.srcSubresource =
-                { VK_IMAGE_ASPECT_COLOR_BIT, mip_level - 1, 0, 1 };
-            blit_spec.srcOffsets[1] =
-                { static_cast<int32_t>(
-                        max(gpu_texture.width >> (mip_level - 1), 1u)),
-                  static_cast<int32_t>(
-                        max(gpu_texture.height >> (mip_level - 1), 1u)),
-                  1 };
-
-            // Dst
-            blit_spec.dstSubresource =
-                { VK_IMAGE_ASPECT_COLOR_BIT, mip_level, 0, 1 };
-            blit_spec.dstOffsets[1] =
-                { static_cast<int32_t>(
-                        max(gpu_texture.width >> mip_level, 1u)),
-                  static_cast<int32_t>(
-                        max(gpu_texture.height >> mip_level, 1u)),
-                  1 };
-
-            barrier.srcAccessMask = 0;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            barrier.subresourceRange.baseMipLevel = mip_level;
-
-            dev.dt.cmdPipelineBarrier(copy_cmd,
-                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                      0, 0, nullptr, 0, nullptr,
-                                      1, &barrier);
-
-            dev.dt.cmdBlitImage(copy_cmd,
-                                gpu_texture.image,
-                                VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                gpu_texture.image,
-                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                1, &blit_spec, VK_FILTER_LINEAR);
-
-            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-
-            dev.dt.cmdPipelineBarrier(copy_cmd,
-                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                      VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                      0, 0, nullptr, 0, nullptr,
-                                      1, &barrier);
-        }
-    }
-}
-
 shared_ptr<Scene> LoaderState::loadScene(string_view scene_path)
 {
     SceneDescription desc = impl_.parseScene(scene_path,
@@ -502,6 +323,11 @@ static MaterialsInfo finalizeMaterials(
                material->paramBytes.size());
 
         for (const auto &texture : material->textures) {
+            if (texture == nullptr) {
+                cerr << "Texture missing when renderer set with a"
+                        "pipeline that needs textures"
+                     << endl;
+            }
             auto [iter, inserted] =
                 texture_tracker.emplace(texture.get(), textures.size());
 
@@ -522,28 +348,35 @@ shared_ptr<Scene> LoaderState::makeScene(
 {
     const auto &materials = scene_desc.getMaterials();
 
-    vector<HostBuffer> texture_stagings;
     vector<LocalImage> gpu_textures;
 
     auto [cpu_textures, material_params, texture_indices, material_offsets] =
         finalizeMaterials(materials);
 
-    // FIXME pack textures
+    // FIXME - custom loader or hacked loader that makes doing this mip
+    // level by mip level possible
+    VkDeviceSize total_texture_bytes = 0;
     for (const shared_ptr<Texture> &texture : cpu_textures) {
-        uint64_t texture_bytes = texture->width * texture->height *
-            texture->num_channels * sizeof(uint8_t);
+        ktxTexture *ktx = texture->data;
+        assert(ktx->classId == ktxTexture2_c);
 
-        HostBuffer texture_staging = alloc.makeStagingBuffer(texture_bytes);
-        memcpy(texture_staging.ptr, texture->raw_image.data(), texture_bytes);
-        texture_staging.flush(dev);
+        ktxTexture2 *ktx2 = reinterpret_cast<ktxTexture2 *>(ktx);
+        KTX_error_code res = ktxTexture2_TranscodeBasis(
+            ktx2, KTX_TTF_BC7_RGBA, 0);
+        ktxCheck(res);
 
-        texture_stagings.emplace_back(move(texture_staging));
+        for (uint32_t level = 0; level < texture->numLevels; level++) {
+            total_texture_bytes += ktxTexture_GetImageSize(ktx, level);
+        }
 
-        uint32_t mip_levels = getMipLevels(*texture);
         gpu_textures.emplace_back(alloc.makeTexture(texture->width,
                                                     texture->height,
-                                                    mip_levels));
+                                                    texture->numLevels));
     }
+
+    HostBuffer texture_staging = alloc.makeStagingBuffer(total_texture_bytes);
+
+    const uint32_t num_textures = cpu_textures.size();
 
     // Copy all geometry into single buffer
     const auto &cpu_meshes = scene_desc.getMeshes();
@@ -564,10 +397,10 @@ shared_ptr<Scene> LoaderState::makeScene(
                          data.buffer, 1, &copy_settings);
 
     // Set initial texture layouts
-    DynArray<VkImageMemoryBarrier> barriers(gpu_textures.size());
-    for (size_t i = 0; i < gpu_textures.size(); i++) {
+    DynArray<VkImageMemoryBarrier> texture_barriers(num_textures);
+    for (size_t i = 0; i < num_textures; i++) {
         const LocalImage &gpu_texture = gpu_textures[i];
-        VkImageMemoryBarrier &barrier = barriers[i];
+        VkImageMemoryBarrier &barrier = texture_barriers[i];
 
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barrier.pNext = nullptr;
@@ -580,37 +413,90 @@ shared_ptr<Scene> LoaderState::makeScene(
         barrier.image = gpu_texture.image;
         barrier.subresourceRange = {
             VK_IMAGE_ASPECT_COLOR_BIT,
-            0, 1, 0, 1
+            0, gpu_texture.mipLevels,
+            0, 1,
         };
     }
 
-    if (gpu_textures.size() > 0) {
+    if (num_textures > 0) {
         dev.dt.cmdPipelineBarrier(transferStageCommand,
                                   VK_PIPELINE_STAGE_TRANSFER_BIT,
                                   VK_PIPELINE_STAGE_TRANSFER_BIT,
                                   0, 0, nullptr, 0, nullptr,
-                                  barriers.size(), barriers.data());
+                                  texture_barriers.size(),
+                                  texture_barriers.data());
 
-        for (size_t i = 0; i < gpu_textures.size(); i++) {
-            const HostBuffer &stage_buffer = texture_stagings[i];
+        // Copy all textures into staging buffer & record cpu -> gpu copies
+        uint8_t *base_texture_staging =
+            reinterpret_cast<uint8_t *>(texture_staging.ptr);
+        VkDeviceSize cur_staging_offset = 0;
+
+        vector<VkBufferImageCopy> copy_infos;
+        for (size_t i = 0; i < num_textures; i++) {
+            const shared_ptr<Texture> &cpu_texture = cpu_textures[i];
             const LocalImage &gpu_texture = gpu_textures[i];
-            VkBufferImageCopy copy_spec {};
-            copy_spec.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            copy_spec.imageSubresource.mipLevel = 0;
-            copy_spec.imageSubresource.baseArrayLayer = 0;
-            copy_spec.imageSubresource.layerCount = 1;
-            copy_spec.imageExtent =
-                { gpu_texture.width, gpu_texture.height, 1 };
+            uint32_t base_width = cpu_texture->width;
+            uint32_t base_height = cpu_texture->height;
+            uint32_t num_levels = cpu_texture->numLevels;
 
+            copy_infos.resize(num_levels);
+            ktxTexture *ktx = cpu_texture->data;
+            const uint8_t *ktx_data = ktxTexture_GetData(ktx);
+
+            for (uint32_t level = 0; level < num_levels; level++) {
+                // Copy to staging
+                VkDeviceSize ktx_level_offset;
+                KTX_error_code res =
+                    ktxTexture_GetImageOffset(ktx, level, 0, 0,
+                                              &ktx_level_offset);
+                ktxCheck(res);
+
+                VkDeviceSize num_level_bytes =
+                    ktxTexture_GetImageSize(ktx, level);
+
+                memcpy(base_texture_staging + cur_staging_offset,
+                       ktx_data + ktx_level_offset, 
+                       num_level_bytes);
+
+                uint32_t level_div = 1 << level;
+                uint32_t level_width = max(1U, base_width / level_div);
+                uint32_t level_height = max(1U, base_height / level_div);
+
+                // Set level copy
+                VkBufferImageCopy copy_info {};
+                copy_info.bufferOffset = cur_staging_offset;
+                copy_info.imageSubresource.aspectMask =
+                    VK_IMAGE_ASPECT_COLOR_BIT;
+                copy_info.imageSubresource.mipLevel = level;
+                copy_info.imageSubresource.baseArrayLayer = 0;
+                copy_info.imageSubresource.layerCount = 1;
+                copy_info.imageExtent = { 
+                    level_width,
+                    level_height,
+                    1,
+                };
+
+                copy_infos[level] = copy_info;
+
+                cur_staging_offset += num_level_bytes;
+            }
+
+            // Note that number of copy commands is num_levels
+            // not copy_infos.size(), because the vector is shared
+            // between textures to avoid allocs
             dev.dt.cmdCopyBufferToImage(transferStageCommand,
-                                        stage_buffer.buffer,
+                                        texture_staging.buffer,
                                         gpu_texture.image,
                                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                        1, &copy_spec);
+                                        num_levels,
+                                        copy_infos.data());
         }
 
-        // Transfer queue relinquish mip level 0
-        for (VkImageMemoryBarrier &barrier : barriers) {
+        // Flush staging buffer
+        texture_staging.flush(dev);
+
+        // Transfer queue relinquish texture barriers
+        for (VkImageMemoryBarrier &barrier : texture_barriers) {
             barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             barrier.dstAccessMask = 0;
             barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -620,7 +506,7 @@ shared_ptr<Scene> LoaderState::makeScene(
         }
     }
 
-    // Transfer queue relinquish geometry (also barrier on geometry write)
+    // Transfer queue relinquish geometry
     VkBufferMemoryBarrier geometry_barrier;
     geometry_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
     geometry_barrier.pNext = nullptr;
@@ -638,7 +524,8 @@ shared_ptr<Scene> LoaderState::makeScene(
                               VK_PIPELINE_STAGE_TRANSFER_BIT,
                               0, 0, nullptr,
                               1, &geometry_barrier,
-                              barriers.size(), barriers.data());
+                              texture_barriers.size(),
+                              texture_barriers.data());
 
     REQ_VK(dev.dt.endCommandBuffer(transferStageCommand));
 
@@ -655,9 +542,12 @@ shared_ptr<Scene> LoaderState::makeScene(
     REQ_VK(dev.dt.beginCommandBuffer(gfxCopyCommand, &begin_info));
 
     // Finish moving geometry onto graphics queue family
+    // geometry and textures need separate barriers due to different
+    // dependent stages
     geometry_barrier.srcAccessMask = 0;
     geometry_barrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT |
                                      VK_ACCESS_INDEX_READ_BIT;
+
     dev.dt.cmdPipelineBarrier(gfxCopyCommand,
                               VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                               VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
@@ -665,45 +555,23 @@ shared_ptr<Scene> LoaderState::makeScene(
                               1, &geometry_barrier,
                               0, nullptr);
 
-    if (gpu_textures.size() > 0)  {
-        // Finish acquiring mip level 0 on graphics queue and transition layout
-        for (VkImageMemoryBarrier &barrier : barriers) {
+    if (num_textures > 0)  {
+        for (VkImageMemoryBarrier &barrier : texture_barriers) {
             barrier.srcAccessMask = 0;
-            barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
             barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             barrier.srcQueueFamilyIndex = dev.transferQF;
             barrier.dstQueueFamilyIndex = dev.gfxQF;
         }
 
-        dev.dt.cmdPipelineBarrier(gfxCopyCommand,
-                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                  0, 0, nullptr, 0, nullptr,
-                                  barriers.size(), barriers.data());
-
-        generateMips(dev, gfxCopyCommand, gpu_textures, barriers);
-
-        // Final layout transition for textures
-        for (size_t texture_idx = 0; texture_idx < gpu_textures.size();
-                texture_idx++) {
-            const LocalImage &gpu_texture = gpu_textures[texture_idx];
-            VkImageMemoryBarrier &barrier = barriers[texture_idx];
-
-            barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            barrier.subresourceRange.baseMipLevel = 0;
-            barrier.subresourceRange.levelCount = gpu_texture.mipLevels;
-        }
-
+        // Finish acquiring mip level 0 on graphics queue and transition layout
         dev.dt.cmdPipelineBarrier(gfxCopyCommand,
                                   VK_PIPELINE_STAGE_TRANSFER_BIT,
                                   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
                                   0, 0, nullptr, 0, nullptr,
-                                  barriers.size(), barriers.data());
-
+                                  texture_barriers.size(),
+                                  texture_barriers.data());
     }
 
     REQ_VK(dev.dt.endCommandBuffer(gfxCopyCommand));
@@ -724,7 +592,7 @@ shared_ptr<Scene> LoaderState::makeScene(
     resetFence(dev, fence);
 
     vector<VkImageView> texture_views;
-    texture_views.reserve(gpu_textures.size());
+    texture_views.reserve(num_textures);
     for (const LocalImage &gpu_texture : gpu_textures) {
         VkImageViewCreateInfo view_info;
         view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -863,7 +731,9 @@ shared_ptr<Scene> LoaderState::makeScene(
 
 shared_ptr<Texture> LoaderState::loadTexture(const vector<uint8_t> &raw)
 {
-    return readSDRTexture(raw.data(), raw.size());
+    // FIXME
+    (void)raw;
+    return nullptr;
 }
 
 

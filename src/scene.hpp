@@ -14,6 +14,9 @@
 #include "vulkan_handles.hpp"
 #include "vulkan_memory.hpp"
 
+// Forward declare ktxTexture as kind of an opaque backing data type
+struct ktxTexture;
+
 namespace v4r {
 
 struct PerSceneDescriptorConfig {
@@ -39,9 +42,11 @@ struct VertexImpl;
 struct Texture {
     uint32_t width;
     uint32_t height;
-    uint32_t num_channels;
+    uint32_t numLevels;
 
-    ManagedArray<uint8_t> raw_image;
+    ktxTexture *data;
+
+    ~Texture();
 };
 
 namespace MaterialParam {

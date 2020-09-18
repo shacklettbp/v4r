@@ -41,6 +41,9 @@ namespace BufferFlags {
 };
 
 namespace ImageFlags {
+    static constexpr VkFormatFeatureFlags precomputedMipmapTextureReqs =
+        VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+
     static constexpr VkImageUsageFlags precomputedMipmapTextureUsage =
         VK_IMAGE_USAGE_TRANSFER_DST_BIT |
         VK_IMAGE_USAGE_SAMPLED_BIT;
@@ -318,7 +321,8 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
 
     uint32_t stage_type_idx = findMemoryTypeIndex(
             stage_reqs.memoryTypeBits,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                VK_MEMORY_PROPERTY_HOST_CACHED_BIT,
             dev_mem_props);
 
     VkMemoryRequirements shader_reqs =
@@ -438,10 +442,10 @@ MemoryAllocator::MemoryAllocator(const DeviceState &d,
     : dev(d),
       formats_ {
           chooseFormat(dev.phy, inst,
-                       ImageFlags::runtimeMipmapTextureReqs,
-                       array { VK_FORMAT_R8G8B8A8_UNORM }),
+                       ImageFlags::precomputedMipmapTextureReqs,
+                       array { VK_FORMAT_BC7_UNORM_BLOCK }),
           chooseFormat(dev.phy, inst,
-                       ImageFlags::runtimeMipmapTextureReqs,
+                       ImageFlags::precomputedMipmapTextureReqs,
                        array { VK_FORMAT_R16G16B16A16_SFLOAT }),
           chooseFormat(dev.phy, inst,
                        ImageFlags::colorAttachmentReqs,
@@ -575,6 +579,8 @@ LocalImage MemoryAllocator::makeTexture(uint32_t width, uint32_t height,
                                         uint32_t mip_levels,
                                         bool precomputed_mipmaps)
 {
+    assert(precomputed_mipmaps == true);
+
     auto [texture_img, reqs] = makeUnboundImage(dev, width, height, mip_levels,
             formats_.sdrTexture,
             precomputed_mipmaps ? ImageFlags::precomputedMipmapTextureUsage :

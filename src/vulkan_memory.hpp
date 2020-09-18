@@ -128,7 +128,7 @@ public:
 
     LocalImage makeTexture(uint32_t width, uint32_t height,
                            uint32_t mip_levels,
-                           bool precomputed_mipmaps=false);
+                           bool precomputed_mipmaps=true);
 
     LocalImage makeColorAttachment(uint32_t width, uint32_t height);
     LocalImage makeDepthAttachment(uint32_t width, uint32_t height);

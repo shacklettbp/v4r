@@ -5,27 +5,12 @@
 #include "utils.hpp"
 
 #include <v4r/assets.hpp>
-
-#include <assimp/scene.h>
 #include <simdjson.h>
+#include <ktx.h>
+
+#include <filesystem>
 
 namespace v4r {
-
-std::shared_ptr<Texture> readSDRTexture(const uint8_t *input,
-                                        size_t num_bytes);
-
-template <typename MaterialParamType>
-std::vector<std::shared_ptr<Material>> assimpParseMaterials(
-        const aiScene *scene, const std::shared_ptr<Texture> &default_diffuse);
-
-template <typename VertexType>
-std::pair<std::vector<VertexType>, std::vector<uint32_t>> assimpParseMesh(
-        const aiMesh *mesh);
-
-void assimpParseInstances(SceneDescription &desc,
-        const aiScene *scene,
-        const std::vector<uint32_t> &mesh_materials,
-        const glm::mat4 &coordinate_txfm);
 
 struct GLTFBuffer {
     const uint8_t *dataPtr;
@@ -95,6 +80,7 @@ struct GLTFNode {
 };
 
 struct GLTFScene {
+    std::filesystem::path sceneDirectory;
     simdjson::dom::parser jsonParser;
     simdjson::dom::element root;
     std::vector<uint8_t> internalData;
@@ -124,6 +110,8 @@ gltfParseMesh(const GLTFScene &scene, uint32_t mesh_idx);
 inline void gltfParseInstances(SceneDescription &desc,
                         const GLTFScene &scene,
                         const glm::mat4 &coordinate_txfm);
+
+void ktxCheck(KTX_error_code r);
 
 }
 
