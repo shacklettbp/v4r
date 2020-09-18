@@ -12,15 +12,16 @@ IF (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
         "MinSizeRel" "RelWithDebInfo")
 ENDIF()
 
-project(${NAME} LANGUAGES CXX CUDA)
+project(${NAME} LANGUAGES C CXX CUDA)
 
 string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
 
+set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED 11)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED 17)
-
-add_compile_options(-Wall -Wextra -Wshadow)
 
 # Hack to prefer linking against vulkan sdk
 IF (DEFINED ENV{VULKAN_SDK})
@@ -43,20 +44,10 @@ ENDIF()
 set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 set(THREADS_PREFER_PTHREAD_FLAG TRUE)
 find_package(Threads REQUIRED)
-
-include_directories(external)
-
 find_package(CUDAToolkit REQUIRED)
 
 IF (NOT USE_BUNDLED)
     find_package(glm 0.9.9.8 CONFIG)
-ENDIF()
-
-IF (NOT glm_FOUND OR USE_BUNDLED)
-    message(STATUS "Using bundled GLM")
-    set(GLM_INCLUDE_OVERRIDE "${CMAKE_CURRENT_SOURCE_DIR}/external/glm")
-ELSE ()
-    set(GLM_INCLUDE_INCLUDE_OVERRIDE "")
 ENDIF()
 
 IF (NOT USE_BUNDLED)
@@ -67,27 +58,10 @@ IF (NOT USE_BUNDLED)
     ENDIF()
 ENDIF()
 
-IF (NOT ASSIMP_FOUND OR USE_BUNDLED)
-    message(STATUS "Using bundled assimp")
-    set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "ASSIMP_BUILD_ASSIMP_TOOLS" FORCE)
-    set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "ASSIMP_BUILD_TESTS" FORCE)
-    add_subdirectory(external/assimp)
-    include_directories(external/assimp/include)
-ENDIF()
-
 find_package(glfw3 3.3 QUIET)
 
-set(SIMDJSON_JUST_LIBRARY ON CACHE INTERNAL "")
-set(SIMDJSON_BUILD_STATIC ON CACHE INTERNAL "")
-add_subdirectory(external/simdjson)
-
-add_library(basis_universal SHARED
-    external/basis_universal/transcoder/basisu_transcoder.cpp
-    external/basis_universal_shim/transcoder_init.cpp)
-set_target_properties(basis_universal PROPERTIES LIBRARY_OUTPUT_DIRECTORY
-    ${CMAKE_CURRENT_BINARY_DIR}/external/basis_universal)
-target_include_directories(basis_universal SYSTEM PUBLIC
-    external/basis_universal/transcoder/)
+include_directories(external)
+add_subdirectory(external)
 
 add_subdirectory(src)
 add_subdirectory(bin)

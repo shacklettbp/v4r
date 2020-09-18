@@ -6,9 +6,9 @@ add_definitions(-DVK_NO_PROTOTYPES -DGLM_FORCE_DEPTH_ZERO_TO_ONE)
 # Build vulkan dispatch table
 get_directory_property(DIR_DEFINES DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} COMPILE_DEFINITIONS )
 set(DEFINE_STR "")
-FOREACH(f ${DIR_DEFINES})
+foreach (f ${DIR_DEFINES})
     list(APPEND DEFINE_STR "-D${f}")
-ENDFOREACH()
+endforeach()
 
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/dispatch")
 
@@ -73,8 +73,12 @@ target_include_directories(v4r
 
 add_dependencies(v4r generate_vk_dispatch compile_shaders)
 
+# Get rid of KTX warnings
+get_target_property(KTX_INCLUDE_DIR ktx INTERFACE_INCLUDE_DIRECTORIES)
+target_include_directories(v4r SYSTEM PRIVATE ${KTX_INCLUDE_DIR})
+
 target_link_libraries(v4r Vulkan::Vulkan CUDA::cudart
-    Threads::Threads assimp::assimp simdjson basis_universal)
+    Threads::Threads assimp::assimp simdjson ktx)
 
 add_library(v4r_headless INTERFACE)
 add_dependencies(v4r_headless v4r)
@@ -127,3 +131,13 @@ if (NVIDIA_EGL)
     add_dependencies(v4r_headless v4r_headless_hacks)
     target_link_libraries(v4r_headless INTERFACE v4r_headless_hacks)
 endif()
+
+# Add warnings as public properties on all targets defined here
+get_property(ADDED_TARGETS DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    PROPERTY BUILDSYSTEM_TARGETS)
+foreach (LOCAL_TARGET ${ADDED_TARGETS})
+    get_property(TARGET_TYPE TARGET ${LOCAL_TARGET} PROPERTY TYPE)
+    if (${TARGET_TYPE} STREQUAL "SHARED_LIBRARY")
+        target_compile_options(${LOCAL_TARGET} PUBLIC -Wall -Wextra -Wshadow)
+    endif()
+endforeach()

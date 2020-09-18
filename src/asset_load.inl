@@ -7,15 +7,12 @@
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
-#include <basisu_transcoder.h>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/string_cast.hpp>
 
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb/stb_image.h>
-#undef STB_IMAGE_IMPLEMENTATION
+#include <ktx.h>
 
 #include <cassert>
 #include <iostream>
@@ -24,113 +21,6 @@
 #include <fstream>
 
 namespace v4r {
-
-std::shared_ptr<Texture> readSDRTexture(const uint8_t *raw_input,
-                                        size_t num_bytes)
-{
-    if (stbi_is_hdr_from_memory(raw_input, num_bytes)) {
-        std::cerr << "Trying to read HDR texture as SDR" << std::endl;
-        fatalExit();
-    }
-
-    int width, height, num_channels;
-    uint8_t *texture_data =
-        stbi_load_from_memory(raw_input, num_bytes,
-                              &width, &height, &num_channels, 4);
-
-    if (texture_data == nullptr) {
-        std::cerr << "Failed to load texture" << std::endl;
-        fatalExit();
-    }
-
-    return std::make_shared<Texture>(Texture {
-        static_cast<uint32_t>(width),
-        static_cast<uint32_t>(height),
-        4,
-        ManagedArray<uint8_t>(texture_data, stbi_image_free)
-    });
-}
-
-static void basisImageFree(void *ptr)
-{
-    delete[] reinterpret_cast<uint8_t *>(ptr);
-}
-
-std::shared_ptr<Texture> readBasisTexture(const uint8_t *raw_input,
-                                          size_t num_bytes)
-{
-    using namespace basist;
-    static basist::etc1_global_selector_codebook codebook;
-
-    basisu_transcoder transcoder(&codebook);
-
-    bool valid_basis = transcoder.validate_header(raw_input, num_bytes);
-    if (!valid_basis) {
-        std::cerr << "Invalid basis texture" << std::endl;
-        fatalExit();
-    }
-
-    basisu_file_info file_info;
-    bool file_info_success =
-        transcoder.get_file_info(raw_input, num_bytes, file_info);
-
-    if (!file_info_success) {
-        std::cerr << "Invalid basis texture: file info failed" << std::endl;
-        fatalExit();
-    }
-
-    if (file_info.m_total_images != 1) {
-        std::cerr << "Invalid basis texture: only single images supported"
-                  << std::endl;
-        fatalExit();
-    }
-
-
-    uint32_t width, height, total_blocks;
-    transcoder.get_image_level_desc(raw_input, num_bytes, 0, 0, 
-                                    width, height, total_blocks);
-
-    uint32_t num_pixels = width * height;
-    uint8_t *transcoded = new uint8_t[num_pixels * 4];
-
-    transcoder.start_transcoding(raw_input, num_bytes);
-
-    bool transcode_success = transcoder.transcode_image_level(
-            raw_input, num_bytes, 0, 0, transcoded, num_pixels,
-            transcoder_texture_format::cTFRGBA32, 0, width,
-            nullptr, height);
-
-    if (!transcode_success) {
-        std::cerr << "Basis transcode failed" << std::endl;
-        fatalExit();
-    }
-
-    transcoder.stop_transcoding();
-
-    // FIXME really should do this flip on the GPU or something
-    if (file_info.m_y_flipped) {
-        for (uint32_t row_idx = 0; row_idx < height / 2; row_idx++) {
-            uint32_t orig_row_idx = height - row_idx - 1;
-            for (uint32_t col_idx = 0; col_idx < width; col_idx++) {
-                for (uint32_t comp_idx = 0; comp_idx < 4; comp_idx++) {
-                    uint32_t flip_idx =
-                        (row_idx * width + col_idx) * 4 + comp_idx;
-                    uint32_t orig_idx =
-                        (orig_row_idx * width + col_idx) * 4 + comp_idx;
-
-                    std::swap(transcoded[flip_idx], transcoded[orig_idx]);
-                }
-            }
-        }
-    }
-
-    return std::make_shared<Texture>(Texture {
-        width,
-        height,
-        4,
-        ManagedArray<uint8_t>(transcoded, basisImageFree)
-    });
-}
 
 static const std::shared_ptr<Texture> assimpLoadTexture(
         const aiScene *raw_scene,
