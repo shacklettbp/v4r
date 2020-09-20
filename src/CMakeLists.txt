@@ -1,4 +1,3 @@
-include_directories(${ASSIMP_INCLUDE_DIRS})
 include_directories(${GLM_INCLUDE_DIRS})
 
 add_definitions(-DVK_NO_PROTOTYPES -DGLM_FORCE_DEPTH_ZERO_TO_ONE)
@@ -78,7 +77,7 @@ get_target_property(KTX_INCLUDE_DIR ktx INTERFACE_INCLUDE_DIRECTORIES)
 target_include_directories(v4r SYSTEM PRIVATE ${KTX_INCLUDE_DIR})
 
 target_link_libraries(v4r Vulkan::Vulkan CUDA::cudart
-    Threads::Threads assimp::assimp simdjson ktx)
+    Threads::Threads simdjson ktx)
 
 add_library(v4r_headless INTERFACE)
 add_dependencies(v4r_headless v4r)

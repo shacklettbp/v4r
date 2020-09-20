@@ -50,14 +50,6 @@ IF (NOT USE_BUNDLED)
     find_package(glm 0.9.9.8 CONFIG)
 ENDIF()
 
-IF (NOT USE_BUNDLED)
-    find_package(ASSIMP 5.0.1 CONFIG)
-    if (ASSIMP_FOUND)
-        find_library(ASSIMP_LIBRARY_NAMES ${ASSIMP_LIBRARIES} PATH ${ASSIMP_LIBRARY_DIRS})
-        set_target_properties(assimp::assimp PROPERTIES IMPORTED_LOCATION "${ASSIMP_LIBRARY_NAMES}")
-    ENDIF()
-ENDIF()
-
 find_package(glfw3 3.3 QUIET)
 
 include_directories(external)
