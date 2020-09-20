@@ -373,10 +373,12 @@ shared_ptr<Scene> LoaderState::makeScene(
                                                     texture->height,
                                                     texture->numLevels));
     }
-
-    HostBuffer texture_staging = alloc.makeStagingBuffer(total_texture_bytes);
-
     const uint32_t num_textures = cpu_textures.size();
+
+    optional<HostBuffer> texture_staging;
+    if (num_textures > 0) {
+        texture_staging.emplace(alloc.makeStagingBuffer(total_texture_bytes));
+    }
 
     // Copy all geometry into single buffer
     const auto &cpu_meshes = scene_desc.getMeshes();
@@ -428,7 +430,7 @@ shared_ptr<Scene> LoaderState::makeScene(
 
         // Copy all textures into staging buffer & record cpu -> gpu copies
         uint8_t *base_texture_staging =
-            reinterpret_cast<uint8_t *>(texture_staging.ptr);
+            reinterpret_cast<uint8_t *>(texture_staging->ptr);
         VkDeviceSize cur_staging_offset = 0;
 
         vector<VkBufferImageCopy> copy_infos;
@@ -485,7 +487,7 @@ shared_ptr<Scene> LoaderState::makeScene(
             // not copy_infos.size(), because the vector is shared
             // between textures to avoid allocs
             dev.dt.cmdCopyBufferToImage(transferStageCommand,
-                                        texture_staging.buffer,
+                                        texture_staging->buffer,
                                         gpu_texture.image,
                                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                         num_levels,
@@ -493,7 +495,7 @@ shared_ptr<Scene> LoaderState::makeScene(
         }
 
         // Flush staging buffer
-        texture_staging.flush(dev);
+        texture_staging->flush(dev);
 
         // Transfer queue relinquish texture barriers
         for (VkImageMemoryBarrier &barrier : texture_barriers) {
