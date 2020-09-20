@@ -28,6 +28,11 @@ add_executable(lighting
 )
 target_link_libraries(lighting v4r_headless v4r_debug)
 
+add_executable(preprocess
+    preprocess.cpp
+)
+target_link_libraries(preprocess v4r_preprocess)
+
 if (TARGET v4r_display)
     add_executable(display
         display.cpp

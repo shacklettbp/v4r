@@ -117,6 +117,19 @@ target_link_libraries(v4r_debug CUDA::cudart)
 target_include_directories(v4r_debug
     PUBLIC ${MAIN_INCLUDE_DIR})
 
+# Scene / Mesh Preprocessing:
+
+add_library(v4r_preprocess SHARED
+    ../include/v4r/preprocess.hpp
+    preprocess.cpp
+)
+
+target_include_directories(v4r_preprocess
+    PUBLIC ${MAIN_INCLUDE_DIR})
+
+target_link_libraries(v4r_preprocess PRIVATE
+    v4r meshoptimizer)
+
 # Hacks
 
 # if nvidia libEGL exists, apply nvidia workarounds
