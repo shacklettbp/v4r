@@ -17,6 +17,8 @@ using Shader::ViewInfo;
 using Shader::RenderPushConstant;
 using Shader::CullPushConstant;
 using Shader::DrawInput;
+using Shader::Meshlet;
+using Shader::MeshChunk;
 using Shader::MeshInfo;
 
 namespace VulkanConfig {
