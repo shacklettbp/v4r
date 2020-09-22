@@ -368,17 +368,19 @@ shared_ptr<Scene> LoaderState::makeScene(const SceneDescription &desc)
                                                 staged_params,
                                                 dev, alloc);
 
-    return makeScene(staged_scene, material_metadata,
-                     EnvironmentInit(desc.getDefaultInstances(),
-                                     desc.getDefaultLights(),
-                                     staged_scene.numMeshes));
+    return makeScene(SceneLoadInfo {
+        move(staged_scene),
+        move(material_metadata),
+        EnvironmentInit(desc.getDefaultInstances(),
+                        desc.getDefaultLights(),
+                        staged_scene.numMeshes),
+    });
 }
 
-shared_ptr<Scene> LoaderState::makeScene(
-    const StagedScene &staged,
-    const MaterialMetadata &material_metadata,
-    EnvironmentInit env_init)
+shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 {
+    auto &[staged, material_metadata, env_init] = load_info;
+
     const auto &cpu_textures = material_metadata.textures;
 
     vector<LocalImage> gpu_textures;

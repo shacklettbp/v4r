@@ -143,6 +143,12 @@ struct StagedScene {
     VkDeviceSize totalBytes;
 };
 
+struct SceneLoadInfo {
+    StagedScene scene;
+    MaterialMetadata materialMetadata;
+    EnvironmentInit envInit;
+};
+
 struct LoaderImpl {
     std::add_pointer_t<
         StagedScene(const std::vector<std::shared_ptr<Mesh>> &,
@@ -214,9 +220,7 @@ public:
 
 private:
     std::shared_ptr<Scene> makeScene(
-            const StagedScene &staged,
-            const MaterialMetadata &materials,
-            EnvironmentInit env_init);
+            SceneLoadInfo load_info);
 
     const LoaderImpl impl_;
 };
