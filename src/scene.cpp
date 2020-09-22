@@ -22,7 +22,7 @@ Texture::~Texture()
 }
 
 EnvironmentInit::EnvironmentInit(
-        const vector<pair<uint32_t, InstanceProperties>> &instances,
+        const vector<InstanceProperties> &instances,
         const vector<LightProperties> &l,
         uint32_t num_meshes)
     : transforms(num_meshes),
@@ -36,11 +36,12 @@ EnvironmentInit::EnvironmentInit(
     indexMap.reserve(instances.size());
 
     for (uint32_t cur_id = 0; cur_id < instances.size(); cur_id++) {
-        auto &[mesh_idx, inst] = instances[cur_id];
+        const auto &inst = instances[cur_id];
+        uint32_t mesh_idx = inst.meshIndex;
 
         uint32_t inst_idx = transforms[mesh_idx].size();
 
-        transforms[mesh_idx].push_back(inst.modelTransform);
+        transforms[mesh_idx].push_back(inst.txfm);
         materials[mesh_idx].push_back(inst.materialIndex);
         reverseIDMap[mesh_idx].push_back(cur_id);
         indexMap.emplace_back(mesh_idx, inst_idx);
@@ -204,16 +205,16 @@ static shared_ptr<Mesh> loadMesh(string_view geometry_path)
 }
 
 template <typename VertexType, typename MaterialParamsType>
-static SceneDescription parseGLTFScene(string_view scene_path,
+static SceneDescription parseGLTFScene(std::string_view scene_path,
                                        const glm::mat4 &coordinate_txfm)
 {
     auto raw_scene = gltfLoad(scene_path);
 
-    constexpr bool need_materials = !is_same_v<MaterialParamsType,
-                                               NoMaterial>;
+    constexpr bool need_materials = !std::is_same_v<MaterialParamsType,
+                                                    NoMaterial>;
 
-    vector<shared_ptr<Material>> materials;
-    vector<shared_ptr<Mesh>> geometry;
+    std::vector<std::shared_ptr<Material>> materials;
+    std::vector<std::shared_ptr<Mesh>> geometry;
     geometry.reserve(raw_scene.meshes.size());
 
     if constexpr (need_materials) {

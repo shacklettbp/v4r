@@ -84,7 +84,7 @@ struct MaterialImpl;
 
 struct EnvironmentInit {
     EnvironmentInit(
-            const std::vector<std::pair<uint32_t, InstanceProperties>>
+            const std::vector<InstanceProperties>
                 &instances,
             const std::vector<LightProperties> &lights,
             uint32_t num_meshes);

@@ -6,19 +6,14 @@
 using namespace std;
 
 int main(int argc, char *argv[]) {
-    if (argc < 4) {
-        cerr << argv[0] << " src dst output[s]" << endl;
+    if (argc < 3) {
+        cerr << argv[0] << " src dst" << endl;
         exit(EXIT_FAILURE);
     }
 
-    string_view src = argv[1];
-    string_view dst = argv[2];
-    for (int i = 3; i < argc; i++) {
-    }
+    v4r::ScenePreprocessor dumper(argv[1]);
 
-    v4r::ScenePreprocessor dumper(src);
-
-    dumper.dump(dst);
+    dumper.dump(argv[2]);
 
     return 0;
 }
