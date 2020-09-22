@@ -126,10 +126,18 @@ public:
     std::vector<uint32_t> lightReverseIDs;
 };
 
+struct MaterialMetadata {
+    std::vector<std::shared_ptr<Texture>> textures;
+    uint32_t numMaterials;
+    uint32_t texturesPerMaterial;
+    std::vector<uint32_t> textureIndices;
+};
+
 struct StagedScene {
     HostBuffer buffer;
     VkDeviceSize indexBufferOffset;
     VkDeviceSize paramBufferOffset;
+    VkDeviceSize numMaterialParamBytes;
     VkDeviceSize meshInfoOffset;
     uint32_t numMeshes;
     VkDeviceSize totalBytes;
@@ -171,7 +179,7 @@ public:
     std::shared_ptr<Scene> loadScene(std::string_view scene_path);
 
     std::shared_ptr<Scene> makeScene(
-            const SceneDescription &scene_desc);
+            const SceneDescription &desc);
 
     std::shared_ptr<Texture> loadTexture(
             const std::vector<uint8_t> &raw);
@@ -205,6 +213,11 @@ public:
     glm::mat4 coordinateTransform;
 
 private:
+    std::shared_ptr<Scene> makeScene(
+            const StagedScene &staged,
+            const MaterialMetadata &materials,
+            EnvironmentInit env_init);
+
     const LoaderImpl impl_;
 };
 

@@ -89,7 +89,8 @@ static StagedScene stageScene(
 
     VkDeviceSize total_bytes = total_geometry_bytes;
     VkDeviceSize material_offset = 0;
-    if (param_bytes.size() > 0) {
+    VkDeviceSize num_material_bytes = param_bytes.size();
+    if (num_material_bytes > 0) {
         material_offset = alloc.alignUniformBufferOffset(total_bytes);
 
         total_bytes = material_offset + param_bytes.size();
@@ -150,6 +151,7 @@ static StagedScene stageScene(
         move(staging), 
         total_vertex_bytes,
         material_offset,
+        num_material_bytes,
         mesh_info_offset,
         static_cast<uint32_t>(meshes.size()),
         total_bytes
@@ -288,22 +290,7 @@ LoaderState::LoaderState(const DeviceState &d,
       impl_(impl)
 {}
 
-shared_ptr<Scene> LoaderState::loadScene(string_view scene_path)
-{
-    SceneDescription desc = impl_.parseScene(scene_path,
-                                             coordinateTransform);
-
-    return makeScene(desc);
-}
-
-struct MaterialsInfo {
-    vector<shared_ptr<Texture>> uniqueTextures;
-    vector<uint8_t> packedParams;
-    unordered_map<const Texture *, size_t> textureIndices;
-    vector<size_t> paramOffsets;
-};
-
-static MaterialsInfo finalizeMaterials(
+static pair<vector<uint8_t>, MaterialMetadata> stageMaterials(
         const vector<shared_ptr<Material>> &materials)
 {
     vector<shared_ptr<Texture>> textures;
@@ -318,6 +305,14 @@ static MaterialsInfo finalizeMaterials(
 
     vector<uint8_t> packed_params(num_material_bytes);
     uint8_t *cur_param_ptr = packed_params.data();
+
+    uint32_t textures_per_material = 0;
+    if (materials.size() > 0) {
+        textures_per_material = materials[0]->textures.size();
+    }
+
+    vector<uint32_t> texture_indices;
+    texture_indices.reserve(materials.size() * textures_per_material);
 
     for (const auto &material : materials) {
         memcpy(cur_param_ptr, material->paramBytes.data(),
@@ -335,24 +330,59 @@ static MaterialsInfo finalizeMaterials(
             if (inserted) {
                 textures.push_back(texture);
             }
+
+            texture_indices.push_back(iter->second);
         }
 
         param_offsets.push_back(cur_param_ptr - packed_params.data());
         cur_param_ptr += material->paramBytes.size();
     }
 
-    return { textures, packed_params, texture_tracker, param_offsets };
+    return {move(packed_params), {
+        textures,
+        uint32_t(materials.size()),
+        textures_per_material,
+        texture_indices,
+    }};
+}
+
+shared_ptr<Scene> LoaderState::loadScene(string_view scene_path)
+{
+    if (scene_path.substr(scene_path.find('.') + 1) == "bps") {
+        //return impl_.loadPreprocessedScene(scene_path);
+        return nullptr;
+    } else {
+        SceneDescription desc = impl_.parseScene(scene_path,
+                                                 coordinateTransform);
+
+        return makeScene(desc);
+    }
+}
+
+shared_ptr<Scene> LoaderState::makeScene(const SceneDescription &desc)
+{
+    auto [staged_params, material_metadata] =
+        stageMaterials(desc.getMaterials());
+
+    StagedScene staged_scene = impl_.stageScene(desc.getMeshes(),
+                                                staged_params,
+                                                dev, alloc);
+
+    return makeScene(staged_scene, material_metadata,
+                     EnvironmentInit(desc.getDefaultInstances(),
+                                     desc.getDefaultLights(),
+                                     staged_scene.numMeshes));
 }
 
 shared_ptr<Scene> LoaderState::makeScene(
-        const SceneDescription &scene_desc)
+    const StagedScene &staged,
+    const MaterialMetadata &material_metadata,
+    EnvironmentInit env_init)
 {
-    const auto &materials = scene_desc.getMaterials();
+    const auto &cpu_textures = material_metadata.textures;
 
     vector<LocalImage> gpu_textures;
-
-    auto [cpu_textures, material_params, texture_indices, material_offsets] =
-        finalizeMaterials(materials);
+    gpu_textures.reserve(cpu_textures.size());
 
     // FIXME - custom loader or hacked loader that makes doing this mip
     // level by mip level possible
@@ -382,9 +412,6 @@ shared_ptr<Scene> LoaderState::makeScene(
     }
 
     // Copy all geometry into single buffer
-    const auto &cpu_meshes = scene_desc.getMeshes();
-    
-    auto staged = impl_.stageScene(cpu_meshes, material_params, dev, alloc);
 
     LocalBuffer data = alloc.makeLocalBuffer(staged.totalBytes);
 
@@ -620,29 +647,33 @@ shared_ptr<Scene> LoaderState::makeScene(
         texture_views.push_back(view);
     }
 
-    assert(materials.size() <= VulkanConfig::max_materials);
+    assert(material_metadata.numMaterials <= VulkanConfig::max_materials);
 
     DescriptorSet material_set = descriptorManager.makeSet();
 
     // FIXME null descriptorManager feels a bit indirect
-    if (material_set.hdl != VK_NULL_HANDLE && materials.size() > 0) {
+    if (material_set.hdl != VK_NULL_HANDLE &&
+        material_metadata.numMaterials > 0) {
         // If there are textures the layout is
         // 0: sampler
         // 1 .. # textures: texture arrays
         // Final: material params
         vector<VkDescriptorImageInfo> descriptor_views;
-        const size_t textures_per_material = materials[0]->textures.size();
-        descriptor_views.reserve(materials.size() * textures_per_material);
+        descriptor_views.reserve(material_metadata.numMaterials *
+                                 material_metadata.texturesPerMaterial);
         vector<VkWriteDescriptorSet> desc_updates;
-        desc_updates.reserve(textures_per_material + 1);
+        desc_updates.reserve(material_metadata.texturesPerMaterial + 1);
 
-        for (size_t material_texture_idx = 0;
-             material_texture_idx < textures_per_material;
+        for (uint32_t material_texture_idx = 0;
+             material_texture_idx < material_metadata.texturesPerMaterial;
              material_texture_idx++) {
-            for (const auto &material : materials) {
-                const auto &texture = material->textures[material_texture_idx];
-                VkImageView view =
-                    texture_views[texture_indices[texture.get()]];
+            for (uint32_t mat_idx = 0;
+                 mat_idx < material_metadata.numMaterials;
+                 mat_idx++) {
+                VkImageView view = texture_views[
+                    material_metadata.textureIndices[
+                        mat_idx * material_metadata.texturesPerMaterial +
+                            material_texture_idx]];
 
                 descriptor_views.push_back({
                     VK_NULL_HANDLE, // Immutable
@@ -656,10 +687,10 @@ shared_ptr<Scene> LoaderState::makeScene(
             desc_update.dstSet = material_set.hdl;
             desc_update.dstBinding = 1 + material_texture_idx;
             desc_update.dstArrayElement = 0;
-            desc_update.descriptorCount = materials.size();
+            desc_update.descriptorCount = material_metadata.numMaterials;
             desc_update.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
             desc_update.pImageInfo = descriptor_views.data() +
-                material_texture_idx * materials.size();
+                material_texture_idx * material_metadata.numMaterials;
             desc_update.pBufferInfo = nullptr;
             desc_update.pTexelBufferView = nullptr;
 
@@ -667,15 +698,15 @@ shared_ptr<Scene> LoaderState::makeScene(
         }
 
         VkDescriptorBufferInfo material_buffer_info;
-        if (material_params.size() > 0) {
+        if (staged.numMaterialParamBytes > 0) {
             uint32_t param_binding = 0;
-            if (textures_per_material > 0) {
-                param_binding = 1 + textures_per_material;
+            if (material_metadata.texturesPerMaterial > 0) {
+                param_binding = 1 + material_metadata.texturesPerMaterial;
             }
 
             material_buffer_info.buffer = data.buffer;
             material_buffer_info.offset = staged.paramBufferOffset;
-            material_buffer_info.range = material_params.size();
+            material_buffer_info.range = staged.numMaterialParamBytes;
 
             VkWriteDescriptorSet desc_update;
             desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -726,9 +757,7 @@ shared_ptr<Scene> LoaderState::makeScene(
         move(data),
         staged.indexBufferOffset,
         staged.numMeshes,
-        EnvironmentInit(scene_desc.getDefaultInstances(),
-                        scene_desc.getDefaultLights(),
-                        cpu_meshes.size())
+        move(env_init),
     });
 }
 
