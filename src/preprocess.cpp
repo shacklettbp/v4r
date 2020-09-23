@@ -471,8 +471,9 @@ void ScenePreprocessor::dump(string_view out_path_name)
     auto write_staging = [&](const auto &geometry,
                              const vector<uint8_t> &material_params,
                              const StagingHeader &hdr) {
-        auto stage_beginning = out.tellp();
         write_pad(256);
+
+        auto stage_beginning = out.tellp();
         // Write all vertices
         for (auto &mesh : geometry.meshes) {
             constexpr uint64_t vertex_size =
@@ -498,14 +499,14 @@ void ScenePreprocessor::dump(string_view out_path_name)
         // Write meshlets
         for (auto &mesh : geometry.meshes) {
             out.write(reinterpret_cast<const char *>(mesh.meshlets.data()),
-                      hdr.meshletBytes);
+                      mesh.meshlets.size() * sizeof(Meshlet));
         }
 
         write_pad(256);
         // Write chunks
         for (auto &mesh : geometry.meshes) {
             out.write(reinterpret_cast<const char *>(mesh.chunks.data()),
-                      hdr.meshChunkBytes);
+                      mesh.chunks.size() * sizeof(MeshChunk));
         }
 
         write_pad(256);
@@ -527,7 +528,10 @@ void ScenePreprocessor::dump(string_view out_path_name)
         write(uint32_t(metadata.textures.size()));
         for (uint32_t tex_idx = 0; tex_idx < metadata.textures.size();
              tex_idx++) {
-            out << (basename + "_" + to_string(tex_idx) + ".ktx2") << '\0';
+            const string &tex_name =
+                basename + "_" + to_string(tex_idx) + ".ktx2";
+            out.write(tex_name.data(), tex_name.size());
+            out.put(0);
         }
 
         write(uint32_t(metadata.numMaterials));
@@ -575,9 +579,10 @@ void ScenePreprocessor::dump(string_view out_path_name)
     write_scene(depth_geometry, depth_desc);
 
     uint32_t rgb_offset = out.tellp();
+    rgb_offset -= 12; // Account for 12 byte global header
     out.seekp(8);
     write(uint32_t(rgb_offset / sizeof(uint32_t)));
-    out.seekp(rgb_offset);
+    out.seekp(rgb_offset, ios::cur);
 
     write_scene(rgb_geometry, rgb_desc);
 

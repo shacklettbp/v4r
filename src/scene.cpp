@@ -266,8 +266,7 @@ static SceneLoadInfo loadPreprocessedScene(string_view scene_path_name,
                                            MemoryAllocator &alloc)
 {
     filesystem::path scene_path(scene_path_name);
-    string basename = scene_path.filename();
-    basename.resize(basename.find('.'));
+    filesystem::path scene_dir = scene_path.parent_path();
 
     ifstream scene_file(scene_path, ios::binary);
 
@@ -296,8 +295,15 @@ static SceneLoadInfo loadPreprocessedScene(string_view scene_path_name,
 
     StagingHeader hdr;
     scene_file.read(reinterpret_cast<char *>(&hdr), sizeof(StagingHeader));
+
+    auto cur_pos = scene_file.tellg();
+    auto post_hdr_alignment = cur_pos % 256;
+    if (post_hdr_alignment != 0) {
+        scene_file.seekg(256 - post_hdr_alignment, ios::cur);
+    }
+
     HostBuffer staging_buffer = alloc.makeStagingBuffer(hdr.totalBytes);
-    scene_file.read(reinterpret_cast<char *>(staging_buffer.buffer),
+    scene_file.read(reinterpret_cast<char *>(staging_buffer.ptr),
                     hdr.totalBytes);
 
     MaterialMetadata materials;
@@ -306,9 +312,10 @@ static SceneLoadInfo loadPreprocessedScene(string_view scene_path_name,
     for (uint32_t tex_idx = 0; tex_idx < num_textures; tex_idx++) {
         do {
             name_buffer.push_back(scene_file.get());
-        } while (name_buffer.back() != '\0');
+        } while (name_buffer.back() != 0);
 
-        materials.textures.emplace_back(loadKTXFile(name_buffer.data()));
+        materials.textures.emplace_back(
+            loadKTXFile((scene_dir / name_buffer.data()).c_str()));
         name_buffer.clear();
     }
 
