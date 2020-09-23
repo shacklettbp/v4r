@@ -41,7 +41,7 @@ layout (set = 0, binding = 3, scalar) writeonly buffer OutputCommands {
 };
 
 layout (set = 0, binding = 4) buffer Counts {
-    uint numOutputCommands[MAX_BATCH_SIZE];
+    uint numOutputCommands[];
 };
 
 layout (set = 1, binding = 0, scalar) readonly buffer MeshInfos {

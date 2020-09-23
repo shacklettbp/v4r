@@ -18,6 +18,5 @@ struct LightProperties {
 #define MAX_MATERIALS (1000)
 #define MAX_LIGHTS (2000)
 #define WORKGROUP_SIZE (32)
-#define MAX_BATCH_SIZE (1024)
 
 #endif
