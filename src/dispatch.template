@@ -35,6 +35,7 @@ device:
 - vkBeginCommandBuffer
 - vkEndCommandBuffer
 - vkCmdCopyBuffer
+- vkCmdFillBuffer
 - vkQueueSubmit
 - vkCreateFence
 - vkDestroyFence

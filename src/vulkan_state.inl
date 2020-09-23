@@ -38,9 +38,9 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
                                  0, nullptr);
 
     // Reset count buffer
-    dev.dt.cmdCopyBuffer(render_cmd, indirect_draw_buffer_.buffer,
-                         indirect_draw_buffer_.buffer,
-                         1, &frame_state.countResetCopy);
+    dev.dt.cmdFillBuffer(render_cmd, indirect_draw_buffer_.buffer,
+                         frame_state.indirectCountBaseOffset,
+                         frame_state.indirectCountTotalBytes, 0);
 
     VkBufferMemoryBarrier init_barrier;
     init_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;

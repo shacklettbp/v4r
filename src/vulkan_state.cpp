@@ -992,18 +992,12 @@ static PerFrameState makeFrameState(const DeviceState &dev,
             static_cast<uint32_t>(desc_set_updates.size()),
             desc_set_updates.data(), 0, nullptr);
 
-    VkBufferCopy count_reset_copy;
-    count_reset_copy.srcOffset =
-        num_frames_per_stream * param_config.totalIndirectBytes;
-    count_reset_copy.dstOffset = count_indirect_offset;
-    count_reset_copy.size = sizeof(uint32_t) * batch_size;
-
     return PerFrameState {
         cpu_sync ? makeFence(dev) : VK_NULL_HANDLE,
         { render_command, copy_command },
         count_indirect_offset,
+        sizeof(uint32_t) * batch_size,
         draw_indirect_offset,
-        count_reset_copy,
         DynArray<uint32_t>(batch_size),
         DynArray<uint32_t>(batch_size),
         base_fb_offset,
@@ -1162,8 +1156,7 @@ CommandStreamState::CommandStreamState(
               num_frames_inflight)),
       indirect_draw_buffer_(alloc.makeIndirectBuffer( 
           render_state.paramPositions.totalIndirectBytes *
-              num_frames_inflight +
-          sizeof(uint32_t) * batch_size)), // Extra space for count reset
+              num_frames_inflight)),
       render_size_(fb_cfg.imgWidth, fb_cfg.imgHeight),
       render_extent_(render_size_.x * fb_cfg.numImagesWidePerBatch,
                      render_size_.y * fb_cfg.numImagesTallPerBatch),
@@ -1188,45 +1181,6 @@ CommandStreamState::CommandStreamState(
 
         recordFBToLinearCopy(dev, frame_states_.back(), fb_cfg_, fb_);
     }
-
-    // Zero out count reset info
-    HostBuffer init_buffer = alloc.makeStagingBuffer(
-            sizeof(uint32_t) * batch_size);
-    memset(init_buffer.ptr, 0, sizeof(uint32_t) * batch_size);
-
-    VkFence init_fence = makeFence(dev);
-    VkCommandPool init_pool = makeCmdPool(dev, dev.gfxQF);
-    VkCommandBuffer init_cmd = makeCmdBuffer(dev, init_pool);
-
-    VkCommandBufferBeginInfo begin_info {};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    REQ_VK(dev.dt.beginCommandBuffer(init_cmd, &begin_info));
-
-    VkBufferCopy zero_region {
-        0, 
-        render_state.paramPositions.totalIndirectBytes * num_frames_inflight,
-        sizeof(uint32_t) * batch_size
-    };
-
-    dev.dt.cmdCopyBuffer(init_cmd, init_buffer.buffer,
-                         indirect_draw_buffer_.buffer,
-                         1, &zero_region);
-
-    REQ_VK(dev.dt.endCommandBuffer(init_cmd));
-
-    VkSubmitInfo init_submit {
-        VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        nullptr,
-        0, nullptr, nullptr,
-        1, &init_cmd,
-        0, nullptr
-    };
-
-    gfxQueue.submit(dev, 1, &init_submit, init_fence);
-    waitForFenceInfinitely(dev, init_fence);
-
-    dev.dt.destroyCommandPool(dev.hdl, init_pool, nullptr);
-    dev.dt.destroyFence(dev.hdl, init_fence, nullptr);
 }
 
 uint32_t CommandStreamState::render(const vector<Environment> &envs)

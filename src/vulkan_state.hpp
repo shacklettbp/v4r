@@ -145,8 +145,8 @@ struct PerFrameState {
     // indirectDrawBuffer starts with batch_size draw counts,
     // followed by the actual indirect draw commands
     VkDeviceSize indirectCountBaseOffset;
+    VkDeviceSize indirectCountTotalBytes;
     VkDeviceSize indirectBaseOffset;
-    VkBufferCopy countResetCopy;
     DynArray<uint32_t> drawOffsets;
     DynArray<uint32_t> maxNumDraws;
     
