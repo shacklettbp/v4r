@@ -346,7 +346,7 @@ static ProcessedGeometry<VertexType> processGeometry(
 
             processed_meshes.emplace_back(move(*processed));
         } else {
-            mesh_id_remap[mesh_idx] = -1;
+            mesh_id_remap[mesh_idx] = ~0U;
         }
     }
 
@@ -546,9 +546,19 @@ void ScenePreprocessor::dump(string_view out_path_name)
                                const vector<uint32_t> &mesh_id_remap) {
         const vector<InstanceProperties> &instances =
             desc.getDefaultInstances();
-        write(uint32_t(instances.size()));
+        uint32_t num_instances = instances.size();
         for (const InstanceProperties &orig_inst : instances) {
-            write(uint32_t(mesh_id_remap[orig_inst.meshIndex]));
+            if (mesh_id_remap[orig_inst.meshIndex] == ~0U) {
+                num_instances--;
+            }
+        }
+
+        write(uint32_t(num_instances));
+        for (const InstanceProperties &orig_inst : instances) {
+            uint32_t new_mesh_id = mesh_id_remap[orig_inst.meshIndex];
+            if (new_mesh_id == ~0U) continue;
+
+            write(uint32_t(new_mesh_id));
             write(uint32_t(orig_inst.materialIndex));
             write(orig_inst.txfm);
         }
