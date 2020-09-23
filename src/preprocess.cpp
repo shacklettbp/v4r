@@ -235,7 +235,7 @@ static vector<uint32_t> filterDegenerateTriangles(
         glm::vec3 bc = b - c;
         float check = glm::length2(glm::cross(ab, bc));
 
-        if (check < 1e-10f) {
+        if (check < 1e-20f) {
             continue;
         }
 
@@ -251,14 +251,21 @@ static vector<uint32_t> filterDegenerateTriangles(
 }
 
 template <typename VertexType>
-ProcessedMesh<VertexType> processMesh(const VertexMesh<VertexType> &orig_mesh,
-                                      vector<uint32_t> &meshlet_buffer)
+optional<ProcessedMesh<VertexType>> processMesh(
+    const VertexMesh<VertexType> &orig_mesh,
+    vector<uint32_t> &meshlet_buffer)
 {
     const vector<VertexType> &orig_vertices = orig_mesh.vertices;
     const vector<uint32_t> &orig_indices = orig_mesh.indices;
 
     vector<uint32_t> filtered_indices =
         filterDegenerateTriangles(orig_vertices, orig_indices);
+
+    if (filtered_indices.size() == 0) {
+        cerr << "Warning: removing entire degenerate mesh" << endl;
+        return optional<ProcessedMesh<VertexType>>();
+    }
+
     uint32_t num_indices = filtered_indices.size();
 
     vector<uint32_t> index_remap(orig_vertices.size());
@@ -301,32 +308,39 @@ ProcessedMesh<VertexType> processMesh(const VertexMesh<VertexType> &orig_mesh,
     };
 }
 
+template <typename VertexType>
+pair<vector<ProcessedMesh<VertexType>>, vector<uint32_t>>
+processMeshes(const SceneDescription &desc)
+{
+    vector<ProcessedMesh<VertexType>> processed_meshes;
+    vector<uint32_t> meshlet_buffer;
+    
+    for (const auto &orig_mesh : desc.getMeshes()) {
+        auto mesh_ptr = reinterpret_cast<VertexMesh<VertexType> *>(
+            orig_mesh.get());
+
+        auto processed = processMesh<VertexType>(*mesh_ptr, meshlet_buffer);
+
+        if (processed.has_value()) {
+            processed_meshes.emplace_back(move(*processed));
+        }
+    }
+
+    assert(processed_meshes.size() > 0);
+
+    return { move(processed_meshes), move(meshlet_buffer) };
+}
+
 void ScenePreprocessor::dump(string_view out_path_name)
 {
     const SceneDescription &depth_desc = scene_data_->depthDesc;
     const SceneDescription &rgb_desc = scene_data_->rgbDesc;
 
-    vector<ProcessedMesh<DepthPipeline::Vertex>> depth_meshes;
-    vector<uint32_t> depth_meshlet_buffer;
-    for (const auto &depth_mesh : depth_desc.getMeshes()) {
-        auto mesh_ptr = reinterpret_cast<VertexMesh<DepthPipeline::Vertex> *>(
-            depth_mesh.get());
+    auto [depth_meshes, depth_meshlet_buffer] =
+        processMeshes<DepthPipeline::Vertex>(depth_desc);
 
-        depth_meshes.emplace_back(
-            processMesh<DepthPipeline::Vertex>(*mesh_ptr,
-                depth_meshlet_buffer));
-    }
-
-    vector<ProcessedMesh<RGBPipeline::Vertex>> rgb_meshes;
-    vector<uint32_t> rgb_meshlet_buffer;
-    for (const auto &rgb_mesh : rgb_desc.getMeshes()) {
-        auto mesh_ptr = reinterpret_cast<VertexMesh<RGBPipeline::Vertex> *>(
-            rgb_mesh.get());
-
-        rgb_meshes.emplace_back(
-            processMesh<RGBPipeline::Vertex>(*mesh_ptr,
-                rgb_meshlet_buffer));
-    }
+    auto [rgb_meshes, rgb_meshlet_buffer] =
+        processMeshes<RGBPipeline::Vertex>(rgb_desc);
 
     filesystem::path out_path(out_path_name);
     string basename = out_path.filename();
