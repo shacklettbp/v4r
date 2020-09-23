@@ -309,26 +309,87 @@ optional<ProcessedMesh<VertexType>> processMesh(
 }
 
 template <typename VertexType>
-pair<vector<ProcessedMesh<VertexType>>, vector<uint32_t>>
-processMeshes(const SceneDescription &desc)
+struct ProcessedGeometry {
+    vector<ProcessedMesh<VertexType>> meshes;
+    vector<uint32_t> meshletBuffer;
+    vector<uint32_t> meshIDRemap;
+    vector<MeshInfo> meshInfos;
+    uint32_t totalVertices;
+    uint32_t totalIndices;
+    uint32_t totalMeshlets;
+    uint32_t totalChunks;
+};
+
+template <typename VertexType>
+static ProcessedGeometry<VertexType> processGeometry(
+    const SceneDescription &desc)
 {
+    const auto &orig_meshes = desc.getMeshes();
     vector<ProcessedMesh<VertexType>> processed_meshes;
     vector<uint32_t> meshlet_buffer;
+
+    vector<uint32_t> mesh_id_remap(desc.getMeshes().size());
     
-    for (const auto &orig_mesh : desc.getMeshes()) {
+    for (uint32_t mesh_idx = 0; mesh_idx < orig_meshes.size(); mesh_idx++) {
+        const auto &orig_mesh = orig_meshes[mesh_idx];
         auto mesh_ptr = reinterpret_cast<VertexMesh<VertexType> *>(
             orig_mesh.get());
 
         auto processed = processMesh<VertexType>(*mesh_ptr, meshlet_buffer);
 
         if (processed.has_value()) {
+            mesh_id_remap[mesh_idx] = processed_meshes.size();
+
             processed_meshes.emplace_back(move(*processed));
+        } else {
+            mesh_id_remap[mesh_idx] = -1;
         }
     }
 
     assert(processed_meshes.size() > 0);
 
-    return { move(processed_meshes), move(meshlet_buffer) };
+    uint32_t num_vertices = 0;
+    uint32_t num_indices = 0;
+    uint32_t num_meshlets = 0;
+    uint32_t num_chunks = 0;
+
+    vector<MeshInfo> mesh_infos;
+    for (auto &mesh : processed_meshes) {
+        // Need to change all chunk offsets to be global
+        // to the whole scene
+        for (auto &chunk : mesh.chunks) {
+            chunk.vertexOffset += num_vertices;
+            chunk.indexOffset += num_indices;
+            chunk.meshletOffset += num_meshlets;
+        }
+
+        uint32_t chunk_offset = num_chunks;
+        assert(chunk_offset < 65536);
+        assert(mesh.chunks.size() < 65536);
+        mesh_infos.push_back(MeshInfo {
+            uint16_t(chunk_offset),
+            uint16_t(mesh.chunks.size()),
+            num_vertices,
+            num_indices,
+            uint32_t(mesh.indices.size()),
+        });
+
+        num_vertices += mesh.vertices.size();
+        num_indices += mesh.indices.size();
+        num_meshlets += mesh.meshlets.size();
+        num_chunks += mesh.chunks.size();
+    }
+
+    return ProcessedGeometry<VertexType> {
+        move(processed_meshes),
+        move(meshlet_buffer),
+        move(mesh_id_remap),
+        move(mesh_infos),
+        num_vertices,
+        num_indices,
+        num_meshlets,
+        num_chunks,
+    };
 }
 
 void ScenePreprocessor::dump(string_view out_path_name)
@@ -336,11 +397,8 @@ void ScenePreprocessor::dump(string_view out_path_name)
     const SceneDescription &depth_desc = scene_data_->depthDesc;
     const SceneDescription &rgb_desc = scene_data_->rgbDesc;
 
-    auto [depth_meshes, depth_meshlet_buffer] =
-        processMeshes<DepthPipeline::Vertex>(depth_desc);
-
-    auto [rgb_meshes, rgb_meshlet_buffer] =
-        processMeshes<RGBPipeline::Vertex>(rgb_desc);
+    auto depth_geometry = processGeometry<DepthPipeline::Vertex>(depth_desc);
+    auto rgb_geometry = processGeometry<RGBPipeline::Vertex>(rgb_desc);
 
     filesystem::path out_path(out_path_name);
     string basename = out_path.filename();
@@ -361,87 +419,63 @@ void ScenePreprocessor::dump(string_view out_path_name)
         }
     };
 
-    auto write_meshes = [&](auto meshes, auto meshlet_buffer) {
-        uint32_t num_vertices = 0;
-        uint32_t num_indices = 0;
-        uint32_t num_meshlets = 0;
-        uint32_t num_chunks = 0;
-
-        vector<MeshInfo> mesh_infos;
-
-        for (auto &mesh : meshes) {
-            // FIXME doing this offset here seems hacky
-            // Need to change all chunk offsets to be global
-            // to the whole scene
-            for (auto &chunk : mesh.chunks) {
-                chunk.vertexOffset += num_vertices;
-                chunk.indexOffset += num_indices;
-                chunk.meshletOffset += num_meshlets;
-            }
-
-            uint32_t chunk_offset = num_chunks;
-            assert(chunk_offset < 65536);
-            assert(mesh.chunks.size() < 65536);
-            mesh_infos.push_back(MeshInfo {
-                uint16_t(chunk_offset),
-                uint16_t(mesh.chunks.size()),
-                num_vertices,
-                num_indices,
-                uint32_t(mesh.indices.size()),
-            });
-
-            num_vertices += mesh.vertices.size();
-            num_indices += mesh.indices.size();
-            num_meshlets += mesh.meshlets.size();
-            num_chunks += mesh.chunks.size();
-        }
-
-        write(num_vertices);
-        // Write all verticess
-        for (auto &mesh : meshes) {
+    auto write_meshes = [&](const auto &geometry) {
+        write(geometry.totalVertices);
+        // Write all vertices
+        for (auto &mesh : geometry.meshes) {
             out.write(reinterpret_cast<const char *>(mesh.vertices.data()),
                       mesh.vertices.size() * sizeof(
                           typename decltype(mesh.vertices)::value_type));
         }
 
-        write(num_indices);
+        write(geometry.totalIndices);
         // Write all indices
-        for (auto &mesh : meshes) {
+        for (auto &mesh : geometry.meshes) {
             out.write(reinterpret_cast<const char *>(mesh.indices.data()),
                       mesh.indices.size() * sizeof(uint32_t));
         }
 
         // Write meshlet buffer
-        write(uint32_t(meshlet_buffer.size()));
-        out.write(reinterpret_cast<const char *>(meshlet_buffer.data()),
-                  meshlet_buffer.size() * sizeof(uint32_t));
+        write(uint32_t(geometry.meshletBuffer.size()));
+        out.write(reinterpret_cast<const char *>(
+                      geometry.meshletBuffer.data()),
+                      geometry.meshletBuffer.size() * sizeof(uint32_t));
 
         // Write meshlets
-        write(num_meshlets);
-        for (auto &mesh : meshes) {
+        write(geometry.totalMeshlets);
+        for (auto &mesh : geometry.meshes) {
             out.write(reinterpret_cast<const char *>(mesh.meshlets.data()),
                       mesh.meshlets.size() * sizeof(Meshlet));
         }
 
         // Write chunks
-        write(num_chunks);
-        for (auto &mesh : meshes) {
+        write(geometry.totalChunks);
+        for (auto &mesh : geometry.meshes) {
             out.write(reinterpret_cast<const char *>(mesh.chunks.data()),
                       mesh.chunks.size() * sizeof(MeshChunk));
         }
 
         // Write mesh infos
-        write(uint32_t(mesh_infos.size()));
-        out.write(reinterpret_cast<const char *>(mesh_infos.data()),
-                  mesh_infos.size() * sizeof(MeshInfo));
+        write(uint32_t(geometry.meshInfos.size()));
+        out.write(reinterpret_cast<const char *>(geometry.meshInfos.data()),
+                  geometry.meshInfos.size() * sizeof(MeshInfo));
     };
 
-    auto write_instances = [&](const SceneDescription &desc) {
+    auto write_instances = [&](const SceneDescription &desc,
+                               const vector<uint32_t> &mesh_id_remap) {
         const vector<InstanceProperties> &instances =
             desc.getDefaultInstances();
         write(uint32_t(instances.size()));
-        out.write(reinterpret_cast<const char *>(instances.data()),
-                  instances.size() * sizeof(InstanceProperties));
+        for (const InstanceProperties &orig_inst : instances) {
+            static_assert(is_standard_layout_v<InstanceProperties>);
+
+            InstanceProperties remapped_inst(
+                    mesh_id_remap[orig_inst.meshIndex],
+                    orig_inst.materialIndex,
+                    orig_inst.txfm);
+
+            write(remapped_inst);
+        }
     };
 
     // Pad to 16 bytes
@@ -460,9 +494,9 @@ void ScenePreprocessor::dump(string_view out_path_name)
     write(uint32_t(0)); // Rewrite later
     write_materials(depth_desc);
     write_pad();
-    write_meshes(move(depth_meshes), move(depth_meshlet_buffer));
+    write_meshes(depth_geometry);
     write_pad();
-    write_instances(depth_desc);
+    write_instances(depth_desc, depth_geometry.meshIDRemap);
     write_pad();
     uint32_t rgb_offset = out.tellp() / sizeof(uint32_t);
     out.seekp(8);
@@ -470,9 +504,9 @@ void ScenePreprocessor::dump(string_view out_path_name)
     out.seekp(rgb_offset * sizeof(uint32_t));
     write_materials(rgb_desc);
     write_pad();
-    write_meshes(move(rgb_meshes), move(rgb_meshlet_buffer));
+    write_meshes(rgb_geometry);
     write_pad();
-    write_instances(rgb_desc);
+    write_instances(rgb_desc, rgb_geometry.meshIDRemap);
     write_pad();
 
     out.close();
