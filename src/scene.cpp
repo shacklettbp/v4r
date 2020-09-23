@@ -149,12 +149,21 @@ static StagedScene stageScene(
 
     return { 
         move(staging), 
-        total_vertex_bytes,
-        material_offset,
-        num_material_bytes,
-        mesh_info_offset,
-        static_cast<uint32_t>(meshes.size()),
-        total_bytes
+        StagingHeader {
+            total_vertex_bytes,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            mesh_info_offset,
+            meshes.size() * sizeof(MeshInfo),
+            material_offset,
+            num_material_bytes,
+            total_bytes,
+            static_cast<uint32_t>(meshes.size()),
+        },
     };
 }
 
@@ -253,12 +262,58 @@ static SceneDescription parseScene(string_view scene_path,
 
 template <typename VertexType, typename MaterialParamsType>
 static SceneLoadInfo loadPreprocessedScene(string_view scene_path_name,
-                                           const glm::mat4 &coordinate_txfm)
+                                           const glm::mat4 &coordinate_txfm,
+                                           MemoryAllocator &alloc)
 {
     filesystem::path scene_path(scene_path_name);
     string basename = scene_path.filename();
     basename.resize(basename.find('.'));
 
+    ifstream scene_file(scene_path, ios::binary);
+
+    auto read_uint = [&]() {
+        uint32_t val;
+        scene_file.read(reinterpret_cast<char *>(&val), sizeof(uint32_t));
+
+        return val;
+    };
+
+    uint32_t magic = read_uint();
+    if (magic != 0x55555555) {
+        cerr << "Invalid preprocessed scene" << endl;
+        fatalExit();
+    }
+
+    uint32_t depth_offset = read_uint();
+    uint32_t rgb_offset = read_uint();
+
+    // FIXME something less hacky to determine this:
+    if constexpr (is_same_v<MaterialParamsType, NoMaterial>) {
+        scene_file.seekg(depth_offset * sizeof(uint32_t), ios::cur);
+    } else {
+        scene_file.seekg(rgb_offset * sizeof(uint32_t), ios::cur);
+    }
+
+    uint64_t num_staging_bytes = read_uint();
+
+    HostBuffer staging_buffer = alloc.makeStagingBuffer(0);
+
+    MaterialMetadata materials;
+    uint32_t num_textures = read_uint();
+    vector<char> name_buffer;
+    for (uint32_t tex_idx = 0; tex_idx < num_textures; tex_idx++) {
+        do {
+            name_buffer.push_back(scene_file.get());
+        } while (name_buffer.back() != '\0');
+
+        materials.textures.emplace_back(loadKTXFile(name_buffer.data()));
+        name_buffer.clear();
+    }
+
+
+    uint32_t num_materials = read_uint();
+    uint32_t num_param_bytes = read_uint();
+    vector<uint8_t> material_params;
 }
 
 template <typename VertexType, typename MaterialParamsType>
@@ -361,7 +416,8 @@ shared_ptr<Scene> LoaderState::loadScene(string_view scene_path)
 {
     if (scene_path.substr(scene_path.find('.') + 1) == "bps") {
         return makeScene(impl_.loadPreprocessedScene(scene_path,
-                                                     coordinateTransform));
+                                                     coordinateTransform,
+                                                     alloc));
     } else {
         SceneDescription desc = impl_.parseScene(scene_path,
                                                  coordinateTransform);
@@ -384,7 +440,7 @@ shared_ptr<Scene> LoaderState::makeScene(const SceneDescription &desc)
         move(material_metadata),
         EnvironmentInit(desc.getDefaultInstances(),
                         desc.getDefaultLights(),
-                        staged_scene.numMeshes),
+                        staged_scene.hdr.numMeshes),
     });
 }
 
@@ -426,7 +482,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 
     // Copy all geometry into single buffer
 
-    LocalBuffer data = alloc.makeLocalBuffer(staged.totalBytes);
+    LocalBuffer data = alloc.makeLocalBuffer(staged.hdr.totalBytes);
 
     // Start recording for transfer queue
     VkCommandBufferBeginInfo begin_info {};
@@ -435,7 +491,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 
     // Copy vertex/index buffer onto GPU
     VkBufferCopy copy_settings {};
-    copy_settings.size = staged.totalBytes;
+    copy_settings.size = staged.hdr.totalBytes;
     dev.dt.cmdCopyBuffer(transferStageCommand, staged.buffer.buffer,
                          data.buffer, 1, &copy_settings);
 
@@ -559,7 +615,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     geometry_barrier.dstQueueFamilyIndex = dev.gfxQF;
     geometry_barrier.buffer = data.buffer;
     geometry_barrier.offset = 0;
-    geometry_barrier.size = staged.totalBytes;
+    geometry_barrier.size = staged.hdr.totalBytes;
 
     // Geometry & texture barrier execute.
     dev.dt.cmdPipelineBarrier(transferStageCommand,
@@ -711,15 +767,15 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         }
 
         VkDescriptorBufferInfo material_buffer_info;
-        if (staged.numMaterialParamBytes > 0) {
+        if (staged.hdr.materialBytes > 0) {
             uint32_t param_binding = 0;
             if (material_metadata.texturesPerMaterial > 0) {
                 param_binding = 1 + material_metadata.texturesPerMaterial;
             }
 
             material_buffer_info.buffer = data.buffer;
-            material_buffer_info.offset = staged.paramBufferOffset;
-            material_buffer_info.range = staged.numMaterialParamBytes;
+            material_buffer_info.offset = staged.hdr.materialOffset ;
+            material_buffer_info.range = staged.hdr.materialBytes;
 
             VkWriteDescriptorSet desc_update;
             desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -744,9 +800,9 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 
     VkDescriptorBufferInfo mesh_info_buffer_info;
     mesh_info_buffer_info.buffer = data.buffer;
-    mesh_info_buffer_info.offset = staged.meshInfoOffset;
+    mesh_info_buffer_info.offset = staged.hdr.meshInfoOffset;
     mesh_info_buffer_info.range =
-        sizeof(MeshInfo) * staged.numMeshes;
+        sizeof(MeshInfo) * staged.hdr.numMeshes;
 
     VkWriteDescriptorSet cull_desc_update;
     cull_desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -768,8 +824,8 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         move(material_set),
         move(cull_set),
         move(data),
-        staged.indexBufferOffset,
-        staged.numMeshes,
+        staged.hdr.indexOffset,
+        staged.hdr.numMeshes,
         move(env_init),
     });
 }

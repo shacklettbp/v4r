@@ -417,12 +417,110 @@ void ScenePreprocessor::dump(string_view out_path_name)
         out.write(reinterpret_cast<const char *>(&val), sizeof(decltype(val)));
     };
 
+    // Pad to 256 (maximum uniform / storage buffer alignment requirement)
+    auto write_pad = [&](size_t align_req = 256) {
+        static char pad_buffer[64] = { 0 };
+        size_t cur_bytes = out.tellp();
+        size_t align = cur_bytes % align_req;
+        if (align != 0) {
+            out.write(pad_buffer, align_req - align);
+        }
+    };
+
+    auto align_offset = [](size_t offset) {
+        return (offset + 255) & ~255;
+    };
+
+    auto make_staging_header = [&](const auto &geometry,
+                                   const vector<uint8_t> &material_params) {
+
+        constexpr uint64_t vertex_size =
+            sizeof(typename decltype(geometry.meshes[0].vertices)::value_type);
+        uint64_t vertex_bytes = vertex_size * geometry.totalVertices;
+
+        StagingHeader hdr;
+        hdr.indexOffset = align_offset(vertex_bytes);
+
+        hdr.meshletBufferOffset = align_offset(
+            hdr.indexOffset + sizeof(uint32_t) * geometry.totalIndices);
+        hdr.meshletBufferBytes =
+            geometry.meshletBuffer.size() * sizeof(uint32_t);
+
+        hdr.meshletOffset = align_offset(
+                hdr.meshletBufferOffset + hdr.meshletBufferBytes);
+        hdr.meshletBytes = geometry.totalMeshlets * sizeof(Meshlet);
+
+        hdr.meshChunkOffset = align_offset(
+                hdr.meshletOffset + hdr.meshletBytes);
+        hdr.meshChunkBytes = geometry.totalChunks * sizeof(MeshChunk);
+
+        hdr.meshInfoOffset = align_offset(
+                hdr.meshChunkOffset + hdr.meshChunkBytes);
+        hdr.meshInfoBytes = geometry.meshInfos.size() * sizeof(MeshInfo);
+
+        hdr.materialOffset = align_offset(
+                hdr.meshInfoOffset + hdr.meshInfoBytes);
+        hdr.materialBytes = material_params.size();
+
+        hdr.totalBytes = hdr.materialOffset + hdr.materialBytes;
+        hdr.numMeshes = geometry.meshInfos.size();
+
+        return hdr;
+    };
+
+    auto write_staging = [&](const auto &geometry,
+                             const vector<uint8_t> &material_params,
+                             const StagingHeader &hdr) {
+        write_pad(256);
+        // Write all vertices
+        for (auto &mesh : geometry.meshes) {
+            constexpr uint64_t vertex_size =
+                sizeof(typename decltype(mesh.vertices)::value_type);
+            out.write(reinterpret_cast<const char *>(mesh.vertices.data()),
+                      vertex_size * mesh.vertices.size());
+        }
+
+        write_pad(256);
+        // Write all indices
+        for (auto &mesh : geometry.meshes) {
+            out.write(reinterpret_cast<const char *>(mesh.indices.data()),
+                      mesh.indices.size() * sizeof(uint32_t));
+        }
+
+        write_pad(256);
+        // Write meshlet buffer
+        out.write(reinterpret_cast<const char *>(
+                      geometry.meshletBuffer.data()),
+                  hdr.meshletBufferBytes);
+
+        write_pad(256);
+        // Write meshlets
+        for (auto &mesh : geometry.meshes) {
+            out.write(reinterpret_cast<const char *>(mesh.meshlets.data()),
+                      hdr.meshletBytes);
+        }
+
+        write_pad(256);
+        // Write chunks
+        for (auto &mesh : geometry.meshes) {
+            out.write(reinterpret_cast<const char *>(mesh.chunks.data()),
+                      hdr.meshChunkBytes);
+        }
+
+        write_pad(256);
+
+        // Write mesh infos
+        out.write(reinterpret_cast<const char *>(geometry.meshInfos.data()),
+                  hdr.meshInfoBytes);
+
+        write_pad(256);
+        out.write(reinterpret_cast<const char *>(material_params.data()),
+                  hdr.materialBytes);
+    };
+
     // FIXME material system needs to be redone. Don't actually know
     // the texture names at this point.
-    auto write_materials = [&](const SceneDescription &desc) {
-        const auto &materials = desc.getMaterials();
-        auto [packed_params, metadata] = stageMaterials(materials);
-
+    auto write_materials = [&](const MaterialMetadata &metadata) {
         write(uint32_t(metadata.textures.size()));
         for (uint32_t tex_idx = 0; tex_idx < metadata.textures.size();
              tex_idx++) {
@@ -430,56 +528,11 @@ void ScenePreprocessor::dump(string_view out_path_name)
         }
 
         write(uint32_t(metadata.numMaterials));
-        write(uint32_t(packed_params.size()));
-        out.write(reinterpret_cast<const char *>(packed_params.data()), 
-                  packed_params.size());
         write(uint32_t(metadata.texturesPerMaterial));
         out.write(reinterpret_cast<const char *>(
                       metadata.textureIndices.data()),
                   metadata.textureIndices.size() * sizeof(uint32_t));
 
-    };
-
-    auto write_meshes = [&](const auto &geometry) {
-        write(geometry.totalVertices);
-        // Write all vertices
-        for (auto &mesh : geometry.meshes) {
-            out.write(reinterpret_cast<const char *>(mesh.vertices.data()),
-                      mesh.vertices.size() * sizeof(
-                          typename decltype(mesh.vertices)::value_type));
-        }
-
-        write(geometry.totalIndices);
-        // Write all indices
-        for (auto &mesh : geometry.meshes) {
-            out.write(reinterpret_cast<const char *>(mesh.indices.data()),
-                      mesh.indices.size() * sizeof(uint32_t));
-        }
-
-        // Write meshlet buffer
-        write(uint32_t(geometry.meshletBuffer.size()));
-        out.write(reinterpret_cast<const char *>(
-                      geometry.meshletBuffer.data()),
-                      geometry.meshletBuffer.size() * sizeof(uint32_t));
-
-        // Write meshlets
-        write(geometry.totalMeshlets);
-        for (auto &mesh : geometry.meshes) {
-            out.write(reinterpret_cast<const char *>(mesh.meshlets.data()),
-                      mesh.meshlets.size() * sizeof(Meshlet));
-        }
-
-        // Write chunks
-        write(geometry.totalChunks);
-        for (auto &mesh : geometry.meshes) {
-            out.write(reinterpret_cast<const char *>(mesh.chunks.data()),
-                      mesh.chunks.size() * sizeof(MeshChunk));
-        }
-
-        // Write mesh infos
-        write(uint32_t(geometry.meshInfos.size()));
-        out.write(reinterpret_cast<const char *>(geometry.meshInfos.data()),
-                  geometry.meshInfos.size() * sizeof(MeshInfo));
     };
 
     auto write_instances = [&](const SceneDescription &desc,
@@ -499,36 +552,36 @@ void ScenePreprocessor::dump(string_view out_path_name)
         }
     };
 
-    // Pad to 16 bytes
-    auto write_pad = [&]() {
-        static char pad_buffer[15] = { 0 };
-        size_t cur_bytes = out.tellp();
-        size_t align = cur_bytes % 16;
-        if (align != 0) {
-            out.write(pad_buffer, 16 - align);
-        }
+    auto write_scene = [&](const auto &geometry,
+                           const SceneDescription &desc) {
+        const auto &materials = desc.getMaterials();
+        auto [material_params, material_metadata] = stageMaterials(materials);
+
+        StagingHeader hdr = make_staging_header(geometry, material_params);
+        write(hdr);
+
+        write_staging(geometry, material_params, hdr);
+        write_materials(material_metadata);
+
+        write_instances(desc, geometry.meshIDRemap);
+        write_pad();
     };
 
+    // FIXME should have more rigorous padding everywhere to make
+    // mmap possible
     // Header: magic + depth offset + rgb offset (bytes from header)
     write(uint32_t(0x55555555));
     write(uint32_t(0));
     write(uint32_t(0)); // Rewrite later
-    write_materials(depth_desc);
-    write_pad();
-    write_meshes(depth_geometry);
-    write_pad();
-    write_instances(depth_desc, depth_geometry.meshIDRemap);
-    write_pad();
-    uint32_t rgb_offset = out.tellp() / sizeof(uint32_t);
+
+    write_scene(depth_geometry, depth_desc);
+
+    uint32_t rgb_offset = out.tellp();
     out.seekp(8);
-    write(rgb_offset);
-    out.seekp(rgb_offset * sizeof(uint32_t));
-    write_materials(rgb_desc);
-    write_pad();
-    write_meshes(rgb_geometry);
-    write_pad();
-    write_instances(rgb_desc, rgb_geometry.meshIDRemap);
-    write_pad();
+    write(uint32_t(rgb_offset / sizeof(uint32_t)));
+    out.seekp(rgb_offset);
+
+    write_scene(rgb_geometry, rgb_desc);
 
     out.close();
 }

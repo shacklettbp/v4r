@@ -133,14 +133,29 @@ struct MaterialMetadata {
     std::vector<uint32_t> textureIndices;
 };
 
+struct StagingHeader {
+    // Geometry data
+    uint64_t indexOffset;
+    uint64_t meshletBufferOffset;
+    uint64_t meshletBufferBytes;
+    uint64_t meshletOffset;
+    uint64_t meshletBytes;
+    uint64_t meshChunkOffset;
+    uint64_t meshChunkBytes;
+    uint64_t meshInfoOffset;
+    uint64_t meshInfoBytes;
+
+    // Material data
+    uint64_t materialOffset;
+    uint64_t materialBytes;
+
+    uint64_t totalBytes;
+    uint32_t numMeshes;
+};
+
 struct StagedScene {
     HostBuffer buffer;
-    VkDeviceSize indexBufferOffset;
-    VkDeviceSize paramBufferOffset;
-    VkDeviceSize numMaterialParamBytes;
-    VkDeviceSize meshInfoOffset;
-    uint32_t numMeshes;
-    VkDeviceSize totalBytes;
+    StagingHeader hdr;
 };
 
 struct SceneLoadInfo {
@@ -166,7 +181,9 @@ struct LoaderImpl {
             loadMesh;
 
     std::add_pointer_t<
-        SceneLoadInfo(std::string_view, const glm::mat4 &)>
+        SceneLoadInfo(std::string_view,
+                      const glm::mat4 &,
+                      MemoryAllocator &)>
             loadPreprocessedScene;
 
     template <typename VertexType, typename MaterialParamsType>

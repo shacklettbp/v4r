@@ -404,22 +404,11 @@ void ktxCheck(KTX_error_code res)
     }
 }
 
-static std::shared_ptr<Texture> gltfLoadTexture(const GLTFScene &scene,
-                                                uint32_t texture_idx)
+std::shared_ptr<Texture> loadKTXFile(const char *texture_path)
 {
-    const GLTFImage &img = scene.images[scene.textures[texture_idx].sourceIdx];
-    if (img.type != GLTFImageType::EXTERNAL) {
-        std::cerr <<
-            "GLTF loading failed: Only external KTX2 textures supported"
-                  << std::endl;
-        fatalExit();
-    }
-
-    const auto &texture_path = scene.sceneDirectory / img.filePath;
-
     ktxTexture *ktx_texture;
     KTX_error_code result = ktxTexture_CreateFromNamedFile(
-            texture_path.c_str(), KTX_TEXTURE_CREATE_NO_FLAGS, &ktx_texture);
+            texture_path, KTX_TEXTURE_CREATE_NO_FLAGS, &ktx_texture);
     ktxCheck(result);
 
     if (ktx_texture->generateMipmaps) {
@@ -434,6 +423,22 @@ static std::shared_ptr<Texture> gltfLoadTexture(const GLTFScene &scene,
         ktx_texture->numLevels,
         ktx_texture
     });
+}
+
+static std::shared_ptr<Texture> gltfLoadTexture(const GLTFScene &scene,
+                                                uint32_t texture_idx)
+{
+    const GLTFImage &img = scene.images[scene.textures[texture_idx].sourceIdx];
+    if (img.type != GLTFImageType::EXTERNAL) {
+        std::cerr <<
+            "GLTF loading failed: Only external KTX2 textures supported"
+                  << std::endl;
+        fatalExit();
+    }
+
+    const auto &texture_path = scene.sceneDirectory / img.filePath;
+
+    return loadKTXFile(texture_path.c_str());
 }
 
 template <typename MaterialParamsType>
