@@ -300,7 +300,8 @@ LoaderState::LoaderState(const DeviceState &d,
       impl_(impl)
 {}
 
-static pair<vector<uint8_t>, MaterialMetadata> stageMaterials(
+// FIXME not static so preprocess can link
+pair<vector<uint8_t>, MaterialMetadata> stageMaterials(
         const vector<shared_ptr<Material>> &materials)
 {
     vector<shared_ptr<Texture>> textures;

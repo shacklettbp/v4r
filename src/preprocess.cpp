@@ -244,8 +244,12 @@ static vector<uint32_t> filterDegenerateTriangles(
         new_indices.push_back(c_idx);
     }
 
-    cout << "Filtered: " << orig_indices.size() - new_indices.size()
-         << " degenerate triangles" << endl;
+    uint32_t num_degenerate = orig_indices.size() - new_indices.size();
+
+    if (num_degenerate > 0) {
+        cout << "Filtered: " << num_degenerate
+             << " degenerate triangles" << endl;
+    }
 
     return new_indices;
 }
@@ -392,6 +396,10 @@ static ProcessedGeometry<VertexType> processGeometry(
     };
 }
 
+// FIXME
+extern pair<vector<uint8_t>, MaterialMetadata> stageMaterials(
+        const vector<shared_ptr<Material>> &materials);
+
 void ScenePreprocessor::dump(string_view out_path_name)
 {
     const SceneDescription &depth_desc = scene_data_->depthDesc;
@@ -406,17 +414,30 @@ void ScenePreprocessor::dump(string_view out_path_name)
 
     ofstream out(out_path, ios::binary);
     auto write = [&](auto val) {
-        out.write(reinterpret_cast<char *>(&val), sizeof(decltype(val)));
+        out.write(reinterpret_cast<const char *>(&val), sizeof(decltype(val)));
     };
 
     // FIXME material system needs to be redone. Don't actually know
     // the texture names at this point.
     auto write_materials = [&](const SceneDescription &desc) {
-        uint32_t num_materials = desc.getMaterials().size();
-        write(num_materials);
-        for (uint32_t mat_idx = 0; mat_idx < num_materials; mat_idx++) {
-            out << (basename + "_" + to_string(mat_idx) + ".ktx2");
+        const auto &materials = desc.getMaterials();
+        auto [packed_params, metadata] = stageMaterials(materials);
+
+        write(uint32_t(metadata.textures.size()));
+        for (uint32_t tex_idx = 0; tex_idx < metadata.textures.size();
+             tex_idx++) {
+            out << (basename + "_" + to_string(tex_idx) + ".ktx2") << '\0';
         }
+
+        write(uint32_t(metadata.numMaterials));
+        write(uint32_t(packed_params.size()));
+        out.write(reinterpret_cast<const char *>(packed_params.data()), 
+                  packed_params.size());
+        write(uint32_t(metadata.texturesPerMaterial));
+        out.write(reinterpret_cast<const char *>(
+                      metadata.textureIndices.data()),
+                  metadata.textureIndices.size() * sizeof(uint32_t));
+
     };
 
     auto write_meshes = [&](const auto &geometry) {
