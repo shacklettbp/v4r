@@ -294,9 +294,11 @@ static SceneLoadInfo loadPreprocessedScene(string_view scene_path_name,
         scene_file.seekg(rgb_offset * sizeof(uint32_t), ios::cur);
     }
 
-    uint64_t num_staging_bytes = read_uint();
-
-    HostBuffer staging_buffer = alloc.makeStagingBuffer(0);
+    StagingHeader hdr;
+    scene_file.read(reinterpret_cast<char *>(&hdr), sizeof(StagingHeader));
+    HostBuffer staging_buffer = alloc.makeStagingBuffer(hdr.totalBytes);
+    scene_file.read(reinterpret_cast<char *>(staging_buffer.buffer),
+                    hdr.totalBytes);
 
     MaterialMetadata materials;
     uint32_t num_textures = read_uint();
@@ -310,10 +312,38 @@ static SceneLoadInfo loadPreprocessedScene(string_view scene_path_name,
         name_buffer.clear();
     }
 
+    materials.numMaterials = read_uint();
+    materials.texturesPerMaterial = read_uint();
 
-    uint32_t num_materials = read_uint();
-    uint32_t num_param_bytes = read_uint();
-    vector<uint8_t> material_params;
+    materials.textureIndices.resize(materials.numMaterials *
+                                    materials.texturesPerMaterial);
+
+    scene_file.read(reinterpret_cast<char *>(materials.textureIndices.data()),
+                    sizeof(uint32_t) * materials.textureIndices.size());
+
+    uint32_t num_instances = read_uint();
+
+    // FIXME this should just be baked in...
+    vector<InstanceProperties> instances;
+    instances.reserve(num_instances);
+
+    for (uint32_t inst_idx = 0; inst_idx < num_instances; inst_idx++) {
+        uint32_t mesh_index = read_uint();
+        uint32_t material_index = read_uint();
+        glm::mat4x3 txfm;
+        scene_file.read(reinterpret_cast<char *>(&txfm), sizeof(glm::mat4x3));
+        instances.emplace_back(mesh_index, material_index,
+            glm::mat4x3(coordinate_txfm * glm::mat4(txfm)));
+    }
+
+    return SceneLoadInfo {
+        StagedScene {
+            move(staging_buffer),
+            hdr,
+        },
+        move(materials),
+        EnvironmentInit(move(instances), {}, hdr.numMeshes)
+    };
 }
 
 template <typename VertexType, typename MaterialParamsType>

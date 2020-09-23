@@ -471,6 +471,7 @@ void ScenePreprocessor::dump(string_view out_path_name)
     auto write_staging = [&](const auto &geometry,
                              const vector<uint8_t> &material_params,
                              const StagingHeader &hdr) {
+        auto stage_beginning = out.tellp();
         write_pad(256);
         // Write all vertices
         for (auto &mesh : geometry.meshes) {
@@ -516,6 +517,8 @@ void ScenePreprocessor::dump(string_view out_path_name)
         write_pad(256);
         out.write(reinterpret_cast<const char *>(material_params.data()),
                   hdr.materialBytes);
+
+        assert(out.tellp() == int64_t(hdr.totalBytes + stage_beginning));
     };
 
     // FIXME material system needs to be redone. Don't actually know
@@ -541,14 +544,9 @@ void ScenePreprocessor::dump(string_view out_path_name)
             desc.getDefaultInstances();
         write(uint32_t(instances.size()));
         for (const InstanceProperties &orig_inst : instances) {
-            static_assert(is_standard_layout_v<InstanceProperties>);
-
-            InstanceProperties remapped_inst(
-                    mesh_id_remap[orig_inst.meshIndex],
-                    orig_inst.materialIndex,
-                    orig_inst.txfm);
-
-            write(remapped_inst);
+            write(uint32_t(mesh_id_remap[orig_inst.meshIndex]));
+            write(uint32_t(orig_inst.materialIndex));
+            write(orig_inst.txfm);
         }
     };
 
