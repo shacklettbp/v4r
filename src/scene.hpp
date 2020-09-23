@@ -165,6 +165,10 @@ struct LoaderImpl {
         std::shared_ptr<Mesh>(std::string_view)>
             loadMesh;
 
+    std::add_pointer_t<
+        SceneLoadInfo(std::string_view, const glm::mat4 &)>
+            loadPreprocessedScene;
+
     template <typename VertexType, typename MaterialParamsType>
     static LoaderImpl create();
 };

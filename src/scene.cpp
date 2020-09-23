@@ -251,6 +251,15 @@ static SceneDescription parseScene(string_view scene_path,
     }
 }
 
+template <typename VertexType, typename MaterialParamsType>
+static SceneLoadInfo loadPreprocessedScene(string_view scene_path_name,
+                                           const glm::mat4 &coordinate_txfm)
+{
+    filesystem::path scene_path(scene_path_name);
+    string basename = scene_path.filename();
+    basename.resize(basename.find('.'));
+
+}
 
 template <typename VertexType, typename MaterialParamsType>
 LoaderImpl LoaderImpl::create()
@@ -258,7 +267,8 @@ LoaderImpl LoaderImpl::create()
     return {
         v4r::stageScene<VertexType>,
         v4r::parseScene<VertexType, MaterialParamsType>,
-        v4r::loadMesh<VertexType>
+        v4r::loadMesh<VertexType>,
+        v4r::loadPreprocessedScene<VertexType, MaterialParamsType>,
     };
 }
 
@@ -349,8 +359,8 @@ static pair<vector<uint8_t>, MaterialMetadata> stageMaterials(
 shared_ptr<Scene> LoaderState::loadScene(string_view scene_path)
 {
     if (scene_path.substr(scene_path.find('.') + 1) == "bps") {
-        //return impl_.loadPreprocessedScene(scene_path);
-        return nullptr;
+        return makeScene(impl_.loadPreprocessedScene(scene_path,
+                                                     coordinateTransform));
     } else {
         SceneDescription desc = impl_.parseScene(scene_path,
                                                  coordinateTransform);

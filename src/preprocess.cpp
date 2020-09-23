@@ -5,6 +5,7 @@
 
 #include <glm/gtc/type_precision.hpp>
 #include <glm/gtx/string_cast.hpp>
+#include <glm/gtx/norm.hpp>
 
 #include "asset_load.hpp"
 #include "scene.hpp"
@@ -142,7 +143,9 @@ static vector<Meshlet> buildMeshlets(
 vector<MeshChunk> assignChunks(const vector<Meshlet> &meshlets)
 {
     uint32_t num_chunks = meshlets.size() / num_meshlets_per_chunk;
-    if (meshlets.size() % num_chunks != 0) {
+    if (num_chunks == 0) {
+        num_chunks = 1;
+    } else if (meshlets.size() % num_chunks != 0) {
         num_chunks++;
     }
 
@@ -204,23 +207,71 @@ vector<MeshChunk> assignChunks(const vector<Meshlet> &meshlets)
 }
 
 template <typename VertexType>
+static vector<uint32_t> filterDegenerateTriangles(
+    const vector<VertexType> &vertices,
+    const vector<uint32_t> &orig_indices)
+{
+    vector<uint32_t> new_indices;
+    new_indices.reserve(orig_indices.size());
+
+    uint32_t num_indices = orig_indices.size();
+    uint32_t tri_align = orig_indices.size() % 3;
+    if (tri_align != 0) {
+        cerr << "Warning: non multiple of 3 indices in mesh" << endl;
+        num_indices -= tri_align;
+    }
+    assert(orig_indices.size() % 3 == 0);
+
+    for (uint32_t i = 0; i < num_indices;) {
+        uint32_t a_idx = orig_indices[i++];
+        uint32_t b_idx = orig_indices[i++];
+        uint32_t c_idx = orig_indices[i++];
+
+        glm::vec3 a = vertices[a_idx].position;
+        glm::vec3 b = vertices[b_idx].position;
+        glm::vec3 c = vertices[c_idx].position;
+
+        glm::vec3 ab = a - b;
+        glm::vec3 bc = b - c;
+        float check = glm::length2(glm::cross(ab, bc));
+
+        if (check < 1e-10f) {
+            continue;
+        }
+
+        new_indices.push_back(a_idx);
+        new_indices.push_back(b_idx);
+        new_indices.push_back(c_idx);
+    }
+
+    cout << "Filtered: " << orig_indices.size() - new_indices.size()
+         << " degenerate triangles" << endl;
+
+    return new_indices;
+}
+
+template <typename VertexType>
 ProcessedMesh<VertexType> processMesh(const VertexMesh<VertexType> &orig_mesh,
                                       vector<uint32_t> &meshlet_buffer)
 {
     const vector<VertexType> &orig_vertices = orig_mesh.vertices;
     const vector<uint32_t> &orig_indices = orig_mesh.indices;
-    uint32_t num_indices = orig_indices.size();
+
+    vector<uint32_t> filtered_indices =
+        filterDegenerateTriangles(orig_vertices, orig_indices);
+    uint32_t num_indices = filtered_indices.size();
 
     vector<uint32_t> index_remap(orig_vertices.size());
     size_t new_vertex_count =
-        meshopt_generateVertexRemap(index_remap.data(), orig_indices.data(),
+        meshopt_generateVertexRemap(index_remap.data(),
+                                    filtered_indices.data(),
                                     num_indices, orig_vertices.data(),
                                     orig_vertices.size(), sizeof(VertexType));
 
     vector<uint32_t> new_indices(num_indices);
     vector<VertexType> new_vertices(new_vertex_count);
 
-    meshopt_remapIndexBuffer(new_indices.data(), orig_indices.data(),
+    meshopt_remapIndexBuffer(new_indices.data(), filtered_indices.data(),
                              num_indices, index_remap.data());
 
     meshopt_remapVertexBuffer(new_vertices.data(), orig_vertices.data(),
@@ -279,6 +330,7 @@ void ScenePreprocessor::dump(string_view out_path_name)
 
     filesystem::path out_path(out_path_name);
     string basename = out_path.filename();
+    basename.resize(basename.find('.'));
 
     ofstream out(out_path, ios::binary);
     auto write = [&](auto val) {
