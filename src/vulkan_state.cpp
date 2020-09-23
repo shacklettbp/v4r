@@ -33,10 +33,27 @@ FramebufferConfig PipelineImpl<PipelineType>::getFramebufferConfig(
         is_double_buffered ?
             2 : 1;
 
+    uint32_t minibatch_size = min(VulkanConfig::minibatch_size, batch_size);
+    assert(batch_size % minibatch_size == 0);
+
     uint32_t batch_fb_images_wide = ceil(sqrt(batch_size));
     while (batch_size % batch_fb_images_wide != 0) {
         batch_fb_images_wide++;
     }
+
+    uint32_t minibatch_fb_images_wide;
+    uint32_t minibatch_fb_images_tall;
+    if (batch_fb_images_wide >= minibatch_size) {
+        assert(batch_fb_images_wide % minibatch_size == 0);
+        minibatch_fb_images_wide = minibatch_size;
+        minibatch_fb_images_tall = 1;
+    } else {
+        minibatch_fb_images_wide = batch_fb_images_wide;
+        minibatch_fb_images_tall = minibatch_size / batch_fb_images_wide;
+    }
+
+    assert(minibatch_fb_images_wide * minibatch_fb_images_tall ==
+           minibatch_size);
 
     uint32_t batch_fb_images_tall = (batch_size / batch_fb_images_wide);
     assert(batch_fb_images_wide * batch_fb_images_tall == batch_size);
@@ -84,6 +101,9 @@ FramebufferConfig PipelineImpl<PipelineType>::getFramebufferConfig(
     return FramebufferConfig {
         img_width,
         img_height,
+        minibatch_size,
+        minibatch_fb_images_wide,
+        minibatch_fb_images_tall,
         batch_fb_images_wide,
         batch_fb_images_tall,
         frame_fb_width,
@@ -1157,12 +1177,15 @@ CommandStreamState::CommandStreamState(
       indirect_draw_buffer_(alloc.makeIndirectBuffer( 
           render_state.paramPositions.totalIndirectBytes *
               num_frames_inflight)),
-      per_elem_render_size_(fb_cfg.imgWidth, fb_cfg.imgHeight),
-      per_batch_render_size_(
-            per_elem_render_size_.x * fb_cfg.numImagesWidePerBatch,
-            per_elem_render_size_.y * fb_cfg.numImagesTallPerBatch),
-      mini_batch_size_(min(VulkanConfig::mini_batch_size, batch_size)),
+      mini_batch_size_(fb_cfg.miniBatchSize),
       num_mini_batches_(batch_size / mini_batch_size_),
+      per_elem_render_size_(fb_cfg.imgWidth, fb_cfg.imgHeight),
+      per_minibatch_render_size_(
+          per_elem_render_size_.x * fb_cfg.numImagesWidePerMiniBatch,
+          per_elem_render_size_.y * fb_cfg.numImagesTallPerMiniBatch),
+      per_batch_render_size_(
+          per_elem_render_size_.x * fb_cfg.numImagesWidePerBatch,
+          per_elem_render_size_.y * fb_cfg.numImagesTallPerBatch),
       frame_states_(),
       cur_frame_(0)
 {

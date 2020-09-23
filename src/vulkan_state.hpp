@@ -29,6 +29,10 @@ public:
     uint32_t imgWidth;
     uint32_t imgHeight;
 
+    uint32_t miniBatchSize;
+    uint32_t numImagesWidePerMiniBatch;
+    uint32_t numImagesTallPerMiniBatch;
+
     uint32_t numImagesWidePerBatch;
     uint32_t numImagesTallPerBatch;
 
@@ -250,10 +254,11 @@ private:
     HostBuffer per_render_buffer_;
     LocalBuffer indirect_draw_buffer_;
 
-    glm::u32vec2 per_elem_render_size_;
-    glm::u32vec2 per_batch_render_size_;
     uint32_t mini_batch_size_;
     uint32_t num_mini_batches_;
+    glm::u32vec2 per_elem_render_size_;
+    glm::u32vec2 per_minibatch_render_size_;
+    glm::u32vec2 per_batch_render_size_;
     std::vector<PerFrameState> frame_states_;
     uint32_t cur_frame_;
 };

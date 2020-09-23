@@ -190,21 +190,24 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
                                   0, nullptr);
 
         // Record rendering for this mini batch
+        glm::u32vec2 minibatch_offset =
+            frame_state.batchFBOffsets[global_batch_offset];
+        render_pass_info.renderArea.offset = {
+            static_cast<int32_t>(minibatch_offset.x),
+            static_cast<int32_t>(minibatch_offset.y),
+        };
+        render_pass_info.renderArea.extent = { per_minibatch_render_size_.x,
+                                               per_minibatch_render_size_.y };
+
+        dev.dt.cmdBeginRenderPass(render_cmd, &render_pass_info,
+                                  VK_SUBPASS_CONTENTS_INLINE);
+
         for (uint32_t local_batch_idx = 0; local_batch_idx < mini_batch_size_;
              local_batch_idx++) {
             uint32_t batch_idx = global_batch_offset + local_batch_idx;
             const Scene &scene = *(envs[batch_idx].state_->scene);
 
             glm::u32vec2 batch_offset = frame_state.batchFBOffsets[batch_idx];
-            render_pass_info.renderArea.offset = {
-                static_cast<int32_t>(batch_offset.x), 
-                static_cast<int32_t>(batch_offset.y) 
-            };
-            render_pass_info.renderArea.extent = { per_elem_render_size_.x, 
-                                                   per_elem_render_size_.y };
-
-            dev.dt.cmdBeginRenderPass(render_cmd, &render_pass_info,
-                                      VK_SUBPASS_CONTENTS_INLINE);
 
             RenderPushConstant render_const {
                 batch_idx,
@@ -248,9 +251,8 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
                 count_offset,
                 frame_state.maxNumDraws[batch_idx],
                 sizeof(VkDrawIndexedIndirectCommand));
-
-            dev.dt.cmdEndRenderPass(render_cmd);
         }
+        dev.dt.cmdEndRenderPass(render_cmd);
 
         global_batch_offset += mini_batch_size_;
     }
