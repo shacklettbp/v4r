@@ -129,38 +129,47 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
     render_pass_info.pClearValues = fb_cfg_.clearValues.data();
 
     // 1 indirect draw per batch elem
-    for (uint32_t batch_idx = 0; batch_idx < envs.size(); batch_idx++) {
-        const Scene &scene = *(envs[batch_idx].state_->scene);
+    uint32_t global_batch_offset = 0;
+    for (uint32_t mini_batch_idx = 0; mini_batch_idx < num_mini_batches_;
+         mini_batch_idx++) {
 
-        dev.dt.cmdBindDescriptorSets(render_cmd,
-                                     VK_PIPELINE_BIND_POINT_COMPUTE,
-                                     pipeline.meshCullLayout, 1,
-                                     1, &scene.cullSet.hdl,
-                                     0, nullptr);
+        // Record culling for this mini batch
+        for (uint32_t local_batch_idx = 0; local_batch_idx < mini_batch_size_;
+             local_batch_idx++) {
+            uint32_t batch_idx = global_batch_offset + local_batch_idx;
+            const Scene &scene = *(envs[batch_idx].state_->scene);
 
-        if (scene.materialSet.hdl != VK_NULL_HANDLE) {
             dev.dt.cmdBindDescriptorSets(render_cmd,
-                                         VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                         pipeline.gfxLayout, 1,
-                                         1, &scene.materialSet.hdl,
+                                         VK_PIPELINE_BIND_POINT_COMPUTE,
+                                         pipeline.meshCullLayout, 1,
+                                         1, &scene.cullSet.hdl,
                                          0, nullptr);
+
+            if (scene.materialSet.hdl != VK_NULL_HANDLE) {
+                dev.dt.cmdBindDescriptorSets(render_cmd,
+                                             VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                             pipeline.gfxLayout, 1,
+                                             1, &scene.materialSet.hdl,
+                                             0, nullptr);
+            }
+
+            CullPushConstant cull_const {
+                batch_idx,
+                frame_state.drawOffsets[batch_idx],
+                frame_state.maxNumDraws[batch_idx]
+            };
+
+            dev.dt.cmdPushConstants(render_cmd, pipeline.meshCullLayout,
+                                    VK_SHADER_STAGE_COMPUTE_BIT,
+                                    0,
+                                    sizeof(CullPushConstant),
+                                    &cull_const);
+                
+            dev.dt.cmdDispatch(render_cmd,
+                getWorkgroupSize(frame_state.maxNumDraws[batch_idx]), 1, 1);
         }
 
-        CullPushConstant cull_const {
-            batch_idx,
-            frame_state.drawOffsets[batch_idx],
-            frame_state.maxNumDraws[batch_idx]
-        };
-
-        dev.dt.cmdPushConstants(render_cmd, pipeline.meshCullLayout,
-                                VK_SHADER_STAGE_COMPUTE_BIT,
-                                0,
-                                sizeof(CullPushConstant),
-                                &cull_const);
-
-        dev.dt.cmdDispatch(render_cmd,
-            getWorkgroupSize(frame_state.maxNumDraws[batch_idx]), 1, 1);
-
+        // Cull / render barrier
         VkBufferMemoryBarrier buffer_barrier;
         buffer_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
         buffer_barrier.pNext = nullptr;
@@ -180,63 +189,71 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
                                   1, &buffer_barrier,
                                   0, nullptr);
 
-        glm::u32vec2 batch_offset = frame_state.batchFBOffsets[batch_idx];
-        render_pass_info.renderArea.offset = {
-            static_cast<int32_t>(batch_offset.x), 
-            static_cast<int32_t>(batch_offset.y) 
-        };
-        render_pass_info.renderArea.extent = { render_size_.x, 
-                                               render_size_.y };
+        // Record rendering for this mini batch
+        for (uint32_t local_batch_idx = 0; local_batch_idx < mini_batch_size_;
+             local_batch_idx++) {
+            uint32_t batch_idx = global_batch_offset + local_batch_idx;
+            const Scene &scene = *(envs[batch_idx].state_->scene);
 
-        dev.dt.cmdBeginRenderPass(render_cmd, &render_pass_info,
-                                  VK_SUBPASS_CONTENTS_INLINE);
+            glm::u32vec2 batch_offset = frame_state.batchFBOffsets[batch_idx];
+            render_pass_info.renderArea.offset = {
+                static_cast<int32_t>(batch_offset.x), 
+                static_cast<int32_t>(batch_offset.y) 
+            };
+            render_pass_info.renderArea.extent = { per_elem_render_size_.x, 
+                                                   per_elem_render_size_.y };
 
-        RenderPushConstant render_const {
-            batch_idx,
-        };
+            dev.dt.cmdBeginRenderPass(render_cmd, &render_pass_info,
+                                      VK_SUBPASS_CONTENTS_INLINE);
 
-        dev.dt.cmdPushConstants(render_cmd, pipeline.gfxLayout,
-                                VK_SHADER_STAGE_VERTEX_BIT |
-                                    VK_SHADER_STAGE_FRAGMENT_BIT,
-                                0,
-                                sizeof(RenderPushConstant),
-                                &render_const);
+            RenderPushConstant render_const {
+                batch_idx,
+            };
 
-        VkViewport viewport;
-        viewport.x = batch_offset.x;
-        viewport.y = batch_offset.y;
-        viewport.width = render_size_.x;
-        viewport.height = render_size_.y;
-        viewport.minDepth = 0.f;
-        viewport.maxDepth = 1.f;
-        dev.dt.cmdSetViewport(render_cmd, 0, 1, &viewport);
+            dev.dt.cmdPushConstants(render_cmd, pipeline.gfxLayout,
+                                    VK_SHADER_STAGE_VERTEX_BIT |
+                                        VK_SHADER_STAGE_FRAGMENT_BIT,
+                                    0,
+                                    sizeof(RenderPushConstant),
+                                    &render_const);
 
-        frame_state.vertexBuffers[0] = scene.data.buffer;
-        dev.dt.cmdBindVertexBuffers(render_cmd, 0,
-                                    frame_state.vertexBuffers.size(),
-                                    frame_state.vertexBuffers.data(),
-                                    frame_state.vertexOffsets.data());
-        dev.dt.cmdBindIndexBuffer(render_cmd, scene.data.buffer,
-                                  scene.indexOffset, VK_INDEX_TYPE_UINT32);
+            VkViewport viewport;
+            viewport.x = batch_offset.x;
+            viewport.y = batch_offset.y;
+            viewport.width = per_elem_render_size_.x;
+            viewport.height = per_elem_render_size_.y;
+            viewport.minDepth = 0.f;
+            viewport.maxDepth = 1.f;
+            dev.dt.cmdSetViewport(render_cmd, 0, 1, &viewport);
 
-        VkDeviceSize indirect_offset = frame_state.indirectBaseOffset +
-            frame_state.drawOffsets[batch_idx] *
-            sizeof(VkDrawIndexedIndirectCommand);
+            frame_state.vertexBuffers[0] = scene.data.buffer;
+            dev.dt.cmdBindVertexBuffers(render_cmd, 0,
+                                        frame_state.vertexBuffers.size(),
+                                        frame_state.vertexBuffers.data(),
+                                        frame_state.vertexOffsets.data());
+            dev.dt.cmdBindIndexBuffer(render_cmd, scene.data.buffer,
+                                      scene.indexOffset, VK_INDEX_TYPE_UINT32);
 
-        VkDeviceSize count_offset =
-            frame_state.indirectCountBaseOffset + batch_idx * sizeof(uint32_t);
+            VkDeviceSize indirect_offset = frame_state.indirectBaseOffset +
+                frame_state.drawOffsets[batch_idx] *
+                sizeof(VkDrawIndexedIndirectCommand);
 
-        dev.dt.cmdDrawIndexedIndirectCountKHR(render_cmd,
-            indirect_draw_buffer_.buffer,
-            indirect_offset,
-            indirect_draw_buffer_.buffer,
-            count_offset,
-            frame_state.maxNumDraws[batch_idx],
-            sizeof(VkDrawIndexedIndirectCommand));
+            VkDeviceSize count_offset = frame_state.indirectCountBaseOffset +
+                batch_idx * sizeof(uint32_t);
 
-        dev.dt.cmdEndRenderPass(render_cmd);
+            dev.dt.cmdDrawIndexedIndirectCountKHR(render_cmd,
+                indirect_draw_buffer_.buffer,
+                indirect_offset,
+                indirect_draw_buffer_.buffer,
+                count_offset,
+                frame_state.maxNumDraws[batch_idx],
+                sizeof(VkDrawIndexedIndirectCommand));
+
+            dev.dt.cmdEndRenderPass(render_cmd);
+        }
+
+        global_batch_offset += mini_batch_size_;
     }
-
 
     REQ_VK(dev.dt.endCommandBuffer(render_cmd));
 

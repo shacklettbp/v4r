@@ -1157,12 +1157,17 @@ CommandStreamState::CommandStreamState(
       indirect_draw_buffer_(alloc.makeIndirectBuffer( 
           render_state.paramPositions.totalIndirectBytes *
               num_frames_inflight)),
-      render_size_(fb_cfg.imgWidth, fb_cfg.imgHeight),
-      render_extent_(render_size_.x * fb_cfg.numImagesWidePerBatch,
-                     render_size_.y * fb_cfg.numImagesTallPerBatch),
+      per_elem_render_size_(fb_cfg.imgWidth, fb_cfg.imgHeight),
+      per_batch_render_size_(
+            per_elem_render_size_.x * fb_cfg.numImagesWidePerBatch,
+            per_elem_render_size_.y * fb_cfg.numImagesTallPerBatch),
+      mini_batch_size_(min(VulkanConfig::mini_batch_size, batch_size)),
+      num_mini_batches_(batch_size / mini_batch_size_),
       frame_states_(),
       cur_frame_(0)
 {
+    assert(num_mini_batches_ * mini_batch_size_ == batch_size);
+
     frame_states_.reserve(num_frames_inflight);
     for (uint32_t frame_idx = 0; frame_idx < num_frames_inflight;
          frame_idx++) {

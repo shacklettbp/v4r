@@ -230,7 +230,7 @@ public:
 
     glm::u32vec2 getFrameExtent() const
     {
-        return render_extent_;
+        return per_batch_render_size_;
     }
 
     const InstanceState &inst;
@@ -250,8 +250,10 @@ private:
     HostBuffer per_render_buffer_;
     LocalBuffer indirect_draw_buffer_;
 
-    glm::u32vec2 render_size_;
-    glm::u32vec2 render_extent_;
+    glm::u32vec2 per_elem_render_size_;
+    glm::u32vec2 per_batch_render_size_;
+    uint32_t mini_batch_size_;
+    uint32_t num_mini_batches_;
     std::vector<PerFrameState> frame_states_;
     uint32_t cur_frame_;
 };
