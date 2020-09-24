@@ -20,6 +20,7 @@ using Shader::DrawInput;
 using Shader::Meshlet;
 using Shader::MeshChunk;
 using Shader::MeshInfo;
+using Shader::FrustumBounds;
 
 namespace VulkanConfig {
 

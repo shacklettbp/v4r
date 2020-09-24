@@ -44,8 +44,8 @@ layout (set = 0, binding = 4) buffer Counts {
     uint numOutputCommands[];
 };
 
-layout (set = 1, binding = 0, scalar) readonly buffer MeshInfos {
-    MeshInfo meshes[];
+layout (set = 1, binding = 0, scalar) readonly buffer MeshChunks {
+    MeshChunk chunks[];
 };
 
 void main()
@@ -57,9 +57,29 @@ void main()
 
     uint draw_id = cull_const.baseDrawID + gl_GlobalInvocationID.x;
 
-    uint mesh_id = inputCommands[draw_id].meshID;
+    uint inst_id = inputCommands[draw_id].instanceID;
+    uint chunk_id = inputCommands[draw_id].chunkID;
+
+    vec3 center_inview = vec3(view_info[cull_const.batchIdx].view *
+        vec4(modelTransforms[inst_id] *
+            vec4(chunks[chunk_id].center, 1.f), 1.f));
+    float radius = chunks[chunk_id].radius;
     
     bool should_render = true;
+
+    should_render = should_render && (
+        center_inview.z * cull_const.frustumBounds.sides[1] -
+            abs(center_inview.x) *
+                cull_const.frustumBounds.sides[0] > -radius);
+
+    should_render = should_render && (
+        center_inview.z * cull_const.frustumBounds.sides[3] -
+            abs(center_inview.y) *
+                cull_const.frustumBounds.sides[2] > -radius);
+
+    should_render = should_render && (
+        center_inview.z + radius > cull_const.frustumBounds.nearFar[0] &&
+            center_inview.z - radius < cull_const.frustumBounds.nearFar[1]);
 
 	uvec4 cull_ballot = subgroupBallot(should_render);
 	uint subgroup_count = subgroupBallotBitCount(cull_ballot);
@@ -87,9 +107,9 @@ void main()
         return;
     }
 
-    outputCommands[out_idx].indexCount = meshes[mesh_id].indexCount;
+    outputCommands[out_idx].indexCount = chunks[chunk_id].numMeshlets; // FIXME
     outputCommands[out_idx].instanceCount = 1;
-    outputCommands[out_idx].firstIndex = meshes[mesh_id].indexOffset;
-    outputCommands[out_idx].vertexOffset = meshes[mesh_id].vertexOffset;
-    outputCommands[out_idx].firstInstance = draw_id;
+    outputCommands[out_idx].firstIndex = chunks[chunk_id].indexOffset;
+    outputCommands[out_idx].vertexOffset = chunks[chunk_id].vertexOffset;
+    outputCommands[out_idx].firstInstance = inst_id;
 }

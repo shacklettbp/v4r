@@ -15,10 +15,6 @@ using namespace std;
 
 namespace v4r {
 
-static constexpr int num_meshlet_vertices = 64;
-static constexpr int num_meshlet_triangles = 126;
-static constexpr int num_meshlets_per_chunk = 32;
-
 struct SceneData {
     SceneDescription depthDesc;
     SceneDescription rgbDesc;
@@ -108,13 +104,14 @@ static vector<Meshlet> buildMeshlets(
 {
     vector<meshopt_Meshlet> raw_meshlets(
             meshopt_buildMeshletsBound(indices.size(),
-                                       num_meshlet_vertices,
-                                       num_meshlet_triangles));
+                                       VulkanConfig::num_meshlet_vertices,
+                                       VulkanConfig::num_meshlet_triangles));
 
     uint32_t num_meshlets =
         meshopt_buildMeshlets(raw_meshlets.data(), indices.data(),
                               indices.size(), vertices.size(),
-                              num_meshlet_vertices, num_meshlet_triangles);
+                              VulkanConfig::num_meshlet_vertices,
+                              VulkanConfig::num_meshlet_triangles);
 
     raw_meshlets.resize(num_meshlets);
 
@@ -142,7 +139,8 @@ static vector<Meshlet> buildMeshlets(
 
 vector<MeshChunk> assignChunks(const vector<Meshlet> &meshlets)
 {
-    uint32_t num_chunks = meshlets.size() / num_meshlets_per_chunk;
+    uint32_t num_chunks =
+        meshlets.size() / VulkanConfig::num_meshlets_per_chunk;
     if (num_chunks == 0) {
         num_chunks = 1;
     } else if (meshlets.size() % num_chunks != 0) {
@@ -153,18 +151,21 @@ vector<MeshChunk> assignChunks(const vector<Meshlet> &meshlets)
     chunks.reserve(num_chunks);
 
     uint32_t cur_meshlet_idx = 0;
+    uint32_t num_vertices = 0;
+    uint32_t num_indices = 0;
 
     // Assign meshlets linearly to chunks. This matches how meshoptimizer
     // currently assigns meshlets, but will change apparently.
     for (uint32_t chunk_idx = 0; chunk_idx < num_chunks; chunk_idx++) {
         uint32_t cur_num_meshlets = min<uint32_t>(
-                num_meshlets_per_chunk, meshlets.size() - cur_meshlet_idx);
+                VulkanConfig::num_meshlets_per_chunk,
+                meshlets.size() - cur_meshlet_idx);
 
         assert(cur_num_meshlets != 0);
 
+        uint32_t chunk_index_offset = num_indices;
+
         glm::vec3 centroid(0.f);
-        uint32_t num_vertices = 0;
-        uint32_t num_indices = 0;
         for (uint32_t local_meshlet_idx = 0;
              local_meshlet_idx < cur_num_meshlets;
              local_meshlet_idx++) {
@@ -196,9 +197,12 @@ vector<MeshChunk> assignChunks(const vector<Meshlet> &meshlets)
             radius,
             cur_meshlet_idx,
             cur_num_meshlets,
-            num_vertices, // Updated to be global during serialization
-            num_indices, // Updated to be global during serialization
+            0, // Set to mesh vertex offset in processMesh
+            chunk_index_offset, // Updated to be global offset
         });
+
+        // FIXME hack
+        chunks.back().numMeshlets = num_indices - chunk_index_offset;
 
         cur_meshlet_idx += cur_num_meshlets;
     }
@@ -362,20 +366,19 @@ static ProcessedGeometry<VertexType> processGeometry(
         // Need to change all chunk offsets to be global
         // to the whole scene
         for (auto &chunk : mesh.chunks) {
-            chunk.vertexOffset += num_vertices;
+            // Chunk vertex offset just equal to start of mesh
+            // offset
+            // FIXME: why not just reindex and get rid of vertexOffset
+            // entirely?
+            chunk.vertexOffset = num_vertices;
             chunk.indexOffset += num_indices;
             chunk.meshletOffset += num_meshlets;
         }
 
         uint32_t chunk_offset = num_chunks;
-        assert(chunk_offset < 65536);
-        assert(mesh.chunks.size() < 65536);
         mesh_infos.push_back(MeshInfo {
-            uint16_t(chunk_offset),
-            uint16_t(mesh.chunks.size()),
-            num_vertices,
-            num_indices,
-            uint32_t(mesh.indices.size()),
+            uint32_t(chunk_offset),
+            uint32_t(mesh.chunks.size()),
         });
 
         num_vertices += mesh.vertices.size();
@@ -454,12 +457,8 @@ void ScenePreprocessor::dump(string_view out_path_name)
                 hdr.meshletOffset + hdr.meshletBytes);
         hdr.meshChunkBytes = geometry.totalChunks * sizeof(MeshChunk);
 
-        hdr.meshInfoOffset = align_offset(
-                hdr.meshChunkOffset + hdr.meshChunkBytes);
-        hdr.meshInfoBytes = geometry.meshInfos.size() * sizeof(MeshInfo);
-
         hdr.materialOffset = align_offset(
-                hdr.meshInfoOffset + hdr.meshInfoBytes);
+                hdr.meshChunkOffset + hdr.meshChunkBytes);
         hdr.materialBytes = material_params.size();
 
         hdr.totalBytes = hdr.materialOffset + hdr.materialBytes;
@@ -508,12 +507,6 @@ void ScenePreprocessor::dump(string_view out_path_name)
             out.write(reinterpret_cast<const char *>(mesh.chunks.data()),
                       mesh.chunks.size() * sizeof(MeshChunk));
         }
-
-        write_pad(256);
-
-        // Write mesh infos
-        out.write(reinterpret_cast<const char *>(geometry.meshInfos.data()),
-                  hdr.meshInfoBytes);
 
         write_pad(256);
         out.write(reinterpret_cast<const char *>(material_params.data()),
@@ -573,6 +566,11 @@ void ScenePreprocessor::dump(string_view out_path_name)
         write(hdr);
 
         write_staging(geometry, material_params, hdr);
+
+        // Write mesh infos
+        out.write(reinterpret_cast<const char *>(geometry.meshInfos.data()),
+                  hdr.numMeshes * sizeof(MeshInfo));
+
         write_materials(material_metadata);
 
         write_instances(desc, geometry.meshIDRemap);

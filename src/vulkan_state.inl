@@ -78,13 +78,19 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
         frame_state.drawOffsets[batch_idx] = draw_id;
 
         for (uint32_t mesh_idx = 0; mesh_idx < scene.numMeshes; mesh_idx++) {
+            const MeshInfo &mesh_metadata = scene.meshMetadata[mesh_idx];
             uint32_t num_instances = env.transforms_[mesh_idx].size();
 
             for (uint32_t inst_idx = 0; inst_idx < num_instances; inst_idx++) {
-                frame_state.drawPtr[draw_id] = DrawInput {
-                    mesh_idx,
-                };
-                draw_id++;
+                for (uint32_t chunk_id = 0;
+                     chunk_id < mesh_metadata.numChunks;
+                     chunk_id++) {
+                    frame_state.drawPtr[draw_id] = DrawInput {
+                        inst_idx,
+                        chunk_id + mesh_metadata.chunkOffset,
+                    };
+                    draw_id++;
+                }
             }
 
             memcpy(transform_ptr, env.transforms_[mesh_idx].data(),
@@ -137,7 +143,8 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
         for (uint32_t local_batch_idx = 0; local_batch_idx < mini_batch_size_;
              local_batch_idx++) {
             uint32_t batch_idx = global_batch_offset + local_batch_idx;
-            const Scene &scene = *(envs[batch_idx].state_->scene);
+            const Environment &env = envs[batch_idx];
+            const Scene &scene = *(env.state_->scene);
 
             dev.dt.cmdBindDescriptorSets(render_cmd,
                                          VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -154,6 +161,7 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
             }
 
             CullPushConstant cull_const {
+                env.state_->frustumBounds,
                 batch_idx,
                 frame_state.drawOffsets[batch_idx],
                 frame_state.maxNumDraws[batch_idx]

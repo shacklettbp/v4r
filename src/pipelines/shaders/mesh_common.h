@@ -2,10 +2,17 @@
 #define MESH_COMMON_H_INCLUDED
 
 struct DrawInput {
-    uint meshID;
+    uint instanceID;
+    uint chunkID;
+};
+
+struct FrustumBounds {
+    vec4 sides;
+    vec2 nearFar;
 };
 
 struct CullPushConstant {
+    FrustumBounds frustumBounds;
     uint batchIdx;
     uint baseDrawID;
     uint numDrawCommands;
@@ -34,11 +41,8 @@ struct MeshChunk {
 };
 
 struct MeshInfo {
-    uint16_t chunkOffset;
-    uint16_t numChunks;
-    uint32_t vertexOffset;
-    uint32_t indexOffset;
-    uint32_t indexCount;
+    uint32_t chunkOffset;
+    uint32_t numChunks;
 };
 
 #endif

@@ -106,6 +106,7 @@ struct Scene {
     DescriptorSet cullSet;
     LocalBuffer data;
     VkDeviceSize indexOffset;
+    std::vector<MeshInfo> meshMetadata;
     uint32_t numMeshes;
     EnvironmentInit envDefaults;
 };
@@ -116,6 +117,7 @@ public:
 
     std::shared_ptr<Scene> scene;
     glm::mat4 projection;
+    FrustumBounds frustumBounds;
 
     std::vector<std::vector<uint32_t>> reverseIDMap;
     std::vector<uint32_t> freeIDs;
@@ -142,8 +144,6 @@ struct StagingHeader {
     uint64_t meshletBytes;
     uint64_t meshChunkOffset;
     uint64_t meshChunkBytes;
-    uint64_t meshInfoOffset;
-    uint64_t meshInfoBytes;
 
     // Material data
     uint64_t materialOffset;
@@ -156,6 +156,7 @@ struct StagingHeader {
 struct StagedScene {
     HostBuffer buffer;
     StagingHeader hdr;
+    std::vector<MeshInfo> meshMetadata;
 };
 
 struct SceneLoadInfo {

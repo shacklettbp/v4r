@@ -55,10 +55,29 @@ EnvironmentInit::EnvironmentInit(
     }
 }
 
+static FrustumBounds computeFrustumBounds(const glm::mat4 &proj)
+{
+    glm::mat4 t = glm::transpose(proj);
+    glm::vec4 xplane = t[3] + t[0];
+    glm::vec4 yplane = t[3] + t[1];
+
+    xplane /= glm::length(glm::vec3(xplane));
+    yplane /= glm::length(glm::vec3(yplane));
+
+    float znear = proj[3][2] / proj[2][2];
+    float zfar = znear * proj[2][2] / (1.f + proj[2][2]);
+
+    return {
+        glm::vec4(xplane.x, xplane.z, yplane.y, yplane.z),
+        glm::vec2(znear, zfar),
+    };
+}
+
 EnvironmentState::EnvironmentState(const shared_ptr<Scene> &s,
                                    const glm::mat4 &proj)
     : scene(s),
       projection(proj),
+      frustumBounds(computeFrustumBounds(proj)),
       reverseIDMap(scene->envDefaults.reverseIDMap),
       freeIDs(),
       lights(s->envDefaults.lights),
@@ -107,8 +126,8 @@ static StagedScene stageScene(
     uint32_t vertex_offset = 0;
     uint8_t *staging_start = reinterpret_cast<uint8_t *>(staging.ptr);
     uint8_t *cur_ptr = staging_start;
-    MeshInfo *mesh_infos = reinterpret_cast<MeshInfo *>(
-            staging_start + mesh_info_offset);
+    //MeshInfo *mesh_infos = reinterpret_cast<MeshInfo *>(
+    //        staging_start + mesh_info_offset);
 
     for (uint32_t mesh_idx = 0; mesh_idx < meshes.size(); mesh_idx++) {
         const auto &generic_mesh = meshes[mesh_idx];
@@ -116,7 +135,7 @@ static StagedScene stageScene(
         VkDeviceSize vertex_bytes = sizeof(VertexType) * mesh->vertices.size();
         memcpy(cur_ptr, mesh->vertices.data(), vertex_bytes);
 
-        mesh_infos[mesh_idx].vertexOffset = vertex_offset;
+        //mesh_infos[mesh_idx].vertexOffset = vertex_offset;
 
         cur_ptr += vertex_bytes;
         vertex_offset += mesh->vertices.size();
@@ -131,9 +150,9 @@ static StagedScene stageScene(
             sizeof(uint32_t) * mesh->indices.size();
         memcpy(cur_ptr, mesh->indices.data(), index_bytes);
 
-        mesh_infos[mesh_idx].indexOffset = cur_mesh_index;
-        mesh_infos[mesh_idx].indexCount = 
-            static_cast<uint32_t>(mesh->indices.size());
+        //mesh_infos[mesh_idx].indexOffset = cur_mesh_index;
+        //mesh_infos[mesh_idx].indexCount = 
+        //    static_cast<uint32_t>(mesh->indices.size());
 
         cur_ptr += index_bytes;
         cur_mesh_index += mesh->indices.size();
@@ -147,6 +166,7 @@ static StagedScene stageScene(
 
     staging.flush(dev);
 
+    // FIXME: totally broken post mesh chunks requirement
     return { 
         move(staging), 
         StagingHeader {
@@ -157,13 +177,12 @@ static StagedScene stageScene(
             0,
             0,
             0,
-            mesh_info_offset,
-            meshes.size() * sizeof(MeshInfo),
             material_offset,
             num_material_bytes,
             total_bytes,
             static_cast<uint32_t>(meshes.size()),
         },
+        {}
     };
 }
 
@@ -306,6 +325,10 @@ static SceneLoadInfo loadPreprocessedScene(string_view scene_path_name,
     scene_file.read(reinterpret_cast<char *>(staging_buffer.ptr),
                     hdr.totalBytes);
 
+    vector<MeshInfo> mesh_infos(hdr.numMeshes);
+    scene_file.read(reinterpret_cast<char *>(mesh_infos.data()),
+                    sizeof(MeshInfo) * hdr.numMeshes);
+
     MaterialMetadata materials;
     uint32_t num_textures = read_uint();
     vector<char> name_buffer;
@@ -347,6 +370,7 @@ static SceneLoadInfo loadPreprocessedScene(string_view scene_path_name,
         StagedScene {
             move(staging_buffer),
             hdr,
+            move(mesh_infos),
         },
         move(materials),
         EnvironmentInit(move(instances), {}, hdr.numMeshes)
@@ -835,11 +859,10 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 
     DescriptorSet cull_set = cullDescriptorManager.makeSet();
 
-    VkDescriptorBufferInfo mesh_info_buffer_info;
-    mesh_info_buffer_info.buffer = data.buffer;
-    mesh_info_buffer_info.offset = staged.hdr.meshInfoOffset;
-    mesh_info_buffer_info.range =
-        sizeof(MeshInfo) * staged.hdr.numMeshes;
+    VkDescriptorBufferInfo mesh_chunk_buffer_info;
+    mesh_chunk_buffer_info.buffer = data.buffer;
+    mesh_chunk_buffer_info.offset = staged.hdr.meshChunkOffset;
+    mesh_chunk_buffer_info.range = staged.hdr.meshChunkBytes;
 
     VkWriteDescriptorSet cull_desc_update;
     cull_desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -850,7 +873,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     cull_desc_update.descriptorCount = 1;
     cull_desc_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     cull_desc_update.pImageInfo = nullptr;
-    cull_desc_update.pBufferInfo = &mesh_info_buffer_info;
+    cull_desc_update.pBufferInfo = &mesh_chunk_buffer_info;
     cull_desc_update.pTexelBufferView = nullptr;
 
     dev.dt.updateDescriptorSets(dev.hdl, 1, &cull_desc_update, 0, nullptr);
@@ -862,6 +885,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         move(cull_set),
         move(data),
         staged.hdr.indexOffset,
+        move(staged.meshMetadata),
         staged.hdr.numMeshes,
         move(env_init),
     });

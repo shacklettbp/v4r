@@ -286,7 +286,8 @@ static ParamBufferConfig computeParamBufferConfig(
     cfg.drawIndirectOffset = alloc.alignStorageBufferOffset(
         alloc.alignUniformBufferOffset(cfg.totalCountIndirectBytes));
     cfg.totalDrawIndirectBytes =
-        sizeof(VkDrawIndexedIndirectCommand) * VulkanConfig::max_instances;
+        sizeof(VkDrawIndexedIndirectCommand) *
+        VulkanConfig::max_instances;
 
     cfg.totalIndirectBytes = alloc.alignStorageBufferOffset(
         alloc.alignUniformBufferOffset(cfg.drawIndirectOffset +
