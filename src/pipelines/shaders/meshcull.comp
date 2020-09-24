@@ -78,8 +78,8 @@ void main()
                 cull_const.frustumBounds.sides[2] > -radius);
 
     should_render = should_render && (
-        center_inview.z + radius > cull_const.frustumBounds.nearFar[0] &&
-            center_inview.z - radius < cull_const.frustumBounds.nearFar[1]);
+        center_inview.z - radius < -cull_const.frustumBounds.nearFar[0] &&
+            center_inview.z + radius > -cull_const.frustumBounds.nearFar[1]);
 
 	uvec4 cull_ballot = subgroupBallot(should_render);
 	uint subgroup_count = subgroupBallotBitCount(cull_ballot);
