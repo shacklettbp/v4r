@@ -48,18 +48,18 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
         binary_file.read(reinterpret_cast<char *>(&json_header),
                          sizeof(ChunkHeader));
 
-        std::vector<uint8_t> json_buffer(
-                json_header.chunkLength + simdjson::SIMDJSON_PADDING);
+        std::vector<uint8_t> json_buffer(json_header.chunkLength +
+                                         simdjson::SIMDJSON_PADDING);
 
         binary_file.read(reinterpret_cast<char *>(json_buffer.data()),
                          json_header.chunkLength);
 
         try {
-            scene.root = scene.jsonParser.parse(json_buffer.data(),
-                                                json_header.chunkLength,
-                                                false);
+            scene.root = scene.jsonParser.parse(
+                json_buffer.data(), json_header.chunkLength, false);
         } catch (const simdjson::simdjson_error &e) {
-            std::cerr << "GLTF loading failed: " << e.what() << std::endl;
+            std::cerr << "GLTF loading '" << gltf_path
+                      << "' failed: " << e.what() << std::endl;
             fatalExit();
         }
 
@@ -71,7 +71,7 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
             assert(bin_header.chunkType == 0x004E4942);
 
             scene.internalData.resize(bin_header.chunkLength);
-                    
+
             binary_file.read(
                 reinterpret_cast<char *>(scene.internalData.data()),
                 bin_header.chunkLength);
@@ -121,8 +121,8 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
             } else if (component_type == 5123) {
                 type = GLTFComponentType::UINT16;
             } else {
-                std::cerr << "GLTF loading failed: unknown component type"
-                          << std::endl;
+                std::cerr << "GLTF loading '" << gltf_path
+                          << "' failed: unknown component type" << std::endl;
                 fatalExit();
             }
 
@@ -162,10 +162,12 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
             uint64_t source_idx;
             auto src_err = texture["source"].get(source_idx);
             if (src_err) {
-                auto ext_err = texture["extensions"]["GOOGLE_texture_basis"][
-                    "source"].get(source_idx);
+                auto ext_err =
+                    texture["extensions"]["GOOGLE_texture_basis"]["source"]
+                        .get(source_idx);
                 if (ext_err) {
-                    std::cerr << "GLTF loading failed: texture without source"
+                    std::cerr << "GLTF loading '" << gltf_path
+                              << "' failed: texture without source"
                               << std::endl;
                     fatalExit();
                 }
@@ -221,7 +223,7 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
         for (const auto &mesh : scene.root["meshes"]) {
             simdjson::dom::array prims = mesh["primitives"];
             if (prims.size() != 1) {
-                std::cerr << "GLTF loading failed: "
+                std::cerr << "GLTF loading '" << gltf_path << "' failed: "
                           << "Only single primitive meshes supported"
                           << std::endl;
                 fatalExit();
@@ -302,15 +304,13 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
             // FIXME TRS support
 
             scene.nodes.push_back(GLTFNode {
-                move(children),
-                static_cast<uint32_t>(mesh_idx),
-                txfm
-            });
+                move(children), static_cast<uint32_t>(mesh_idx), txfm});
         }
 
         simdjson::dom::array scenes = scene.root["scenes"];
         if (scenes.size() > 1) {
-            std::cerr << "GLTF loading failed: Multiscene files not supported"
+            std::cerr << "GLTF loading '" << gltf_path
+                      << "' failed: Multiscene files not supported"
                       << std::endl;
             fatalExit();
         }
@@ -318,9 +318,10 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
         for (uint64_t node_idx : scenes.at(0)["nodes"]) {
             scene.rootNodes.push_back(node_idx);
         }
-        
+
     } catch (const simdjson::simdjson_error &e) {
-        std::cerr << "GLTF loading failed: " << e.what() << std::endl;
+        std::cerr << "GLTF loading '" << gltf_path << "' failed: " << e.what()
+                  << std::endl;
         fatalExit();
     }
 
@@ -342,7 +343,8 @@ static StridedSpan<T> getGLTFBufferView(const GLTFScene &scene,
     }
 
     size_t total_offset = start_offset + view.offset;
-    const uint8_t *start_ptr = buffer.dataPtr + total_offset;;
+    const uint8_t *start_ptr = buffer.dataPtr + total_offset;
+    ;
 
     uint32_t stride = view.stride;
     if (stride == 0) {
@@ -356,40 +358,37 @@ static StridedSpan<T> getGLTFBufferView(const GLTFScene &scene,
     return StridedSpan<T>(start_ptr, num_elems, stride);
 }
 
-template <typename T> 
+template <typename T>
 static StridedSpan<T> getGLTFAccessorView(const GLTFScene &scene,
                                           uint32_t accessor_idx)
 {
     const GLTFAccessor &accessor = scene.accessors[accessor_idx];
 
-    return getGLTFBufferView<T>(scene, accessor.viewIdx,
-                                accessor.offset,
+    return getGLTFBufferView<T>(scene, accessor.viewIdx, accessor.offset,
                                 accessor.numElems);
 }
 
 void ktxCheck(KTX_error_code res)
 {
-    static const char *ktx_errors[] = {
-        "KTX_SUCCESS",
-        "KTX_FILE_DATA_ERROR",
-        "KTX_FILE_ISPIPE",
-        "KTX_FILE_OPEN_FAILED",
-        "KTX_FILE_OVERFLOW",
-        "KTX_FILE_READ_ERROR",
-        "KTX_FILE_SEEK_ERROR",
-        "KTX_FILE_UNEXPECTED_EOF",
-        "KTX_FILE_WRITE_ERROR",
-        "KTX_GL_ERROR",
-        "KTX_INVALID_OPERATION",
-        "KTX_INVALID_VALUE",
-        "KTX_NOT_FOUND",
-        "KTX_OUT_OF_MEMORY",
-        "KTX_TRANSCODE_FAILED",
-        "KTX_UNKNOWN_FILE_FORMAT",
-        "KTX_UNSUPPORTED_TEXTURE_TYPE",
-        "KTX_UNSUPPORTED_FEATURE",
-        "KTX_LIBRARY_NOT_LINKED"
-    };
+    static const char *ktx_errors[] = {"KTX_SUCCESS",
+                                       "KTX_FILE_DATA_ERROR",
+                                       "KTX_FILE_ISPIPE",
+                                       "KTX_FILE_OPEN_FAILED",
+                                       "KTX_FILE_OVERFLOW",
+                                       "KTX_FILE_READ_ERROR",
+                                       "KTX_FILE_SEEK_ERROR",
+                                       "KTX_FILE_UNEXPECTED_EOF",
+                                       "KTX_FILE_WRITE_ERROR",
+                                       "KTX_GL_ERROR",
+                                       "KTX_INVALID_OPERATION",
+                                       "KTX_INVALID_VALUE",
+                                       "KTX_NOT_FOUND",
+                                       "KTX_OUT_OF_MEMORY",
+                                       "KTX_TRANSCODE_FAILED",
+                                       "KTX_UNKNOWN_FILE_FORMAT",
+                                       "KTX_UNSUPPORTED_TEXTURE_TYPE",
+                                       "KTX_UNSUPPORTED_FEATURE",
+                                       "KTX_LIBRARY_NOT_LINKED"};
 
     if (res != KTX_SUCCESS) {
         const char *ktx_error;
@@ -407,22 +406,27 @@ void ktxCheck(KTX_error_code res)
 std::shared_ptr<Texture> loadKTXFile(const char *texture_path)
 {
     ktxTexture *ktx_texture;
-    KTX_error_code result = ktxTexture_CreateFromNamedFile(
-            texture_path, KTX_TEXTURE_CREATE_NO_FLAGS, &ktx_texture);
+
+    FILE *file = fopen(texture_path, "rb");
+    if (!file) {
+        std::cerr << "GLTF loading failed: Could not open " << texture_path;
+    }
+
+    KTX_error_code result = ktxTexture_CreateFromStdioStream(
+        file, KTX_TEXTURE_CREATE_NO_FLAGS, &ktx_texture);
+
     ktxCheck(result);
 
     if (ktx_texture->generateMipmaps) {
-        std::cerr << "GLTF loading failed: textures need to have mipmaps "
+        std::cerr << "GLTF loading '" << texture_path
+                  << "' failed: textures need to have mipmaps "
                   << "pregenerated" << std::endl;
         fatalExit();
     }
 
-    return std::shared_ptr<Texture>(new Texture {
-        ktx_texture->baseWidth,
-        ktx_texture->baseHeight,
-        ktx_texture->numLevels,
-        ktx_texture
-    });
+    return std::shared_ptr<Texture>(
+        new Texture {ktx_texture->baseWidth, ktx_texture->baseHeight,
+                     ktx_texture->numLevels, ktx_texture, file});
 }
 
 static std::shared_ptr<Texture> gltfLoadTexture(const GLTFScene &scene,
@@ -430,9 +434,9 @@ static std::shared_ptr<Texture> gltfLoadTexture(const GLTFScene &scene,
 {
     const GLTFImage &img = scene.images[scene.textures[texture_idx].sourceIdx];
     if (img.type != GLTFImageType::EXTERNAL) {
-        std::cerr <<
-            "GLTF loading failed: Only external KTX2 textures supported"
-                  << std::endl;
+        std::cerr
+            << "GLTF loading failed: Only external KTX2 textures supported"
+            << std::endl;
         fatalExit();
     }
 
@@ -443,7 +447,7 @@ static std::shared_ptr<Texture> gltfLoadTexture(const GLTFScene &scene,
 
 template <typename MaterialParamsType>
 std::vector<std::shared_ptr<Material>> gltfParseMaterials(
-        const GLTFScene &scene)
+    const GLTFScene &scene)
 {
     std::vector<std::shared_ptr<Material>> materials;
     std::vector<std::shared_ptr<Texture>> textures(scene.textures.size());
@@ -461,21 +465,22 @@ std::vector<std::shared_ptr<Material>> gltfParseMaterials(
         }
 
         materials.emplace_back(MaterialImpl<MaterialParamsType>::make(
-                MaterialParam::DiffuseColorTexture { move(texture) },
-                MaterialParam::DiffuseColorUniform { 
-                    glm::vec4(gltf_mat.baseColor, 1.f),
-                },
-                MaterialParam::SpecularColorTexture { nullptr },
-                MaterialParam::SpecularColorUniform { glm::vec4() },
-                MaterialParam::ShininessUniform { 1.f - gltf_mat.roughness }));
+            MaterialParam::DiffuseColorTexture {move(texture)},
+            MaterialParam::DiffuseColorUniform {
+                glm::vec4(gltf_mat.baseColor, 1.f),
+            },
+            MaterialParam::SpecularColorTexture {nullptr},
+            MaterialParam::SpecularColorUniform {glm::vec4()},
+            MaterialParam::ShininessUniform {1.f - gltf_mat.roughness}));
     }
 
     return materials;
 }
 
 template <typename VertexType>
-std::pair<std::vector<VertexType>, std::vector<uint32_t>>
-gltfParseMesh(const GLTFScene &scene, uint32_t mesh_idx)
+std::pair<std::vector<VertexType>, std::vector<uint32_t>> gltfParseMesh(
+    const GLTFScene &scene,
+    uint32_t mesh_idx)
 {
     std::vector<VertexType> vertices;
     std::vector<uint32_t> indices;
@@ -487,26 +492,23 @@ gltfParseMesh(const GLTFScene &scene, uint32_t mesh_idx)
     std::optional<StridedSpan<const glm::u8vec3>> color_accessor;
 
     if constexpr (VertexImpl<VertexType>::hasPosition) {
-        position_accessor = 
-            getGLTFAccessorView<const glm::vec3>(scene,
-                                                 mesh.positionIdx.value());
+        position_accessor = getGLTFAccessorView<const glm::vec3>(
+            scene, mesh.positionIdx.value());
     }
 
     if constexpr (VertexImpl<VertexType>::hasNormal) {
-        normal_accessor = 
-            getGLTFAccessorView<const glm::vec3>(scene,
-                                                 mesh.normalIdx.value());
+        normal_accessor = getGLTFAccessorView<const glm::vec3>(
+            scene, mesh.normalIdx.value());
     }
 
     if constexpr (VertexImpl<VertexType>::hasUV) {
-        uv_accessor = 
+        uv_accessor =
             getGLTFAccessorView<const glm::vec2>(scene, mesh.uvIdx.value());
     }
 
     if constexpr (VertexImpl<VertexType>::hasColor) {
-        color_accessor = 
-            getGLTFAccessorView<const glm::u8vec3>(scene,
-                                                   mesh.colorIdx.value());
+        color_accessor = getGLTFAccessorView<const glm::u8vec3>(
+            scene, mesh.colorIdx.value());
     }
 
     uint32_t max_idx = 0;
@@ -568,12 +570,12 @@ gltfParseMesh(const GLTFScene &scene, uint32_t mesh_idx)
         vertices.push_back(vert);
     }
 
-    return { move(vertices), move(indices) };
+    return {move(vertices), move(indices)};
 }
 
 inline void gltfParseInstances(SceneDescription &desc,
-                        const GLTFScene &scene,
-                        const glm::mat4 &coordinate_txfm)
+                               const GLTFScene &scene,
+                               const glm::mat4 &coordinate_txfm)
 {
     std::vector<std::pair<uint32_t, glm::mat4>> node_stack;
     for (uint32_t root_node : scene.rootNodes) {

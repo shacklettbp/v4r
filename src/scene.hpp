@@ -45,33 +45,34 @@ struct Texture {
     uint32_t numLevels;
 
     ktxTexture *data;
+    FILE *file;
 
     ~Texture();
 };
 
 namespace MaterialParam {
-    struct DiffuseColorTexture {
-        std::shared_ptr<Texture> value;
-    };
+struct DiffuseColorTexture {
+    std::shared_ptr<Texture> value;
+};
 
-    struct DiffuseColorUniform {
-        glm::vec4 value;
-    };
+struct DiffuseColorUniform {
+    glm::vec4 value;
+};
 
-    using AlbedoColorTexture = DiffuseColorTexture;
-    using AlbedoColorUniform = DiffuseColorUniform;
+using AlbedoColorTexture = DiffuseColorTexture;
+using AlbedoColorUniform = DiffuseColorUniform;
 
-    struct SpecularColorTexture {
-        std::shared_ptr<Texture> value;
-    };
+struct SpecularColorTexture {
+    std::shared_ptr<Texture> value;
+};
 
-    struct SpecularColorUniform {
-        glm::vec4 value;
-    };
+struct SpecularColorUniform {
+    glm::vec4 value;
+};
 
-    struct ShininessUniform {
-        float value;
-    };
+struct ShininessUniform {
+    float value;
+};
 };
 
 struct Material {
@@ -83,11 +84,9 @@ template <typename MaterialParamsType>
 struct MaterialImpl;
 
 struct EnvironmentInit {
-    EnvironmentInit(
-            const std::vector<InstanceProperties>
-                &instances,
-            const std::vector<LightProperties> &lights,
-            uint32_t num_meshes);
+    EnvironmentInit(const std::vector<InstanceProperties> &instances,
+                    const std::vector<LightProperties> &lights,
+                    uint32_t num_meshes);
 
     std::vector<std::vector<glm::mat4x3>> transforms;
     std::vector<std::vector<uint32_t>> materials;
@@ -166,26 +165,20 @@ struct SceneLoadInfo {
 };
 
 struct LoaderImpl {
-    std::add_pointer_t<
-        StagedScene(const std::vector<std::shared_ptr<Mesh>> &,
-                    const std::vector<uint8_t> &param_bytes,
-                    const DeviceState &,
-                    MemoryAllocator &)>
-            stageScene;
+    std::add_pointer_t<StagedScene(const std::vector<std::shared_ptr<Mesh>> &,
+                                   const std::vector<uint8_t> &param_bytes,
+                                   const DeviceState &,
+                                   MemoryAllocator &)>
+        stageScene;
+
+    std::add_pointer_t<SceneDescription(std::string_view, const glm::mat4 &)>
+        parseScene;
+
+    std::add_pointer_t<std::shared_ptr<Mesh>(std::string_view)> loadMesh;
 
     std::add_pointer_t<
-        SceneDescription(std::string_view, const glm::mat4 &)>
-            parseScene;
-
-    std::add_pointer_t<
-        std::shared_ptr<Mesh>(std::string_view)>
-            loadMesh;
-
-    std::add_pointer_t<
-        SceneLoadInfo(std::string_view,
-                      const glm::mat4 &,
-                      MemoryAllocator &)>
-            loadPreprocessedScene;
+        SceneLoadInfo(std::string_view, const glm::mat4 &, MemoryAllocator &)>
+        loadPreprocessedScene;
 
     template <typename VertexType, typename MaterialParamsType>
     static LoaderImpl create();
@@ -203,14 +196,11 @@ public:
                 QueueManager &queue_manager,
                 const glm::mat4 &coordinateTransform);
 
-
     std::shared_ptr<Scene> loadScene(std::string_view scene_path);
 
-    std::shared_ptr<Scene> makeScene(
-            const SceneDescription &desc);
+    std::shared_ptr<Scene> makeScene(const SceneDescription &desc);
 
-    std::shared_ptr<Texture> loadTexture(
-            const std::vector<uint8_t> &raw);
+    std::shared_ptr<Texture> loadTexture(const std::vector<uint8_t> &raw);
 
     template <typename MaterialParamsType>
     std::shared_ptr<Material> makeMaterial(MaterialParamsType params);
@@ -220,7 +210,7 @@ public:
     template <typename VertexType>
     std::shared_ptr<Mesh> makeMesh(std::vector<VertexType> vertices,
                                    std::vector<uint32_t> indices);
-                
+
     const DeviceState &dev;
 
     const VkCommandPool gfxPool;
@@ -241,8 +231,7 @@ public:
     glm::mat4 coordinateTransform;
 
 private:
-    std::shared_ptr<Scene> makeScene(
-            SceneLoadInfo load_info);
+    std::shared_ptr<Scene> makeScene(SceneLoadInfo load_info);
 
     const LoaderImpl impl_;
 };

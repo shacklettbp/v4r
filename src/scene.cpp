@@ -19,12 +19,12 @@ namespace v4r {
 Texture::~Texture()
 {
     ktxTexture_Destroy(data);
+    fclose(file);
 }
 
-EnvironmentInit::EnvironmentInit(
-        const vector<InstanceProperties> &instances,
-        const vector<LightProperties> &l,
-        uint32_t num_meshes)
+EnvironmentInit::EnvironmentInit(const vector<InstanceProperties> &instances,
+                                 const vector<LightProperties> &l,
+                                 uint32_t num_meshes)
     : transforms(num_meshes),
       materials(num_meshes),
       indexMap(),
@@ -87,17 +87,16 @@ EnvironmentState::EnvironmentState(const shared_ptr<Scene> &s,
 {}
 
 template <typename VertexType>
-static StagedScene stageScene(
-        const vector<shared_ptr<Mesh>> &meshes,
-        const vector<uint8_t> &param_bytes,
-        const DeviceState &dev,
-        MemoryAllocator &alloc)
+static StagedScene stageScene(const vector<shared_ptr<Mesh>> &meshes,
+                              const vector<uint8_t> &param_bytes,
+                              const DeviceState &dev,
+                              MemoryAllocator &alloc)
 {
     using MeshT = VertexMesh<VertexType>;
 
     VkDeviceSize total_vertex_bytes = 0;
     VkDeviceSize total_index_bytes = 0;
-    
+
     for (const auto &generic_mesh : meshes) {
         auto mesh = static_cast<const MeshT *>(generic_mesh.get());
         total_vertex_bytes += sizeof(VertexType) * mesh->vertices.size();
@@ -126,7 +125,7 @@ static StagedScene stageScene(
     uint32_t vertex_offset = 0;
     uint8_t *staging_start = reinterpret_cast<uint8_t *>(staging.ptr);
     uint8_t *cur_ptr = staging_start;
-    //MeshInfo *mesh_infos = reinterpret_cast<MeshInfo *>(
+    // MeshInfo *mesh_infos = reinterpret_cast<MeshInfo *>(
     //        staging_start + mesh_info_offset);
 
     for (uint32_t mesh_idx = 0; mesh_idx < meshes.size(); mesh_idx++) {
@@ -135,7 +134,7 @@ static StagedScene stageScene(
         VkDeviceSize vertex_bytes = sizeof(VertexType) * mesh->vertices.size();
         memcpy(cur_ptr, mesh->vertices.data(), vertex_bytes);
 
-        //mesh_infos[mesh_idx].vertexOffset = vertex_offset;
+        // mesh_infos[mesh_idx].vertexOffset = vertex_offset;
 
         cur_ptr += vertex_bytes;
         vertex_offset += mesh->vertices.size();
@@ -146,12 +145,11 @@ static StagedScene stageScene(
     for (uint32_t mesh_idx = 0; mesh_idx < meshes.size(); mesh_idx++) {
         auto mesh = static_cast<const MeshT *>(meshes[mesh_idx].get());
 
-        VkDeviceSize index_bytes =
-            sizeof(uint32_t) * mesh->indices.size();
+        VkDeviceSize index_bytes = sizeof(uint32_t) * mesh->indices.size();
         memcpy(cur_ptr, mesh->indices.data(), index_bytes);
 
-        //mesh_infos[mesh_idx].indexOffset = cur_mesh_index;
-        //mesh_infos[mesh_idx].indexCount = 
+        // mesh_infos[mesh_idx].indexOffset = cur_mesh_index;
+        // mesh_infos[mesh_idx].indexCount =
         //    static_cast<uint32_t>(mesh->indices.size());
 
         cur_ptr += index_bytes;
@@ -167,29 +165,26 @@ static StagedScene stageScene(
     staging.flush(dev);
 
     // FIXME: totally broken post mesh chunks requirement
-    return { 
-        move(staging), 
-        StagingHeader {
-            total_vertex_bytes,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            material_offset,
-            num_material_bytes,
-            total_bytes,
-            static_cast<uint32_t>(meshes.size()),
-        },
-        {}
-    };
+    return {move(staging),
+            StagingHeader {
+                total_vertex_bytes,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                material_offset,
+                num_material_bytes,
+                total_bytes,
+                static_cast<uint32_t>(meshes.size()),
+            },
+            {}};
 }
 
 template <typename VertexType>
-VertexMesh<VertexType>::VertexMesh(vector<VertexType> v,
-                                   vector<uint32_t> i)
-    : Mesh { move(i) },
+VertexMesh<VertexType>::VertexMesh(vector<VertexType> v, vector<uint32_t> i)
+    : Mesh {move(i)},
       vertices(move(v))
 {}
 
@@ -197,10 +192,8 @@ template <typename VertexType>
 static shared_ptr<Mesh> makeSharedMesh(vector<VertexType> vertices,
                                        vector<uint32_t> indices)
 {
-    return shared_ptr<VertexMesh<VertexType>>(new VertexMesh<VertexType>(
-        move(vertices),
-        move(indices)
-    ));
+    return shared_ptr<VertexMesh<VertexType>>(
+        new VertexMesh<VertexType>(move(vertices), move(indices)));
 }
 
 template <typename VertexType>
@@ -240,16 +233,15 @@ static SceneDescription parseGLTFScene(std::string_view scene_path,
 {
     auto raw_scene = gltfLoad(scene_path);
 
-    constexpr bool need_materials = !std::is_same_v<MaterialParamsType,
-                                                    NoMaterial>;
+    constexpr bool need_materials =
+        !std::is_same_v<MaterialParamsType, NoMaterial>;
 
     std::vector<std::shared_ptr<Material>> materials;
     std::vector<std::shared_ptr<Mesh>> geometry;
     geometry.reserve(raw_scene.meshes.size());
 
     if constexpr (need_materials) {
-        materials =
-            gltfParseMaterials<MaterialParamsType>(raw_scene);
+        materials = gltfParseMaterials<MaterialParamsType>(raw_scene);
     }
 
     for (uint32_t mesh_idx = 0; mesh_idx < raw_scene.meshes.size();
@@ -271,8 +263,8 @@ static SceneDescription parseScene(string_view scene_path,
                                    const glm::mat4 &coordinate_txfm)
 {
     if (isGLTF(scene_path)) {
-        return parseGLTFScene<VertexType, MaterialParamsType>(
-                scene_path, coordinate_txfm);
+        return parseGLTFScene<VertexType, MaterialParamsType>(scene_path,
+                                                              coordinate_txfm);
     } else {
         cerr << "Only GLTF is supported" << endl;
         abort();
@@ -363,18 +355,16 @@ static SceneLoadInfo loadPreprocessedScene(string_view scene_path_name,
         glm::mat4x3 txfm;
         scene_file.read(reinterpret_cast<char *>(&txfm), sizeof(glm::mat4x3));
         instances.emplace_back(mesh_index, material_index,
-            glm::mat4x3(coordinate_txfm * glm::mat4(txfm)));
+                               glm::mat4x3(coordinate_txfm * glm::mat4(txfm)));
     }
 
-    return SceneLoadInfo {
-        StagedScene {
-            move(staging_buffer),
-            hdr,
-            move(mesh_infos),
-        },
-        move(materials),
-        EnvironmentInit(move(instances), {}, hdr.numMeshes)
-    };
+    return SceneLoadInfo {StagedScene {
+                              move(staging_buffer),
+                              hdr,
+                              move(mesh_infos),
+                          },
+                          move(materials),
+                          EnvironmentInit(move(instances), {}, hdr.numMeshes)};
 }
 
 template <typename VertexType, typename MaterialParamsType>
@@ -388,17 +378,16 @@ LoaderImpl LoaderImpl::create()
     };
 }
 
-LoaderState::LoaderState(const DeviceState &d,
-                         const LoaderImpl &impl,
-                         const VkDescriptorSetLayout &scene_set_layout,
-                         DescriptorManager::MakePoolType make_scene_pool,
-                         const VkDescriptorSetLayout &
-                            mesh_cull_scene_set_layout,
-                         DescriptorManager::MakePoolType
-                            make_mesh_cull_scene_pool,
-                         MemoryAllocator &alc,
-                         QueueManager &queue_manager,
-                         const glm::mat4 &coordinate_transform)
+LoaderState::LoaderState(
+    const DeviceState &d,
+    const LoaderImpl &impl,
+    const VkDescriptorSetLayout &scene_set_layout,
+    DescriptorManager::MakePoolType make_scene_pool,
+    const VkDescriptorSetLayout &mesh_cull_scene_set_layout,
+    DescriptorManager::MakePoolType make_mesh_cull_scene_pool,
+    MemoryAllocator &alc,
+    QueueManager &queue_manager,
+    const glm::mat4 &coordinate_transform)
     : dev(d),
       gfxPool(makeCmdPool(dev, dev.gfxQF)),
       gfxQueue(queue_manager.allocateGraphicsQueue()),
@@ -410,7 +399,8 @@ LoaderState::LoaderState(const DeviceState &d,
       fence(makeFence(dev)),
       alloc(alc),
       descriptorManager(dev, scene_set_layout, make_scene_pool),
-      cullDescriptorManager(dev, mesh_cull_scene_set_layout,
+      cullDescriptorManager(dev,
+                            mesh_cull_scene_set_layout,
                             make_mesh_cull_scene_pool),
       coordinateTransform(coordinate_transform),
       impl_(impl)
@@ -418,7 +408,7 @@ LoaderState::LoaderState(const DeviceState &d,
 
 // FIXME not static so preprocess can link
 pair<vector<uint8_t>, MaterialMetadata> stageMaterials(
-        const vector<shared_ptr<Material>> &materials)
+    const vector<shared_ptr<Material>> &materials)
 {
     vector<shared_ptr<Texture>> textures;
     unordered_map<const Texture *, size_t> texture_tracker;
@@ -465,23 +455,23 @@ pair<vector<uint8_t>, MaterialMetadata> stageMaterials(
         cur_param_ptr += material->paramBytes.size();
     }
 
-    return {move(packed_params), {
-        textures,
-        uint32_t(materials.size()),
-        textures_per_material,
-        texture_indices,
-    }};
+    return {move(packed_params),
+            {
+                textures,
+                uint32_t(materials.size()),
+                textures_per_material,
+                texture_indices,
+            }};
 }
 
 shared_ptr<Scene> LoaderState::loadScene(string_view scene_path)
 {
     if (scene_path.substr(scene_path.rfind('.') + 1) == "bps") {
-        return makeScene(impl_.loadPreprocessedScene(scene_path,
-                                                     coordinateTransform,
-                                                     alloc));
+        return makeScene(impl_.loadPreprocessedScene(
+            scene_path, coordinateTransform, alloc));
     } else {
-        SceneDescription desc = impl_.parseScene(scene_path,
-                                                 coordinateTransform);
+        SceneDescription desc =
+            impl_.parseScene(scene_path, coordinateTransform);
 
         return makeScene(desc);
     }
@@ -492,15 +482,13 @@ shared_ptr<Scene> LoaderState::makeScene(const SceneDescription &desc)
     auto [staged_params, material_metadata] =
         stageMaterials(desc.getMaterials());
 
-    StagedScene staged_scene = impl_.stageScene(desc.getMeshes(),
-                                                staged_params,
-                                                dev, alloc);
+    StagedScene staged_scene =
+        impl_.stageScene(desc.getMeshes(), staged_params, dev, alloc);
 
     return makeScene(SceneLoadInfo {
         move(staged_scene),
         move(material_metadata),
-        EnvironmentInit(desc.getDefaultInstances(),
-                        desc.getDefaultLights(),
+        EnvironmentInit(desc.getDefaultInstances(), desc.getDefaultLights(),
                         staged_scene.hdr.numMeshes),
     });
 }
@@ -522,17 +510,16 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         assert(ktx->classId == ktxTexture2_c);
 
         ktxTexture2 *ktx2 = reinterpret_cast<ktxTexture2 *>(ktx);
-        KTX_error_code res = ktxTexture2_TranscodeBasis(
-            ktx2, KTX_TTF_BC7_RGBA, 0);
+        KTX_error_code res =
+            ktxTexture2_TranscodeBasis(ktx2, KTX_TTF_BC7_RGBA, 0);
         ktxCheck(res);
 
         for (uint32_t level = 0; level < texture->numLevels; level++) {
             total_texture_bytes += ktxTexture_GetImageSize(ktx, level);
         }
 
-        gpu_textures.emplace_back(alloc.makeTexture(texture->width,
-                                                    texture->height,
-                                                    texture->numLevels));
+        gpu_textures.emplace_back(alloc.makeTexture(
+            texture->width, texture->height, texture->numLevels));
     }
     const uint32_t num_textures = cpu_textures.size();
 
@@ -572,19 +559,15 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = gpu_texture.image;
         barrier.subresourceRange = {
-            VK_IMAGE_ASPECT_COLOR_BIT,
-            0, gpu_texture.mipLevels,
-            0, 1,
+            VK_IMAGE_ASPECT_COLOR_BIT, 0, gpu_texture.mipLevels, 0, 1,
         };
     }
 
     if (num_textures > 0) {
-        dev.dt.cmdPipelineBarrier(transferStageCommand,
-                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                  0, 0, nullptr, 0, nullptr,
-                                  texture_barriers.size(),
-                                  texture_barriers.data());
+        dev.dt.cmdPipelineBarrier(
+            transferStageCommand, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+            texture_barriers.size(), texture_barriers.data());
 
         // Copy all textures into staging buffer & record cpu -> gpu copies
         uint8_t *base_texture_staging =
@@ -606,17 +589,15 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
             for (uint32_t level = 0; level < num_levels; level++) {
                 // Copy to staging
                 VkDeviceSize ktx_level_offset;
-                KTX_error_code res =
-                    ktxTexture_GetImageOffset(ktx, level, 0, 0,
-                                              &ktx_level_offset);
+                KTX_error_code res = ktxTexture_GetImageOffset(
+                    ktx, level, 0, 0, &ktx_level_offset);
                 ktxCheck(res);
 
                 VkDeviceSize num_level_bytes =
                     ktxTexture_GetImageSize(ktx, level);
 
                 memcpy(base_texture_staging + cur_staging_offset,
-                       ktx_data + ktx_level_offset, 
-                       num_level_bytes);
+                       ktx_data + ktx_level_offset, num_level_bytes);
 
                 uint32_t level_div = 1 << level;
                 uint32_t level_width = max(1U, base_width / level_div);
@@ -630,7 +611,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
                 copy_info.imageSubresource.mipLevel = level;
                 copy_info.imageSubresource.baseArrayLayer = 0;
                 copy_info.imageSubresource.layerCount = 1;
-                copy_info.imageExtent = { 
+                copy_info.imageExtent = {
                     level_width,
                     level_height,
                     1,
@@ -644,12 +625,10 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
             // Note that number of copy commands is num_levels
             // not copy_infos.size(), because the vector is shared
             // between textures to avoid allocs
-            dev.dt.cmdCopyBufferToImage(transferStageCommand,
-                                        texture_staging->buffer,
-                                        gpu_texture.image,
-                                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                        num_levels,
-                                        copy_infos.data());
+            dev.dt.cmdCopyBufferToImage(
+                transferStageCommand, texture_staging->buffer,
+                gpu_texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                num_levels, copy_infos.data());
         }
 
         // Flush staging buffer
@@ -660,7 +639,8 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
             barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
             barrier.dstAccessMask = 0;
             barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;;
+            barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            ;
             barrier.srcQueueFamilyIndex = dev.transferQF;
             barrier.dstQueueFamilyIndex = dev.gfxQF;
         }
@@ -679,17 +659,14 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     geometry_barrier.size = staged.hdr.totalBytes;
 
     // Geometry & texture barrier execute.
-    dev.dt.cmdPipelineBarrier(transferStageCommand,
-                              VK_PIPELINE_STAGE_TRANSFER_BIT,
-                              VK_PIPELINE_STAGE_TRANSFER_BIT,
-                              0, 0, nullptr,
-                              1, &geometry_barrier,
-                              texture_barriers.size(),
-                              texture_barriers.data());
+    dev.dt.cmdPipelineBarrier(
+        transferStageCommand, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &geometry_barrier,
+        texture_barriers.size(), texture_barriers.data());
 
     REQ_VK(dev.dt.endCommandBuffer(transferStageCommand));
 
-    VkSubmitInfo copy_submit{};
+    VkSubmitInfo copy_submit {};
     copy_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     copy_submit.commandBufferCount = 1;
     copy_submit.pCommandBuffers = &transferStageCommand;
@@ -705,17 +682,15 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     // geometry and textures need separate barriers due to different
     // dependent stages
     geometry_barrier.srcAccessMask = 0;
-    geometry_barrier.dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT |
-                                     VK_ACCESS_INDEX_READ_BIT;
+    geometry_barrier.dstAccessMask =
+        VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
 
     dev.dt.cmdPipelineBarrier(gfxCopyCommand,
                               VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                              VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
-                              0, 0, nullptr,
-                              1, &geometry_barrier,
-                              0, nullptr);
+                              VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, 0, 0,
+                              nullptr, 1, &geometry_barrier, 0, nullptr);
 
-    if (num_textures > 0)  {
+    if (num_textures > 0) {
         for (VkImageMemoryBarrier &barrier : texture_barriers) {
             barrier.srcAccessMask = 0;
             barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
@@ -726,22 +701,19 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         }
 
         // Finish acquiring mip level 0 on graphics queue and transition layout
-        dev.dt.cmdPipelineBarrier(gfxCopyCommand,
-                                  VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-                                  0, 0, nullptr, 0, nullptr,
-                                  texture_barriers.size(),
-                                  texture_barriers.data());
+        dev.dt.cmdPipelineBarrier(
+            gfxCopyCommand, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr,
+            texture_barriers.size(), texture_barriers.data());
     }
 
     REQ_VK(dev.dt.endCommandBuffer(gfxCopyCommand));
 
-    VkSubmitInfo gfx_submit{};
+    VkSubmitInfo gfx_submit {};
     gfx_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     gfx_submit.waitSemaphoreCount = 1;
     gfx_submit.pWaitSemaphores = &semaphore;
-    VkPipelineStageFlags sema_wait_mask = 
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    VkPipelineStageFlags sema_wait_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     gfx_submit.pWaitDstStageMask = &sema_wait_mask;
     gfx_submit.commandBufferCount = 1;
     gfx_submit.pCommandBuffers = &gfxCopyCommand;
@@ -761,15 +733,11 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         view_info.image = gpu_texture.image;
         view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
         view_info.format = alloc.getFormats().sdrTexture;
-        view_info.components = { 
-            VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
-            VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A
-        };
-        view_info.subresourceRange = {
-            VK_IMAGE_ASPECT_COLOR_BIT,
-            0, gpu_texture.mipLevels,
-            0, 1
-        };
+        view_info.components = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
+                                VK_COMPONENT_SWIZZLE_B,
+                                VK_COMPONENT_SWIZZLE_A};
+        view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0,
+                                      gpu_texture.mipLevels, 0, 1};
 
         VkImageView view;
         REQ_VK(dev.dt.createImageView(dev.hdl, &view_info, nullptr, &view));
@@ -798,18 +766,15 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
              material_texture_idx < material_metadata.texturesPerMaterial;
              material_texture_idx++) {
             for (uint32_t mat_idx = 0;
-                 mat_idx < material_metadata.numMaterials;
-                 mat_idx++) {
-                VkImageView view = texture_views[
-                    material_metadata.textureIndices[
-                        mat_idx * material_metadata.texturesPerMaterial +
-                            material_texture_idx]];
+                 mat_idx < material_metadata.numMaterials; mat_idx++) {
+                VkImageView view = texture_views
+                    [material_metadata.textureIndices
+                         [mat_idx * material_metadata.texturesPerMaterial +
+                          material_texture_idx]];
 
-                descriptor_views.push_back({
-                    VK_NULL_HANDLE, // Immutable
-                    view,
-                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-                });
+                descriptor_views.push_back(
+                    {VK_NULL_HANDLE,  // Immutable
+                     view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
             }
             VkWriteDescriptorSet desc_update;
             desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -819,7 +784,8 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
             desc_update.dstArrayElement = 0;
             desc_update.descriptorCount = material_metadata.numMaterials;
             desc_update.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-            desc_update.pImageInfo = descriptor_views.data() +
+            desc_update.pImageInfo =
+                descriptor_views.data() +
                 material_texture_idx * material_metadata.numMaterials;
             desc_update.pBufferInfo = nullptr;
             desc_update.pTexelBufferView = nullptr;
@@ -835,7 +801,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
             }
 
             material_buffer_info.buffer = data.buffer;
-            material_buffer_info.offset = staged.hdr.materialOffset ;
+            material_buffer_info.offset = staged.hdr.materialOffset;
             material_buffer_info.range = staged.hdr.materialBytes;
 
             VkWriteDescriptorSet desc_update;
@@ -897,7 +863,6 @@ shared_ptr<Texture> LoaderState::loadTexture(const vector<uint8_t> &raw)
     (void)raw;
     return nullptr;
 }
-
 
 template <typename MaterialParamsType>
 shared_ptr<Material> LoaderState::makeMaterial(MaterialParamsType params)
