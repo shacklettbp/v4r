@@ -413,7 +413,7 @@ void ScenePreprocessor::dump(string_view out_path_name)
 
     filesystem::path out_path(out_path_name);
     string basename = out_path.filename();
-    basename.resize(basename.find('.'));
+    basename.resize(basename.rfind('.'));
 
     ofstream out(out_path, ios::binary);
     auto write = [&](auto val) {

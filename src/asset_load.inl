@@ -32,7 +32,7 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
     GLTFScene scene;
     scene.sceneDirectory = std::filesystem::path(gltf_path).parent_path();
 
-    auto suffix = gltf_path.substr(gltf_path.find('.') + 1);
+    auto suffix = gltf_path.substr(gltf_path.rfind('.') + 1);
     bool binary = suffix == "glb";
     if (binary) {
         std::ifstream binary_file(std::string(gltf_path),

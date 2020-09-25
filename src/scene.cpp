@@ -219,7 +219,7 @@ static shared_ptr<Mesh> loadMeshGLTF(string_view geometry_path)
 
 static bool isGLTF(string_view gltf_path)
 {
-    auto suffix = gltf_path.substr(gltf_path.find('.') + 1);
+    auto suffix = gltf_path.substr(gltf_path.rfind('.') + 1);
     return suffix == "glb" || suffix == "gltf";
 }
 
@@ -475,7 +475,7 @@ pair<vector<uint8_t>, MaterialMetadata> stageMaterials(
 
 shared_ptr<Scene> LoaderState::loadScene(string_view scene_path)
 {
-    if (scene_path.substr(scene_path.find('.') + 1) == "bps") {
+    if (scene_path.substr(scene_path.rfind('.') + 1) == "bps") {
         return makeScene(impl_.loadPreprocessedScene(scene_path,
                                                      coordinateTransform,
                                                      alloc));
