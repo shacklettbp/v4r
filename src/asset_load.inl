@@ -370,25 +370,27 @@ static StridedSpan<T> getGLTFAccessorView(const GLTFScene &scene,
 
 void ktxCheck(KTX_error_code res)
 {
-    static const char *ktx_errors[] = {"KTX_SUCCESS",
-                                       "KTX_FILE_DATA_ERROR",
-                                       "KTX_FILE_ISPIPE",
-                                       "KTX_FILE_OPEN_FAILED",
-                                       "KTX_FILE_OVERFLOW",
-                                       "KTX_FILE_READ_ERROR",
-                                       "KTX_FILE_SEEK_ERROR",
-                                       "KTX_FILE_UNEXPECTED_EOF",
-                                       "KTX_FILE_WRITE_ERROR",
-                                       "KTX_GL_ERROR",
-                                       "KTX_INVALID_OPERATION",
-                                       "KTX_INVALID_VALUE",
-                                       "KTX_NOT_FOUND",
-                                       "KTX_OUT_OF_MEMORY",
-                                       "KTX_TRANSCODE_FAILED",
-                                       "KTX_UNKNOWN_FILE_FORMAT",
-                                       "KTX_UNSUPPORTED_TEXTURE_TYPE",
-                                       "KTX_UNSUPPORTED_FEATURE",
-                                       "KTX_LIBRARY_NOT_LINKED"};
+    static const char *ktx_errors[] = {
+        "KTX_SUCCESS",
+        "KTX_FILE_DATA_ERROR",
+        "KTX_FILE_ISPIPE",
+        "KTX_FILE_OPEN_FAILED",
+        "KTX_FILE_OVERFLOW",
+        "KTX_FILE_READ_ERROR",
+        "KTX_FILE_SEEK_ERROR",
+        "KTX_FILE_UNEXPECTED_EOF",
+        "KTX_FILE_WRITE_ERROR",
+        "KTX_GL_ERROR",
+        "KTX_INVALID_OPERATION",
+        "KTX_INVALID_VALUE",
+        "KTX_NOT_FOUND",
+        "KTX_OUT_OF_MEMORY",
+        "KTX_TRANSCODE_FAILED",
+        "KTX_UNKNOWN_FILE_FORMAT",
+        "KTX_UNSUPPORTED_TEXTURE_TYPE",
+        "KTX_UNSUPPORTED_FEATURE",
+        "KTX_LIBRARY_NOT_LINKED",
+    };
 
     if (res != KTX_SUCCESS) {
         const char *ktx_error;
@@ -424,9 +426,13 @@ std::shared_ptr<Texture> loadKTXFile(const char *texture_path)
         fatalExit();
     }
 
-    return std::shared_ptr<Texture>(
-        new Texture {ktx_texture->baseWidth, ktx_texture->baseHeight,
-                     ktx_texture->numLevels, ktx_texture, file});
+    return std::shared_ptr<Texture>(new Texture {
+        ktx_texture->baseWidth,
+        ktx_texture->baseHeight,
+        ktx_texture->numLevels,
+        ktx_texture,
+        file,
+    });
 }
 
 static std::shared_ptr<Texture> gltfLoadTexture(const GLTFScene &scene,
