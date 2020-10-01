@@ -63,6 +63,7 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
                               0, nullptr);
 
     uint32_t draw_id = 0;
+    uint32_t inst_offset = 0;
     glm::mat4x3 *transform_ptr = frame_state.transformPtr;
     uint32_t *material_ptr = frame_state.materialPtr;
     LightProperties *light_ptr = frame_state.lightPtr;
@@ -86,12 +87,13 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
                      chunk_id < mesh_metadata.numChunks;
                      chunk_id++) {
                     frame_state.drawPtr[draw_id] = DrawInput {
-                        inst_idx,
+                        inst_idx + inst_offset,
                         chunk_id + mesh_metadata.chunkOffset,
                     };
                     draw_id++;
                 }
             }
+            inst_offset += num_instances;
 
             memcpy(transform_ptr, env.transforms_[mesh_idx].data(),
                    sizeof(glm::mat4x3) * num_instances);

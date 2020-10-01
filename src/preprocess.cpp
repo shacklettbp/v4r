@@ -140,12 +140,8 @@ static vector<Meshlet> buildMeshlets(
 vector<MeshChunk> assignChunks(const vector<Meshlet> &meshlets)
 {
     uint32_t num_chunks =
-        meshlets.size() / VulkanConfig::num_meshlets_per_chunk;
-    if (num_chunks == 0) {
-        num_chunks = 1;
-    } else if (meshlets.size() % num_chunks != 0) {
-        num_chunks++;
-    }
+        (meshlets.size() + VulkanConfig::num_meshlets_per_chunk - 1) /
+        VulkanConfig::num_meshlets_per_chunk;
 
     vector<MeshChunk> chunks;
     chunks.reserve(num_chunks);
@@ -206,6 +202,8 @@ vector<MeshChunk> assignChunks(const vector<Meshlet> &meshlets)
 
         cur_meshlet_idx += cur_num_meshlets;
     }
+
+    assert(cur_meshlet_idx == meshlets.size());
 
     return chunks;
 }
