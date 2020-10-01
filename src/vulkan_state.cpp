@@ -33,7 +33,8 @@ FramebufferConfig PipelineImpl<PipelineType>::getFramebufferConfig(
         is_double_buffered ?
             2 : 1;
 
-    uint32_t minibatch_size = min(VulkanConfig::minibatch_size, batch_size);
+    uint32_t minibatch_size = max(batch_size / VulkanConfig::minibatch_divisor,
+                                  batch_size);
     assert(batch_size % minibatch_size == 0);
 
     uint32_t batch_fb_images_wide = ceil(sqrt(batch_size));
