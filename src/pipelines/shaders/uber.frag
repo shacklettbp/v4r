@@ -132,7 +132,7 @@ vec4 compute_color()
 {
 #ifdef ALBEDO_COLOR_TEXTURE
     vec4 albedo = texture(sampler2D(albedo_textures[material_idx],
-                                    texture_sampler), in_uv, 0.f);
+                                    texture_sampler), in_uv, -1.f);
 #endif
 
 #ifdef ALBEDO_COLOR_UNIFORM

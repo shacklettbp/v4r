@@ -514,12 +514,12 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
             ktxTexture2_TranscodeBasis(ktx2, KTX_TTF_BC7_RGBA, 0);
         ktxCheck(res);
 
-        for (uint32_t level = 0; level < texture->numLevels; level++) {
+        for (uint32_t level = 1; level < texture->numLevels; level++) {
             total_texture_bytes += ktxTexture_GetImageSize(ktx, level);
         }
 
         gpu_textures.emplace_back(alloc.makeTexture(
-            texture->width, texture->height, texture->numLevels));
+            texture->width / 2, texture->height / 2, texture->numLevels - 1));
     }
     const uint32_t num_textures = cpu_textures.size();
 
@@ -586,7 +586,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
             ktxTexture *ktx = cpu_texture->data;
             const uint8_t *ktx_data = ktxTexture_GetData(ktx);
 
-            for (uint32_t level = 0; level < num_levels; level++) {
+            for (uint32_t level = 1; level < num_levels; level++) {
                 // Copy to staging
                 VkDeviceSize ktx_level_offset;
                 KTX_error_code res = ktxTexture_GetImageOffset(
@@ -608,7 +608,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
                 copy_info.bufferOffset = cur_staging_offset;
                 copy_info.imageSubresource.aspectMask =
                     VK_IMAGE_ASPECT_COLOR_BIT;
-                copy_info.imageSubresource.mipLevel = level;
+                copy_info.imageSubresource.mipLevel = level - 1;
                 copy_info.imageSubresource.baseArrayLayer = 0;
                 copy_info.imageSubresource.layerCount = 1;
                 copy_info.imageExtent = {
