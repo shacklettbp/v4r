@@ -154,14 +154,6 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
                                          1, &scene.cullSet.hdl,
                                          0, nullptr);
 
-            if (scene.materialSet.hdl != VK_NULL_HANDLE) {
-                dev.dt.cmdBindDescriptorSets(render_cmd,
-                                             VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                             pipeline.gfxLayout, 1,
-                                             1, &scene.materialSet.hdl,
-                                             0, nullptr);
-            }
-
             CullPushConstant cull_const {
                 env.state_->frustumBounds,
                 batch_idx,
@@ -216,6 +208,14 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
              local_batch_idx++) {
             uint32_t batch_idx = global_batch_offset + local_batch_idx;
             const Scene &scene = *(envs[batch_idx].state_->scene);
+
+            if (scene.materialSet.hdl != VK_NULL_HANDLE) {
+                dev.dt.cmdBindDescriptorSets(render_cmd,
+                                             VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                             pipeline.gfxLayout, 1,
+                                             1, &scene.materialSet.hdl,
+                                             0, nullptr);
+            }
 
             glm::u32vec2 batch_offset = frame_state.batchFBOffsets[batch_idx];
 
