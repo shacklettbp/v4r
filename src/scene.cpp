@@ -19,7 +19,6 @@ namespace v4r {
 Texture::~Texture()
 {
     ktxTexture_Destroy(data);
-    fclose(file);
 }
 
 EnvironmentInit::EnvironmentInit(const vector<InstanceProperties> &instances,
@@ -503,7 +502,31 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     vector<shared_ptr<Texture>> cpu_textures;
     cpu_textures.reserve(material_metadata.textures.size());
     for (const auto &texture_path : material_metadata.textures) {
-        cpu_textures.emplace_back(loadKTXFile(texture_path.c_str()));
+        // Hack to keep file descriptor count down
+        FILE *file = fopen(texture_path.c_str(), "rb");
+        if (!file) {
+            cerr << "Texture loading failed: Could not open "
+                 << texture_path << endl;
+            fatalExit();
+        }
+
+        auto texture = loadKTXFile(file);
+        if (texture == nullptr) {
+            cerr << "Texture loading failed: Error loading "
+                 << texture_path << endl;
+            fatalExit();
+        }
+
+        ktxTexture *ktx = texture->data;
+        assert(ktx->classId == ktxTexture2_c);
+
+        ktxTexture2 *ktx2 = reinterpret_cast<ktxTexture2 *>(ktx);
+        KTX_error_code res =
+            ktxTexture2_TranscodeBasis(ktx2, KTX_TTF_BC7_RGBA, 0);
+        ktxCheck(res);
+        fclose(file);
+
+        cpu_textures.emplace_back(move(texture));
     }
 
     vector<LocalImage> gpu_textures;
@@ -515,12 +538,6 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     VkDeviceSize total_texture_bytes = 0;
     for (const shared_ptr<Texture> &texture : cpu_textures) {
         ktxTexture *ktx = texture->data;
-        assert(ktx->classId == ktxTexture2_c);
-
-        ktxTexture2 *ktx2 = reinterpret_cast<ktxTexture2 *>(ktx);
-        KTX_error_code res =
-            ktxTexture2_TranscodeBasis(ktx2, KTX_TTF_BC7_RGBA, 0);
-        ktxCheck(res);
 
         for (uint32_t level = 1; level < texture->numLevels; level++) {
             total_texture_bytes += ktxTexture_GetImageSize(ktx, level);

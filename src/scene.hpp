@@ -46,7 +46,6 @@ struct Texture {
     uint32_t numLevels;
 
     ktxTexture *data;
-    FILE *file;
 
     ~Texture();
 };

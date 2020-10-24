@@ -112,7 +112,7 @@ inline void gltfParseInstances(SceneDescription &desc,
                         const glm::mat4 &coordinate_txfm);
 
 void ktxCheck(KTX_error_code r);
-std::shared_ptr<Texture> loadKTXFile(const char *texture_path);
+std::shared_ptr<Texture> loadKTXFile(FILE *file);
 
 }
 
