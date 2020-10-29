@@ -106,7 +106,8 @@ int main(int argc, char *argv[]) {
     using Pipeline = Unlit<RenderOutputs::Color,
                                 DataSource::Texture>;
 
-    BatchPresentRenderer renderer({0, 1, 1, 1, 1024, 1024, glm::mat4(1.f) },
+    BatchPresentRenderer renderer({0, 1, 1, 1, 1024, 1024, 4ul << 30,
+        glm::mat4(1.f) },
         RenderFeatures<Pipeline> { RenderOptions::DoubleBuffered |
                                    RenderOptions::CpuSynchronization }, false);
 

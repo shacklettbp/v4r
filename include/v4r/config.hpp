@@ -46,6 +46,7 @@ struct RenderConfig {
     uint32_t batchSize;
     uint32_t imgWidth;
     uint32_t imgHeight;
+    uint64_t numSceneBytes;
     glm::mat4 coordinateTransform;
 };
 

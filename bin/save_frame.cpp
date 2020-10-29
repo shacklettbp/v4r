@@ -18,6 +18,7 @@ int main(int argc, char *argv[]) {
                            DataSource::Texture>;
 
     BatchRendererCUDA renderer({0, 1, 1, batch_size, 256, 256,
+        4ul << 30,
         glm::mat4(
             1, 0, 0, 0,
             0, -1.19209e-07, -1, 0,

@@ -21,7 +21,7 @@ int main(int argc, char *argv[]) {
     using MaterialParams = Pipeline::MaterialParams;
 
     BatchRendererCUDA renderer({0, 1, 1, 1, 256, 256,
-        glm::mat4(1.f) }, // global transform is just identity
+        4ul << 30, glm::mat4(1.f) }, // global transform is just identity
         RenderFeatures<Pipeline> { RenderOptions::CpuSynchronization }
     );
 
