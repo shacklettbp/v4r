@@ -1173,7 +1173,7 @@ CommandStreamState::CommandStreamState(
       fb_cfg_(fb_cfg),
       fb_(framebuffer),
       render_pass_(render_state.renderPass),
-      per_render_buffer_(alloc.makeHostBuffer(
+      per_render_buffer_(alloc.makeParamBuffer(
           render_state.paramPositions.totalParamBytes *
               num_frames_inflight)),
       indirect_draw_buffer_(alloc.makeIndirectBuffer( 
@@ -1255,7 +1255,7 @@ VulkanState::VulkanState(const RenderConfig &cfg,
     : inst(move(handles.inst)),
       dev(move(handles.dev)),
       queueMgr(dev),
-      alloc(dev, inst),
+      alloc(dev, inst, cfg.textureMemoryBudget),
       fbCfg(PipelineImpl<PipelineType>::getFramebufferConfig(
               cfg.batchSize, cfg.imgWidth,
               cfg.imgHeight, cfg.numStreams,

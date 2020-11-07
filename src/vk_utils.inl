@@ -29,6 +29,20 @@ void QueueState::submit(const DeviceState &dev, uint32_t submit_count,
     }
 }
 
+void QueueState::bindSubmit(const DeviceState &dev, uint32_t submit_count,
+    const VkBindSparseInfo *pSubmits, VkFence fence) const
+{
+    if (num_users_ > 1) {
+        mutex_.lock();
+    }
+
+    REQ_VK(dev.dt.queueBindSparse(queue_hdl_, submit_count, pSubmits, fence));
+
+    if (num_users_ > 1) {
+        mutex_.unlock();
+    }
+}
+
 bool QueueState::presentSubmit(const DeviceState &dev,
                                const VkPresentInfoKHR *present_info) const
 {

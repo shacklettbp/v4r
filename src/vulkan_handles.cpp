@@ -311,6 +311,10 @@ DeviceState InstanceState::makeDevice(
     // Current indirect draw setup uses instance index as basically
     // draw index for retrieving transform, materials etc
     requested_features.features.drawIndirectFirstInstance = true;
+
+    requested_features.features.sparseBinding = true;
+    requested_features.features.sparseResidencyImage2D = true;
+
     dev_create_info.pNext = &requested_features;
 
     VkDevice dev;

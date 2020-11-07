@@ -5,6 +5,8 @@ device:
 - vkCreateImage
 - vkDestroyImage
 - vkGetImageMemoryRequirements
+- vkGetImageSparseMemoryRequirements
+- vkQueueBindSparse
 - vkAllocateMemory
 - vkFreeMemory
 - vkBindImageMemory
@@ -79,6 +81,7 @@ device:
 instance:
 - vkEnumeratePhysicalDevices
 - vkGetPhysicalDeviceFeatures2
+- vkGetPhysicalDeviceProperties
 - vkGetPhysicalDeviceProperties2
 - vkGetPhysicalDeviceFormatProperties2
 - vkGetPhysicalDeviceMemoryProperties2

@@ -98,9 +98,18 @@ struct EnvironmentInit {
     std::vector<uint32_t> lightReverseIDs;
 };
 
+struct TextureData {
+    TextureData(const TextureData &) = delete;
+    TextureData(TextureData &&) = default;
+    ~TextureData();
+
+    std::vector<SparseTexture> textures;
+    std::vector<MemoryChunk> textureMemory;
+    MemoryAllocator &alloc;
+};
+
 struct Scene {
-    std::vector<LocalImage> textures;
-    std::vector<VkImageView> texture_views;
+    TextureData textures;
     DescriptorSet materialSet;
     DescriptorSet cullSet;
     LocalBuffer data;
@@ -221,7 +230,8 @@ public:
     const QueueState &transferQueue;
     const VkCommandBuffer transferStageCommand;
 
-    const VkSemaphore semaphore;
+    const VkSemaphore bindSemaphore;
+    const VkSemaphore ownershipSemaphore;
     const VkFence fence;
 
     MemoryAllocator &alloc;

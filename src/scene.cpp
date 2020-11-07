@@ -86,6 +86,17 @@ EnvironmentState::EnvironmentState(const shared_ptr<Scene> &s,
       lightReverseIDs(s->envDefaults.lightReverseIDs)
 {}
 
+TextureData::~TextureData()
+{
+    for (SparseTexture &texture : textures) {
+        alloc.destroyTexture(move(texture));
+    }
+
+    for (MemoryChunk chunk : textureMemory) {
+        alloc.returnChunk(chunk);
+    }
+}
+
 template <typename VertexType>
 static StagedScene stageScene(const vector<shared_ptr<Mesh>> &meshes,
                               const vector<uint8_t> &param_bytes,
@@ -395,7 +406,8 @@ LoaderState::LoaderState(
       transferPool(makeCmdPool(dev, dev.transferQF)),
       transferQueue(queue_manager.allocateTransferQueue()),
       transferStageCommand(makeCmdBuffer(dev, transferPool)),
-      semaphore(makeBinarySemaphore(dev)),
+      bindSemaphore(makeBinarySemaphore(dev)),
+      ownershipSemaphore(makeBinarySemaphore(dev)),
       fence(makeFence(dev)),
       alloc(alc),
       descriptorManager(dev, scene_set_layout, make_scene_pool),
@@ -499,8 +511,23 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 
     const auto &cpu_textures = material_metadata.textures;
 
-    vector<LocalImage> gpu_textures;
+    TextureData texture_store = {
+        {},
+        {},
+        alloc,
+    };
+    vector<SparseTexture> &gpu_textures = texture_store.textures;
+    vector<MemoryChunk> &texture_memory = texture_store.textureMemory;
+    vector<VkSparseImageMemoryBind> image_binds;
+    vector<VkSparseImageMemoryBindInfo> image_bind_infos;
+    vector<VkSparseMemoryBind> tail_binds;
+    vector<VkSparseImageOpaqueMemoryBindInfo> tail_bind_infos;
+
+    image_bind_infos.reserve(cpu_textures.size());
+    tail_bind_infos.reserve(cpu_textures.size());
     gpu_textures.reserve(cpu_textures.size());
+
+    auto sparse_attrs = alloc.sparseAttributes();
 
     // FIXME - custom loader or hacked loader that makes doing this mip
     // level by mip level possible
@@ -520,7 +547,95 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 
         gpu_textures.emplace_back(alloc.makeTexture(
             texture->width, texture->height, texture->numLevels));
+
+        const SparseTexture &gpu_texture = gpu_textures.back();
+
+        for (uint32_t mip_level = 0; mip_level < gpu_texture.mipLevels;
+             mip_level++) {
+            uint32_t width = gpu_texture.width >> mip_level;
+            uint32_t height = gpu_texture.height >> mip_level;
+
+            if (width < sparse_attrs.tileDim.x ||
+                height< sparse_attrs.tileDim.y) {
+                auto tail_chunk = alloc.getChunk();
+                if (!tail_chunk) return nullptr;
+                texture_memory.push_back(tail_chunk.value());
+
+                tail_bind_infos.push_back(VkSparseImageOpaqueMemoryBindInfo {
+                    gpu_texture.image,
+                    1,
+                    reinterpret_cast<VkSparseMemoryBind *>(tail_binds.size()),
+                });
+
+                tail_binds.push_back(VkSparseMemoryBind {
+                    sparse_attrs.mipTailOffset,
+                    sparse_attrs.tailBytes,
+                    texture_memory.back().hdl,
+                    texture_memory.back().offset,
+                    0,
+                });
+                break;
+            }
+
+            uint32_t num_tiles_x = width / sparse_attrs.tileDim.x;
+            if (width % sparse_attrs.tileDim.x != 0) {
+                num_tiles_x++;
+            }
+
+            uint32_t num_tiles_y = height / sparse_attrs.tileDim.y;
+            if (height % sparse_attrs.tileDim.y != 0) {
+                num_tiles_y++;
+            }
+
+            image_bind_infos.push_back(VkSparseImageMemoryBindInfo {
+                gpu_texture.image,
+                num_tiles_x * num_tiles_y,
+                reinterpret_cast<VkSparseImageMemoryBind *>(
+                        image_binds.size()),
+            });
+
+            for (uint32_t x = 0; x < num_tiles_x; x++) {
+                for (uint32_t y = 0; y < num_tiles_y; y++) {
+                    auto chunk = alloc.getChunk();
+                    if (!chunk) return nullptr;
+                    texture_memory.push_back(chunk.value());
+
+                    image_binds.push_back(VkSparseImageMemoryBind {
+                        VkImageSubresource {
+                            VK_IMAGE_ASPECT_COLOR_BIT,
+                            mip_level,
+                            0,
+                        },
+                        VkOffset3D {
+                            static_cast<int32_t>(x * sparse_attrs.tileDim.x),
+                            static_cast<int32_t>(y * sparse_attrs.tileDim.y),
+                            0,
+                        },
+                        VkExtent3D {
+                            sparse_attrs.tileDim.x,
+                            sparse_attrs.tileDim.y,
+                            1,
+                        },
+                        texture_memory.back().hdl,
+                        texture_memory.back().offset,
+                        0,
+                    });
+                }
+            }
+        }
     }
+
+    // Fix bind info pointers
+    for (VkSparseImageOpaqueMemoryBindInfo &bind_info : tail_bind_infos) {
+        bind_info.pBinds =
+            tail_binds.data() + reinterpret_cast<uintptr_t>(bind_info.pBinds);
+    }
+
+    for (VkSparseImageMemoryBindInfo &bind_info : image_bind_infos) {
+        bind_info.pBinds =
+            image_binds.data() + reinterpret_cast<uintptr_t>(bind_info.pBinds);
+    }
+
     const uint32_t num_textures = cpu_textures.size();
 
     optional<HostBuffer> texture_staging;
@@ -546,7 +661,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     // Set initial texture layouts
     DynArray<VkImageMemoryBarrier> texture_barriers(num_textures);
     for (size_t i = 0; i < num_textures; i++) {
-        const LocalImage &gpu_texture = gpu_textures[i];
+        const SparseTexture &gpu_texture = gpu_textures[i];
         VkImageMemoryBarrier &barrier = texture_barriers[i];
 
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -577,7 +692,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         vector<VkBufferImageCopy> copy_infos;
         for (size_t i = 0; i < num_textures; i++) {
             const shared_ptr<Texture> &cpu_texture = cpu_textures[i];
-            const LocalImage &gpu_texture = gpu_textures[i];
+            const SparseTexture &gpu_texture = gpu_textures[i];
             uint32_t base_width = cpu_texture->width;
             uint32_t base_height = cpu_texture->height;
             uint32_t num_levels = cpu_texture->numLevels;
@@ -666,12 +781,27 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 
     REQ_VK(dev.dt.endCommandBuffer(transferStageCommand));
 
+    VkBindSparseInfo bind_submit {};
+    bind_submit.sType = VK_STRUCTURE_TYPE_BIND_SPARSE_INFO;
+    bind_submit.imageOpaqueBindCount = tail_bind_infos.size();
+    bind_submit.pImageOpaqueBinds = tail_bind_infos.data();
+    bind_submit.imageBindCount = image_bind_infos.size();
+    bind_submit.pImageBinds = image_bind_infos.data();
+    bind_submit.signalSemaphoreCount = 1;
+    bind_submit.pSignalSemaphores = &bindSemaphore;
+
+    transferQueue.bindSubmit(dev, 1, &bind_submit, VK_NULL_HANDLE);
+
+    VkPipelineStageFlags copy_wait_mask = VK_PIPELINE_STAGE_TRANSFER_BIT;
     VkSubmitInfo copy_submit {};
     copy_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    copy_submit.waitSemaphoreCount = 1;
+    copy_submit.pWaitSemaphores = &bindSemaphore;
+    copy_submit.pWaitDstStageMask = &copy_wait_mask;
     copy_submit.commandBufferCount = 1;
     copy_submit.pCommandBuffers = &transferStageCommand;
     copy_submit.signalSemaphoreCount = 1;
-    copy_submit.pSignalSemaphores = &semaphore;
+    copy_submit.pSignalSemaphores = &ownershipSemaphore;
 
     transferQueue.submit(dev, 1, &copy_submit, VK_NULL_HANDLE);
 
@@ -712,7 +842,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     VkSubmitInfo gfx_submit {};
     gfx_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     gfx_submit.waitSemaphoreCount = 1;
-    gfx_submit.pWaitSemaphores = &semaphore;
+    gfx_submit.pWaitSemaphores = &ownershipSemaphore;
     VkPipelineStageFlags sema_wait_mask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     gfx_submit.pWaitDstStageMask = &sema_wait_mask;
     gfx_submit.commandBufferCount = 1;
@@ -722,28 +852,6 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 
     waitForFenceInfinitely(dev, fence);
     resetFence(dev, fence);
-
-    vector<VkImageView> texture_views;
-    texture_views.reserve(num_textures);
-    for (const LocalImage &gpu_texture : gpu_textures) {
-        VkImageViewCreateInfo view_info;
-        view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        view_info.pNext = nullptr;
-        view_info.flags = 0;
-        view_info.image = gpu_texture.image;
-        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view_info.format = alloc.getFormats().sdrTexture;
-        view_info.components = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
-                                VK_COMPONENT_SWIZZLE_B,
-                                VK_COMPONENT_SWIZZLE_A};
-        view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0,
-                                      gpu_texture.mipLevels, 0, 1};
-
-        VkImageView view;
-        REQ_VK(dev.dt.createImageView(dev.hdl, &view_info, nullptr, &view));
-
-        texture_views.push_back(view);
-    }
 
     assert(material_metadata.numMaterials <= VulkanConfig::max_materials);
 
@@ -767,10 +875,10 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
              material_texture_idx++) {
             for (uint32_t mat_idx = 0;
                  mat_idx < material_metadata.numMaterials; mat_idx++) {
-                VkImageView view = texture_views
+                VkImageView view = gpu_textures 
                     [material_metadata.textureIndices
                          [mat_idx * material_metadata.texturesPerMaterial +
-                          material_texture_idx]];
+                          material_texture_idx]].view;
 
                 descriptor_views.push_back(
                     {VK_NULL_HANDLE,  // Immutable
@@ -845,8 +953,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     dev.dt.updateDescriptorSets(dev.hdl, 1, &cull_desc_update, 0, nullptr);
 
     return make_shared<Scene>(Scene {
-        move(gpu_textures),
-        move(texture_views),
+        move(texture_store),
         move(material_set),
         move(cull_set),
         move(data),

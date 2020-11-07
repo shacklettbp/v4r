@@ -1,8 +1,12 @@
 #ifndef VULKAN_MEMORY_HPP_INCLUDED
 #define VULKAN_MEMORY_HPP_INCLUDED
 
+#include <glm/glm.hpp>
+
+#include <atomic>
 #include <utility>
 
+#include "utils.hpp"
 #include "vulkan_handles.hpp"
 
 namespace v4r {
@@ -82,16 +86,24 @@ private:
     friend class MemoryAllocator;
 };
 
+struct SparseTexture {
+    uint32_t width;
+    uint32_t height;
+    uint32_t mipLevels;
+    VkImage image;
+    VkImageView view;
+};
+
+struct MemoryChunk {
+    VkDeviceMemory hdl;
+    uint32_t offset;
+    uint32_t chunkID;
+};
+
 struct MemoryTypeIndices {
-    uint32_t stageBuffer;
-    uint32_t shaderBuffer;
-    uint32_t hostGenericBuffer;
-    uint32_t localGeometryBuffer;
-    uint32_t localIndirectBuffer;
-    uint32_t localGenericBuffer;
+    uint32_t host;
+    uint32_t local;
     uint32_t dedicatedBuffer;
-    uint32_t precomputedMipmapTexture;
-    uint32_t runtimeMipmapTexture;
     uint32_t colorAttachment;
     uint32_t depthAttachment;
 };
@@ -109,15 +121,22 @@ struct Alignments {
     VkDeviceSize storageBuffer;
 };
 
+struct SparseAttributes {
+    glm::u32vec2 tileDim;
+    uint32_t tileBytes;
+    uint32_t mipTailOffset;
+    uint32_t tailBytes;
+};
+
 class MemoryAllocator {
 public:
-    MemoryAllocator(const DeviceState &dev, const InstanceState &inst);
+    MemoryAllocator(const DeviceState &dev, const InstanceState &inst,
+                    VkDeviceSize texture_memory_budget);
     MemoryAllocator(const MemoryAllocator &) = delete;
     MemoryAllocator(MemoryAllocator &&) = default;
 
     HostBuffer makeStagingBuffer(VkDeviceSize num_bytes);
-    HostBuffer makeShaderBuffer(VkDeviceSize num_bytes);
-    HostBuffer makeHostBuffer(VkDeviceSize num_bytes);
+    HostBuffer makeParamBuffer(VkDeviceSize num_bytes);
 
     LocalBuffer makeGeometryBuffer(VkDeviceSize num_bytes);
     LocalBuffer makeIndirectBuffer(VkDeviceSize num_bytes);
@@ -126,9 +145,15 @@ public:
     std::pair<LocalBuffer, VkDeviceMemory> makeDedicatedBuffer(
             VkDeviceSize num_bytes);
 
-    LocalImage makeTexture(uint32_t width, uint32_t height,
-                           uint32_t mip_levels,
-                           bool precomputed_mipmaps=true);
+    SparseAttributes sparseAttributes() const { return sparse_; }
+
+    SparseTexture makeTexture(uint32_t width, uint32_t height,
+                              uint32_t mip_levels);
+
+    void destroyTexture(SparseTexture &&texture);
+
+    std::optional<MemoryChunk> getChunk();
+    void returnChunk(MemoryChunk memory);
 
     LocalImage makeColorAttachment(uint32_t width, uint32_t height);
     LocalImage makeDepthAttachment(uint32_t width, uint32_t height);
@@ -141,12 +166,10 @@ public:
 
 private:
     HostBuffer makeHostBuffer(VkDeviceSize num_bytes,
-                              VkBufferUsageFlags usage,
-                              uint32_t mem_idx);
+                              VkBufferUsageFlags usage);
 
     LocalBuffer makeLocalBuffer(VkDeviceSize num_bytes,
-                                VkBufferUsageFlags usage,
-                                uint32_t mem_idx);
+                                VkBufferUsageFlags usage);
 
     LocalImage makeDedicatedImage(uint32_t width, uint32_t height,
                                   uint32_t mip_levels, VkFormat format,
@@ -156,9 +179,47 @@ private:
     ResourceFormats formats_;
     MemoryTypeIndices type_indices_;
     Alignments alignments_;
+    SparseAttributes sparse_;
+
+    std::vector<VkDeviceMemory> texture_memory_;
+
+    struct FreeChunk {
+        MemoryChunk chunk;
+        std::atomic_uint32_t next;
+    };
+
+    DynArray<FreeChunk> freelist_store_;
+
+    struct Head {
+        uint32_t index;
+        uint32_t counter;
+    };
+    static_assert(std::atomic<Head>::is_always_lock_free);
+
+    std::atomic<Head> freelist_head_;
 
     template<bool> friend class AllocDeleter;
 };
+
+#if 0
+class TextureManager {
+public:
+    TextureManager(MemoryAllocator &alloc);
+
+    void dropTextures(const std::vector<uint32_t> &indices);
+
+private:
+    MemoryAllocator &alloc_;
+
+    struct TextureChunk {
+        MemoryChunk memory;
+        uint32_t textureIdx;
+    };
+
+    std::vector<TextureChunk> evictable_chunks_;
+    std::vector<SparseTexture> textures_;
+};
+#endif
 
 }
 
