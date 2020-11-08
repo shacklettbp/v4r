@@ -19,7 +19,6 @@ namespace v4r {
 Texture::~Texture()
 {
     ktxTexture_Destroy(data);
-    fclose(file);
 }
 
 EnvironmentInit::EnvironmentInit(const vector<InstanceProperties> &instances,
@@ -340,8 +339,7 @@ static SceneLoadInfo loadPreprocessedScene(string_view scene_path_name,
             name_buffer.push_back(scene_file.get());
         } while (name_buffer.back() != 0);
 
-        materials.textures.emplace_back(
-            loadKTXFile((scene_dir / name_buffer.data()).c_str()));
+        materials.textures.emplace_back(scene_dir / name_buffer.data());
         name_buffer.clear();
     }
 
@@ -422,8 +420,8 @@ LoaderState::LoaderState(
 pair<vector<uint8_t>, MaterialMetadata> stageMaterials(
     const vector<shared_ptr<Material>> &materials)
 {
-    vector<shared_ptr<Texture>> textures;
-    unordered_map<const Texture *, size_t> texture_tracker;
+    vector<filesystem::path> textures;
+    unordered_map<string, size_t> texture_tracker;
     vector<size_t> param_offsets;
     param_offsets.reserve(materials.size());
 
@@ -443,6 +441,9 @@ pair<vector<uint8_t>, MaterialMetadata> stageMaterials(
     vector<uint32_t> texture_indices;
     texture_indices.reserve(materials.size() * textures_per_material);
 
+    (void)cur_param_ptr;
+
+#if 0
     for (const auto &material : materials) {
         memcpy(cur_param_ptr, material->paramBytes.data(),
                material->paramBytes.size());
@@ -466,6 +467,7 @@ pair<vector<uint8_t>, MaterialMetadata> stageMaterials(
         param_offsets.push_back(cur_param_ptr - packed_params.data());
         cur_param_ptr += material->paramBytes.size();
     }
+#endif
 
     return {move(packed_params),
             {
@@ -509,7 +511,35 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 {
     auto &[staged, material_metadata, env_init] = load_info;
 
-    const auto &cpu_textures = material_metadata.textures;
+    vector<shared_ptr<Texture>> cpu_textures;
+    cpu_textures.reserve(material_metadata.textures.size());
+    for (const auto &texture_path : material_metadata.textures) {
+        // Hack to keep file descriptor count down
+        FILE *file = fopen(texture_path.c_str(), "rb");
+        if (!file) {
+            cerr << "Texture loading failed: Could not open "
+                 << texture_path << endl;
+            fatalExit();
+        }
+
+        auto texture = loadKTXFile(file);
+        if (texture == nullptr) {
+            cerr << "Texture loading failed: Error loading "
+                 << texture_path << endl;
+            fatalExit();
+        }
+
+        ktxTexture *ktx = texture->data;
+        assert(ktx->classId == ktxTexture2_c);
+
+        ktxTexture2 *ktx2 = reinterpret_cast<ktxTexture2 *>(ktx);
+        KTX_error_code res =
+            ktxTexture2_TranscodeBasis(ktx2, KTX_TTF_BC7_RGBA, 0);
+        ktxCheck(res);
+        fclose(file);
+
+        cpu_textures.emplace_back(move(texture));
+    }
 
     TextureData texture_store = {
         {},
@@ -534,12 +564,6 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     VkDeviceSize total_texture_bytes = 0;
     for (const shared_ptr<Texture> &texture : cpu_textures) {
         ktxTexture *ktx = texture->data;
-        assert(ktx->classId == ktxTexture2_c);
-
-        ktxTexture2 *ktx2 = reinterpret_cast<ktxTexture2 *>(ktx);
-        KTX_error_code res =
-            ktxTexture2_TranscodeBasis(ktx2, KTX_TTF_BC7_RGBA, 0);
-        ktxCheck(res);
 
         for (uint32_t level = 0; level < texture->numLevels; level++) {
             total_texture_bytes += ktxTexture_GetImageSize(ktx, level);

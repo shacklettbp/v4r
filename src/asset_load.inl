@@ -405,14 +405,9 @@ void ktxCheck(KTX_error_code res)
     }
 }
 
-std::shared_ptr<Texture> loadKTXFile(const char *texture_path)
+std::shared_ptr<Texture> loadKTXFile(FILE *file)
 {
     ktxTexture *ktx_texture;
-
-    FILE *file = fopen(texture_path, "rb");
-    if (!file) {
-        std::cerr << "GLTF loading failed: Could not open " << texture_path;
-    }
 
     KTX_error_code result = ktxTexture_CreateFromStdioStream(
         file, KTX_TEXTURE_CREATE_NO_FLAGS, &ktx_texture);
@@ -420,10 +415,7 @@ std::shared_ptr<Texture> loadKTXFile(const char *texture_path)
     ktxCheck(result);
 
     if (ktx_texture->generateMipmaps) {
-        std::cerr << "GLTF loading '" << texture_path
-                  << "' failed: textures need to have mipmaps "
-                  << "pregenerated" << std::endl;
-        fatalExit();
+        return nullptr;
     }
 
     return std::shared_ptr<Texture>(new Texture {
@@ -431,7 +423,6 @@ std::shared_ptr<Texture> loadKTXFile(const char *texture_path)
         ktx_texture->baseHeight,
         ktx_texture->numLevels,
         ktx_texture,
-        file,
     });
 }
 
@@ -448,7 +439,7 @@ static std::shared_ptr<Texture> gltfLoadTexture(const GLTFScene &scene,
 
     const auto &texture_path = scene.sceneDirectory / img.filePath;
 
-    return loadKTXFile(texture_path.c_str());
+    return nullptr;
 }
 
 template <typename MaterialParamsType>
