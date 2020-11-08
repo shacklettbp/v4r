@@ -2,6 +2,8 @@
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_EXT_scalar_block_layout : require
 #extension GL_EXT_shader_16bit_storage : require
+#extension GL_ARB_sparse_texture2 : require
+#extension GL_ARB_sparse_texture_clamp : require
 
 #include "shader_common.h"
 
@@ -90,15 +92,23 @@ vec4 compute_color()
 #endif
 
 #if defined(DIFFUSE_COLOR_TEXTURE)
-    vec3 diffuse = texture(sampler2D(diffuse_textures[material_idx],
-                                     texture_sampler), in_uv, 0.f).xyz;
+    vec4 diffuse_out;
+    int diffuse_resident_flag = sparseTextureClampARB(
+        sampler2D(diffuse_textures[material_idx], texture_sampler),
+        in_uv, 0.f, diffuse_out);
+
+    vec3 diffuse = diffuse_out.xyz;
 #elif defined(DIFFUSE_COLOR_UNIFORM)
     vec3 diffuse = DIFFUSE_COLOR_ACCESS;
 #endif
 
 #if defined(SPECULAR_COLOR_TEXTURE)
-    vec3 specular = texture(sampler2D(specular_textures[material_idx],
-                                      texture_sampler), in_uv, 0.f).xyz;
+    vec4 specular_out;
+    int specular_resident_flag = sparseTextureClampARB(
+        sampler2D(specular_textures[material_idx], texture_sampler),
+        in_uv, 0.f, specular_out);
+
+    vec3 specular = specular_out.xyz;
 #elif defined(SPECULAR_COLOR_UNIFORM)
     vec3 specular = SPECULAR_COLOR_ACCESS;
 #endif
@@ -131,8 +141,10 @@ vec4 compute_color()
 vec4 compute_color()
 {
 #ifdef ALBEDO_COLOR_TEXTURE
-    vec4 albedo = texture(sampler2D(albedo_textures[material_idx],
-                                    texture_sampler), in_uv, 0.f);
+    vec4 albedo;
+    int resident_flag = sparseTextureClampARB(
+        sampler2D(albedo_textures[material_idx], texture_sampler),
+        in_uv, 0.f, albedo);
 #endif
 
 #ifdef ALBEDO_COLOR_UNIFORM
