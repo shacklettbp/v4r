@@ -144,7 +144,7 @@ vec4 compute_color()
     vec4 albedo;
     int resident_flag = sparseTextureClampARB(
         sampler2D(albedo_textures[material_idx], texture_sampler),
-        in_uv, 0.f, albedo);
+        in_uv, 1.f, albedo);
 #endif
 
 #ifdef ALBEDO_COLOR_UNIFORM

@@ -565,7 +565,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     for (const shared_ptr<Texture> &texture : cpu_textures) {
         ktxTexture *ktx = texture->data;
 
-        for (uint32_t level = 0; level < texture->numLevels; level++) {
+        for (uint32_t level = 1; level < texture->numLevels; level++) {
             total_texture_bytes += ktxTexture_GetImageSize(ktx, level);
         }
 
@@ -574,7 +574,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 
         const SparseTexture &gpu_texture = gpu_textures.back();
 
-        for (uint32_t mip_level = 0; mip_level < gpu_texture.mipLevels;
+        for (uint32_t mip_level = 1; mip_level < gpu_texture.mipLevels;
              mip_level++) {
 
             uint32_t width = gpu_texture.width >> mip_level;
@@ -701,7 +701,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = gpu_texture.image;
         barrier.subresourceRange = {
-            VK_IMAGE_ASPECT_COLOR_BIT, 0, gpu_texture.mipLevels, 0, 1,
+            VK_IMAGE_ASPECT_COLOR_BIT, 1, gpu_texture.mipLevels - 1, 0, 1,
         };
     }
 
@@ -724,11 +724,11 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
             uint32_t base_height = cpu_texture->height;
             uint32_t num_levels = cpu_texture->numLevels;
 
-            copy_infos.resize(num_levels);
+            copy_infos.resize(num_levels - 1);
             ktxTexture *ktx = cpu_texture->data;
             const uint8_t *ktx_data = ktxTexture_GetData(ktx);
 
-            for (uint32_t level = 0; level < num_levels; level++) {
+            for (uint32_t level = 1; level < num_levels; level++) {
                 // Copy to staging
                 VkDeviceSize ktx_level_offset;
                 KTX_error_code res = ktxTexture_GetImageOffset(
@@ -759,7 +759,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
                     1,
                 };
 
-                copy_infos[level] = copy_info;
+                copy_infos[level - 1] = copy_info;
 
                 cur_staging_offset += num_level_bytes;
             }
@@ -770,7 +770,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
             dev.dt.cmdCopyBufferToImage(
                 transferStageCommand, texture_staging->buffer,
                 gpu_texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                num_levels, copy_infos.data());
+                num_levels - 1, copy_infos.data());
         }
 
         // Flush staging buffer
