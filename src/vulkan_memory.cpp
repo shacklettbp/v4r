@@ -463,12 +463,6 @@ MemoryAllocator::MemoryAllocator(const DeviceState &d,
       sparse_(getSparseAttributes(dev, formats_.sdrTexture)),
       texture_memory_(),
       freelist_store_([&]() {
-          if (texture_memory_budget % sparse_.tileBytes != 0) {
-              cerr << "texture memory budget must be a multiple of"
-                   << sparse_.tileBytes << endl;
-              fatalExit();
-          }
-
           uint32_t num_full_backing_allocations =
               texture_memory_budget / VulkanConfig::texture_backing_size;
 
@@ -491,6 +485,8 @@ MemoryAllocator::MemoryAllocator(const DeviceState &d,
           0,
       })
 {
+    VkDeviceSize rounded_memory_budget =
+        (texture_memory_budget / sparse_.tileBytes) * sparse_.tileBytes;
     VkMemoryAllocateInfo alloc;
     alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     alloc.pNext = nullptr;
@@ -503,7 +499,7 @@ MemoryAllocator::MemoryAllocator(const DeviceState &d,
         if (assigned_memory == allocated_memory) {
             alloc.allocationSize =
                 min(VulkanConfig::texture_backing_size,
-                    texture_memory_budget - allocated_memory);
+                    rounded_memory_budget - allocated_memory);
 
             allocated_memory += alloc.allocationSize;
 
