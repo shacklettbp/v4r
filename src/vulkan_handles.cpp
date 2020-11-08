@@ -314,6 +314,8 @@ DeviceState InstanceState::makeDevice(
 
     requested_features.features.sparseBinding = true;
     requested_features.features.sparseResidencyImage2D = true;
+    requested_features.features.shaderResourceResidency = true;
+    requested_features.features.shaderResourceMinLod = true;
 
     dev_create_info.pNext = &requested_features;
 
