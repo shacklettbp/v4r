@@ -426,15 +426,13 @@ static SparseAttributes getSparseAttributes(const DeviceState &dev,
     // 28.4.2 Miptail size is guaranteed to be an integer multiple of the
     // sparse block size in bytes FIXME add support for multiples
     if (tile_bytes != tail_bytes) {
-        cout << "Mip tail larger than sparse block size not supported" << endl;
+        cerr << "Mip tail larger than sparse block size not supported" << endl;
         fatalExit();
     }
 
     return SparseAttributes {
         tile_dim,
         tile_bytes,
-        uint32_t(sparse_reqs.imageMipTailOffset),
-        uint32_t(sparse_reqs.imageMipTailSize),
     };
 }
 
@@ -638,6 +636,13 @@ pair<LocalBuffer, VkDeviceMemory> MemoryAllocator::makeDedicatedBuffer(
 
     return pair(LocalBuffer(buffer, AllocDeleter<false>(memory, *this)),
                 memory);
+}
+
+VkDeviceSize MemoryAllocator::getMipTailOffset(VkImage image) const
+{
+    auto sparse_reqs = getSparseTextureMemReqs(dev, image);
+
+    return sparse_reqs.imageMipTailOffset;
 }
 
 SparseTexture MemoryAllocator::makeTexture(uint32_t width, uint32_t height,

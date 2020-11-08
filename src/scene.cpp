@@ -552,11 +552,12 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 
         for (uint32_t mip_level = 0; mip_level < gpu_texture.mipLevels;
              mip_level++) {
+
             uint32_t width = gpu_texture.width >> mip_level;
             uint32_t height = gpu_texture.height >> mip_level;
 
             if (width < sparse_attrs.tileDim.x ||
-                height< sparse_attrs.tileDim.y) {
+                height < sparse_attrs.tileDim.y) {
                 auto tail_chunk = alloc.getChunk();
                 if (!tail_chunk) return nullptr;
                 texture_memory.push_back(tail_chunk.value());
@@ -567,9 +568,11 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
                     reinterpret_cast<VkSparseMemoryBind *>(tail_binds.size()),
                 });
 
+                // FIXME if tail is larger than one tile (not supported for now)
+                // need to change opaque bind size
                 tail_binds.push_back(VkSparseMemoryBind {
-                    sparse_attrs.mipTailOffset,
-                    sparse_attrs.tailBytes,
+                    alloc.getMipTailOffset(gpu_texture.image),
+                    sparse_attrs.tileBytes,
                     texture_memory.back().hdl,
                     texture_memory.back().offset,
                     0,

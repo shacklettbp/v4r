@@ -25,6 +25,8 @@ public:
         if (rdoc_impl_) endImpl();
     }
 
+    bool loaded() const { return !!rdoc_impl_; }
+
 private:
     void startImpl() const;
     void endImpl() const;

@@ -124,8 +124,6 @@ struct Alignments {
 struct SparseAttributes {
     glm::u32vec2 tileDim;
     uint32_t tileBytes;
-    uint32_t mipTailOffset;
-    uint32_t tailBytes;
 };
 
 class MemoryAllocator {
@@ -146,6 +144,8 @@ public:
             VkDeviceSize num_bytes);
 
     SparseAttributes sparseAttributes() const { return sparse_; }
+
+    VkDeviceSize getMipTailOffset(VkImage image) const;
 
     SparseTexture makeTexture(uint32_t width, uint32_t height,
                               uint32_t mip_levels);
