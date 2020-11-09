@@ -18,6 +18,11 @@ add_executable(singlebench
 )
 target_link_libraries(singlebench v4r_headless)
 
+add_executable(load_bench
+    load_bench.cpp
+)
+target_link_libraries(load_bench v4r_headless)
+
 add_executable(double_buffer
     double_buffer.cpp
 )
