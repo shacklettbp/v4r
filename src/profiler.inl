@@ -27,8 +27,8 @@ void ElapsedTime::end()
 
 double ElapsedTime::elapsed() const
 {
-    return std::chrono::duration_cast<std::chrono::seconds>(
-        end_ - start_).count();
+    std::chrono::duration<double> diff = end_ - start_;
+    return std::chrono::duration_cast<std::chrono::seconds>(diff).count();
 }
 
 ElapsedTime Profiler::start(ProfileType type)
