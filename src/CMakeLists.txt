@@ -59,6 +59,7 @@ add_library(v4r SHARED
     ../include/v4r/assets.hpp ../include/v4r/assets.inl
     ../include/v4r/config.hpp
     ../include/v4r/fwd.hpp ../include/v4r/utils.hpp
+    ../include/v4r/stats.hpp profiler.hpp profiler.inl
     ../include/v4r/cuda.hpp v4r_cuda.cpp
 )
 

@@ -3,6 +3,7 @@
 #include "dispatch.hpp"
 #include "vulkan_state.hpp"
 #include "scene.hpp"
+#include "profiler.hpp"
 #include "cuda_state.hpp"
 
 #include <cassert>
@@ -148,6 +149,11 @@ CommandStream BatchRenderer::makeCommandStream()
                          img_dim.x, img_dim.y);
 }
 
+Statistics BatchRenderer::getStatistics() const
+{
+    return Profiler::getStatistics();
+}
+
 Environment::Environment(Handle<EnvironmentState> &&state)
     : state_(move(state)),
       view_(),
@@ -251,6 +257,8 @@ void Environment::deleteLight(uint32_t light_id)
 
     state_->freeLightIDs.push_back(light_id);
 }
+
+Statistics Profiler::stats_;
 
 }
 

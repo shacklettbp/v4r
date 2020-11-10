@@ -2,6 +2,7 @@
 #define VULKAN_STATE_INL_INCLUDED
 
 #include "vulkan_state.hpp"
+#include "profiler.hpp"
 
 #include <iostream>
 
@@ -12,6 +13,8 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
                                     Fn &&submit_func)
 {
     PerFrameState &frame_state = frame_states_[cur_frame_];
+
+    auto command_profile = Profiler::start(ProfileType::CommandRecord);
 
     VkCommandBuffer render_cmd = frame_state.commands[0];
 
@@ -61,6 +64,8 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
                               0, nullptr,
                               1, &init_barrier,
                               0, nullptr);
+
+    auto input_profile = Profiler::start(ProfileType::InputSetup);
 
     uint32_t draw_id = 0;
     uint32_t inst_offset = 0;
@@ -126,6 +131,8 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
     uint32_t total_draws = draw_id;
 
     assert(total_draws < VulkanConfig::max_instances);
+
+    input_profile.end();
 
     VkRenderPassBeginInfo render_pass_info;
     render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -268,6 +275,8 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
     }
 
     REQ_VK(dev.dt.endCommandBuffer(render_cmd));
+
+    command_profile.end();
 
     // FIXME 
     per_render_buffer_.flush(dev);

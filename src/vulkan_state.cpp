@@ -1,6 +1,6 @@
 #include "vulkan_state.hpp"
 #include "render_definitions.inl"
-
+#include "profiler.hpp"
 #include "utils.hpp"
 #include "vk_utils.hpp"
 #include "vulkan_config.hpp"
@@ -1219,6 +1219,7 @@ uint32_t CommandStreamState::render(const vector<Environment> &envs)
                                uint32_t num_commands,
                                const VkCommandBuffer *commands,
                                VkFence fence) {
+        auto p = Profiler::start(ProfileType::RenderSubmit);
         (void)frame_id;
 
         VkSubmitInfo gfx_submit {

@@ -1,6 +1,7 @@
 #include <v4r/cuda.hpp>
 #include <unistd.h>
 
+#include "profiler.hpp"
 #include "vulkan_state.hpp"
 #include "cuda_state.hpp"
 #include "vk_utils.hpp"
@@ -102,6 +103,8 @@ uint32_t CommandStreamCUDA::render(const vector<Environment> &envs)
                     uint32_t num_commands,
                     const VkCommandBuffer *commands,
                     VkFence fence) {
+        auto p = Profiler::start(ProfileType::RenderSubmit);
+
         VkSubmitInfo gfx_submit {
             VK_STRUCTURE_TYPE_SUBMIT_INFO,
             nullptr,

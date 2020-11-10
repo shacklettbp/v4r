@@ -5,6 +5,7 @@
 #include <v4r/config.hpp>
 #include <v4r/environment.hpp>
 #include <v4r/fwd.hpp>
+#include <v4r/stats.hpp>
 #include <v4r/utils.hpp>
 
 #include <glm/glm.hpp>
@@ -75,6 +76,8 @@ public:
 
     AssetLoader makeLoader();
     CommandStream makeCommandStream();
+
+    Statistics getStatistics() const;
 
 protected:
     BatchRenderer(Handle<VulkanState> &&vk_state);
