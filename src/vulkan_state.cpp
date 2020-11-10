@@ -1291,7 +1291,7 @@ VulkanState::VulkanState(const RenderConfig &cfg,
 
     for (uint32_t i = 0; i < graphicsQueues.size(); i++) {
         new (&graphicsQueues[i]) QueueState(makeQueue(dev, dev.gfxQF, i),
-                                            graphics_shared);
+            (i == graphicsQueues.size() - 1) ? true : graphics_shared);
     }
 }
 

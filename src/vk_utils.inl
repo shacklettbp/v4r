@@ -10,8 +10,7 @@ QueueState::QueueState(VkQueue queue_hdl, bool shared)
     : queue_hdl_(queue_hdl),
       shared_(shared),
       mutex_()
-{
-}
+{}
 
 void QueueState::submit(const DeviceState &dev, uint32_t submit_count,
                         const VkSubmitInfo *pSubmits, VkFence fence) const
