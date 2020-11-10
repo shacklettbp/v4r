@@ -14,11 +14,7 @@ namespace v4r {
 
 class QueueState {
 public:
-    inline QueueState(VkQueue queue_hdl);
-
-    inline void incrUsers() {
-        num_users_++;
-    }
+    inline QueueState(VkQueue queue_hdl, bool shared);
 
     inline void submit(const DeviceState &dev, uint32_t submit_count,
                        const VkSubmitInfo *pSubmits, VkFence fence) const;
@@ -31,31 +27,9 @@ public:
 
 private:
     VkQueue queue_hdl_;
-    uint32_t num_users_;
+
+    bool shared_;
     mutable std::mutex mutex_;
-};
-
-class QueueManager {
-public:
-    QueueManager(const DeviceState &dev);
-
-    inline QueueState & allocateGraphicsQueue();
-
-    inline QueueState & allocateTransferQueue();
-
-private:
-    QueueState & allocateQueue(uint32_t qf_idx,
-                               std::deque<QueueState> &queues,
-                               uint32_t &cur_queue_idx,
-                               uint32_t max_queues);
-
-    const DeviceState &dev;
-    std::deque<QueueState> gfx_queues_;
-    uint32_t cur_gfx_idx_;
-    std::deque<QueueState> transfer_queues_;
-    uint32_t cur_transfer_idx_;
-
-    std::mutex alloc_mutex_;
 };
 
 inline VkCommandPool makeCmdPool(const DeviceState &dev, uint32_t qf_idx);

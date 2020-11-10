@@ -182,7 +182,7 @@ public:
                        const PipelineState &pipeline,
                        const FramebufferState &fb,
                        MemoryAllocator &alc,
-                       QueueManager &queue_manager,
+                       QueueState &graphics_queue,
                        uint32_t batch_size,
                        uint32_t stream_idx,
                        uint32_t num_frames_inflight,
@@ -296,7 +296,6 @@ public:
     const InstanceState inst;
     const DeviceState dev;
 
-    QueueManager queueMgr;
     MemoryAllocator alloc;
 
     const FramebufferConfig fbCfg;
@@ -314,6 +313,9 @@ private:
 
     const uint32_t max_num_loaders_;
     const uint32_t max_num_streams_;
+
+    DynArray<QueueState> transferQueues;
+    DynArray<QueueState> graphicsQueues;
 
     const uint32_t batch_size_;
     const bool double_buffered_;

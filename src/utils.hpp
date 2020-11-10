@@ -73,132 +73,49 @@ private:
 template <typename T>
 class DynArray {
 public:
-    DynArray(size_t num_elems)
-        : data_(std::unique_ptr<T[]>(new T[num_elems])),
-          num_elems_(num_elems)
-    {}
+    explicit DynArray(size_t n) : ptr_(std::allocator<T>().allocate(n)), n_(n) {}
 
     DynArray(const DynArray &) = delete;
-    DynArray(DynArray &&) = default;
-
-    constexpr const T& operator[](size_t idx) const noexcept
+    DynArray(DynArray &&o)
+        : ptr_(o.ptr_),
+          n_(o.n_)
     {
-        return data_.get()[idx];
+        o.ptr_ = nullptr;
+        o.n_ = 0;
     }
 
-    constexpr T& operator[](size_t idx) noexcept
+    ~DynArray()
     {
-        return data_.get()[idx];
+        if (ptr_ == nullptr) return;
+
+        for (size_t i = 0; i < n_; i++) {
+            ptr_[i].~T();
+        }
+        std::allocator<T>().deallocate(ptr_, n_);
     }
 
-    T *data() { return data_.get(); }
-    const T *data() const { return data_.get(); }
+    T &operator[](size_t idx) { return ptr_[idx]; }
+    const T &operator[](size_t idx) const { return ptr_[idx]; }
 
-    constexpr size_t size() const noexcept { return num_elems_; }
+    T *data() { return ptr_; }
+    const T *data() const { return ptr_; }
 
-    template <typename U>
-    class IterBase {
-    public:
-        using iterator_category = std::random_access_iterator_tag;
-        using value_type = T;
-        using difference_type = std::ptrdiff_t;
-        using pointer = T *;
-        using reference = T &;
-        
-        explicit IterBase(T *ptr) : ptr_(ptr) {}
+    T *begin() { return ptr_; }
+    T *end() { return ptr_ + n_; }
+    const T *begin() const { return ptr_; }
+    const T *end() const { return ptr_ + n_; }
 
-        IterBase& operator+=(difference_type d)
-        {
-            ptr_ += d;
-            return *this;
-        }
+    T &front() { return *begin(); }
+    const T &front() const { return *begin(); }
 
-        IterBase& operator-=(difference_type d)
-        {
-            ptr_ -= d;
-            return *this;
-        }
+    T &back() { return *(begin() + n_ - 1); }
+    const T &back() const { return *(begin() + n_ - 1); }
 
-        friend IterBase operator+(IterBase it, difference_type d)
-        {
-            it += d;
-            return it;
-        }
-
-        friend IterBase operator+(difference_type d, IterBase it)
-        {
-            return it + d;
-        }
-
-        friend IterBase operator-(IterBase it, difference_type d)
-        {
-            it -= d;
-            return it;
-        }
-
-        friend difference_type operator-(const IterBase &a,
-                                         const IterBase &b)
-        {
-            return a.ptr_ - b.ptr_;
-        }
-
-        bool operator==(IterBase o) const { return ptr_ == o.ptr_; }
-        bool operator!=(IterBase o) const { return !(*this == o); }
-
-        reference operator[](difference_type d) const { return ptr_[d]; }
-        reference operator*() const { return *ptr_; }
-
-        friend bool operator<(const IterBase &a, const IterBase &b)
-        {
-            return a.ptr_ < b.ptr_;
-        }
-
-        friend bool operator>(const IterBase &a, const IterBase &b)
-        {
-            return a.ptr_ > b.ptr_;
-        }
-
-        friend bool operator<=(const IterBase &a, const IterBase &b)
-        {
-            return !(a > b);
-        }
-
-        friend bool operator>=(const IterBase &a, const IterBase &b)
-        {
-            return !(a < b);
-        }
-
-        IterBase &operator++() { *this += 1; return *this; };
-        IterBase &operator--() { *this -= 1; return *this; };
-
-        IterBase operator++(int)
-        {
-            IterBase t = *this;
-            operator++();
-            return t;
-        }
-        IterBase operator--(int)
-        {
-            IterBase t = *this;
-            operator--();
-            return t;
-        }
-    private:
-        T *ptr_;
-    };
-
-    using iterator = IterBase<T>;
-    using const_iterator = IterBase<const T>;
-
-    iterator begin() { return iterator(data_.get()); }
-    iterator end() { return iterator(data_.get() + num_elems_); }
-
-    const_iterator begin() const { return const_iterator(data_.get()); }
-    const_iterator end() const { return const_iterator(data_.get() + num_elems_); }
+    size_t size() const { return n_; }
 
 private:
-    std::unique_ptr<T[]> data_;
-    size_t num_elems_;
+    T *ptr_;
+    size_t n_;
 };
 
 template <typename T>

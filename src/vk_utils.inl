@@ -6,9 +6,9 @@
 
 namespace v4r {
 
-QueueState::QueueState(VkQueue queue_hdl)
+QueueState::QueueState(VkQueue queue_hdl, bool shared)
     : queue_hdl_(queue_hdl),
-      num_users_(1),
+      shared_(shared),
       mutex_()
 {
 }
@@ -16,15 +16,13 @@ QueueState::QueueState(VkQueue queue_hdl)
 void QueueState::submit(const DeviceState &dev, uint32_t submit_count,
                         const VkSubmitInfo *pSubmits, VkFence fence) const
 {
-    // FIXME there is a race here if more users are added
-    // while threads are already submitting
-    if (num_users_ > 1) {
+    if (shared_) {
         mutex_.lock();
     }
 
     REQ_VK(dev.dt.queueSubmit(queue_hdl_, submit_count, pSubmits, fence));
 
-    if (num_users_ > 1) {
+    if (shared_) {
         mutex_.unlock();
     }
 }
@@ -32,13 +30,13 @@ void QueueState::submit(const DeviceState &dev, uint32_t submit_count,
 void QueueState::bindSubmit(const DeviceState &dev, uint32_t submit_count,
     const VkBindSparseInfo *pSubmits, VkFence fence) const
 {
-    if (num_users_ > 1) {
+    if (shared_) {
         mutex_.lock();
     }
 
     REQ_VK(dev.dt.queueBindSparse(queue_hdl_, submit_count, pSubmits, fence));
 
-    if (num_users_ > 1) {
+    if (shared_) {
         mutex_.unlock();
     }
 }
@@ -46,31 +44,18 @@ void QueueState::bindSubmit(const DeviceState &dev, uint32_t submit_count,
 bool QueueState::presentSubmit(const DeviceState &dev,
                                const VkPresentInfoKHR *present_info) const
 {
-    if (num_users_ > 1) {
+    if (shared_) {
         mutex_.lock();
     }
 
     // FIXME resize
     REQ_VK(dev.dt.queuePresentKHR(queue_hdl_, present_info));
 
-    if (num_users_ > 1) {
+    if (shared_) {
         mutex_.unlock();
     }
 
     return true;
-}
-
-QueueState & QueueManager::allocateGraphicsQueue()
-
-{
-    return allocateQueue(dev.gfxQF, gfx_queues_,
-                         cur_gfx_idx_, dev.numGraphicsQueues);
-}
-
-QueueState & QueueManager::allocateTransferQueue()
-{ 
-    return allocateQueue(dev.transferQF, transfer_queues_,
-                         cur_transfer_idx_, dev.numTransferQueues);
 }
 
 VkCommandPool makeCmdPool(const DeviceState &dev, uint32_t qf_idx)

@@ -395,14 +395,17 @@ LoaderState::LoaderState(
     const VkDescriptorSetLayout &mesh_cull_scene_set_layout,
     DescriptorManager::MakePoolType make_mesh_cull_scene_pool,
     MemoryAllocator &alc,
-    QueueManager &queue_manager,
+    const QueueState &bind_queue,
+    const QueueState &transfer_queue,
+    const QueueState &gfx_queue,
     const glm::mat4 &coordinate_transform)
     : dev(d),
+      bindQueue(bind_queue),
+      transferQueue(transfer_queue),
+      gfxQueue(gfx_queue),
       gfxPool(makeCmdPool(dev, dev.gfxQF)),
-      gfxQueue(queue_manager.allocateGraphicsQueue()),
       gfxCopyCommand(makeCmdBuffer(dev, gfxPool)),
       transferPool(makeCmdPool(dev, dev.transferQF)),
-      transferQueue(queue_manager.allocateTransferQueue()),
       transferStageCommand(makeCmdBuffer(dev, transferPool)),
       bindSemaphore(makeBinarySemaphore(dev)),
       ownershipSemaphore(makeBinarySemaphore(dev)),
@@ -817,7 +820,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     bind_submit.signalSemaphoreCount = 1;
     bind_submit.pSignalSemaphores = &bindSemaphore;
 
-    transferQueue.bindSubmit(dev, 1, &bind_submit, VK_NULL_HANDLE);
+    bindQueue.bindSubmit(dev, 1, &bind_submit, VK_NULL_HANDLE);
 
     VkPipelineStageFlags copy_wait_mask = VK_PIPELINE_STAGE_TRANSFER_BIT;
     VkSubmitInfo copy_submit {};

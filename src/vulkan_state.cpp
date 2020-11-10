@@ -1159,7 +1159,7 @@ CommandStreamState::CommandStreamState(
         const PipelineState &pl,
         const FramebufferState &framebuffer,
         MemoryAllocator &alc,
-        QueueManager &queue_manager,
+        QueueState &graphics_queue,
         uint32_t batch_size,
         uint32_t stream_idx,
         uint32_t num_frames_inflight,
@@ -1168,7 +1168,7 @@ CommandStreamState::CommandStreamState(
       dev(d),
       pipeline(pl),
       gfxPool(makeCmdPool(dev, dev.gfxQF)),
-      gfxQueue(queue_manager.allocateGraphicsQueue()),
+      gfxQueue(graphics_queue),
       alloc(alc),
       fb_cfg_(fb_cfg),
       fb_(framebuffer),
@@ -1242,9 +1242,9 @@ VulkanState::VulkanState(const RenderConfig &config,
         InstanceState inst_state(false, {});
         DeviceState dev_state(
                 inst_state.makeDevice(uuid,
-                                      config.numStreams + config.numLoaders,
+                                      config.numStreams + 1,
                                       1,
-                                      config.numLoaders, nullptr));
+                                      2, nullptr));
         return CoreVulkanHandles { move(inst_state), move(dev_state) };
     }())
 {}
@@ -1255,7 +1255,6 @@ VulkanState::VulkanState(const RenderConfig &cfg,
                          CoreVulkanHandles &&handles)
     : inst(move(handles.inst)),
       dev(move(handles.dev)),
-      queueMgr(dev),
       alloc(dev, inst, cfg.textureMemoryBudget),
       fbCfg(PipelineImpl<PipelineType>::getFramebufferConfig(
               cfg.batchSize, cfg.imgWidth,
@@ -1275,10 +1274,26 @@ VulkanState::VulkanState(const RenderConfig &cfg,
       num_streams_(0),
       max_num_loaders_(cfg.numLoaders),
       max_num_streams_(cfg.numStreams),
+      transferQueues(dev.numTransferQueues),
+      graphicsQueues(dev.numGraphicsQueues),
       batch_size_(cfg.batchSize),
       double_buffered_(features.options & RenderOptions::DoubleBuffered),
       cpu_sync_(features.options & RenderOptions::CpuSynchronization)
-{}
+{
+    bool transfer_shared = cfg.numLoaders > 1;
+
+    for (uint32_t i = 0; i < transferQueues.size(); i++) {
+        new (&transferQueues[i]) QueueState(makeQueue(dev, dev.transferQF, i),
+                                            transfer_shared);
+    }
+
+    bool graphics_shared = cfg.numStreams + 1 > dev.numGraphicsQueues;
+
+    for (uint32_t i = 0; i < graphicsQueues.size(); i++) {
+        new (&graphicsQueues[i]) QueueState(makeQueue(dev, dev.gfxQF, i),
+                                            graphics_shared);
+    }
+}
 
 LoaderState VulkanState::makeLoader()
 {
@@ -1290,7 +1305,10 @@ LoaderState VulkanState::makeLoader()
                        renderState.makeScenePool,
                        renderState.meshCullSceneDescriptorLayout,
                        renderState.makeMeshCullScenePool,
-                       alloc, queueMgr,
+                       alloc,
+                       transferQueues[0],
+                       transferQueues[1 % transferQueues.size()],
+                       graphicsQueues.back(),
                        globalTransform);
 }
 
@@ -1308,7 +1326,7 @@ CommandStreamState VulkanState::makeStream()
                               pipeline,
                               fb,
                               alloc,
-                              queueMgr,
+                              graphicsQueues[stream_idx % graphicsQueues.size()],
                               batch_size_,
                               stream_idx,
                               num_frames_inflight,

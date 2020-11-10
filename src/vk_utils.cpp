@@ -7,36 +7,6 @@ using namespace std;
 
 namespace v4r {
 
-QueueManager::QueueManager(const DeviceState &d)
-    : dev(d),
-      gfx_queues_(),
-      cur_gfx_idx_(0),
-      transfer_queues_(),
-      cur_transfer_idx_(0),
-      alloc_mutex_()
-{}
-
-QueueState & QueueManager::allocateQueue(uint32_t qf_idx,
-                                         deque<QueueState> &queues,
-                                         uint32_t &cur_queue_idx,
-                                         uint32_t max_queues)
-{
-    scoped_lock lock(alloc_mutex_);
-
-    if (queues.size() < max_queues) {
-        queues.emplace_back(makeQueue(dev, qf_idx, queues.size()));
-
-        return queues.back();
-    }
-
-    QueueState &cur_queue = queues[cur_queue_idx];
-    cur_queue_idx = (cur_queue_idx + 1) % max_queues;
-
-    cur_queue.incrUsers();
-
-    return cur_queue;
-}
-
 int exportBinarySemaphore(const DeviceState &dev, VkSemaphore semaphore)
 {
     VkSemaphoreGetFdInfoKHR fd_info;

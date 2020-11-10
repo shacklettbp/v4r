@@ -202,7 +202,9 @@ public:
                 const VkDescriptorSetLayout &mesh_cull_scene_set_layout,
                 DescriptorManager::MakePoolType make_mesh_cull_scene_pool,
                 MemoryAllocator &alc,
-                QueueManager &queue_manager,
+                const QueueState &bind_queue,
+                const QueueState &transfer_queue,
+                const QueueState &gfx_queue,
                 const glm::mat4 &coordinateTransform);
 
     std::shared_ptr<Scene> loadScene(std::string_view scene_path);
@@ -222,12 +224,14 @@ public:
 
     const DeviceState &dev;
 
-    const VkCommandPool gfxPool;
+    const QueueState &bindQueue;
+    const QueueState &transferQueue;
     const QueueState &gfxQueue;
+
+    const VkCommandPool gfxPool;
     const VkCommandBuffer gfxCopyCommand;
 
     const VkCommandPool transferPool;
-    const QueueState &transferQueue;
     const VkCommandBuffer transferStageCommand;
 
     const VkSemaphore bindSemaphore;
