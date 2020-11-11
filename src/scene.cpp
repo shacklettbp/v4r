@@ -589,8 +589,10 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         gpu_textures.emplace_back(texture_img);
     }
 
-    texture_data.memory = 
-        alloc.getTextureMemory(gpu_texture_bytes);
+    if (gpu_texture_bytes > 0) {
+        texture_data.memory = 
+            alloc.getTextureMemory(gpu_texture_bytes);
+    }
 
     for (uint32_t i = 0; i < gpu_textures.size(); i++) {
         REQ_VK(dev.dt.bindImageMemory(dev.hdl, gpu_textures[i],
