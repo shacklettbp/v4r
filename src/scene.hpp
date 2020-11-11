@@ -98,9 +98,21 @@ struct EnvironmentInit {
     std::vector<uint32_t> lightReverseIDs;
 };
 
+struct TextureData {
+    std::vector<VkImage> textures;
+    std::vector<VkImageView> views;
+    VkDeviceMemory memory;
+    const DeviceState &dev;
+
+    TextureData(const DeviceState &dev);
+
+    TextureData(const TextureData &) = delete;
+    TextureData(TextureData &&o);
+    ~TextureData();
+};
+
 struct Scene {
-    std::vector<LocalImage> textures;
-    std::vector<VkImageView> texture_views;
+    TextureData textures;
     DescriptorSet materialSet;
     DescriptorSet cullSet;
     LocalBuffer data;

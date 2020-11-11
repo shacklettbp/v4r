@@ -16,6 +16,37 @@ using namespace std;
 
 namespace v4r {
 
+TextureData::TextureData(const DeviceState &d)
+    : textures(),
+      views(),
+      memory(VK_NULL_HANDLE),
+      dev(d)
+{}
+
+TextureData::TextureData(TextureData &&o)
+    : textures(move(o.textures)),
+      views(move(o.views)),
+      memory(o.memory),
+      dev(o.dev)
+{
+    o.memory = VK_NULL_HANDLE;
+}
+
+TextureData::~TextureData()
+{
+    for (auto v : views) {
+        dev.dt.destroyImageView(dev.hdl, v, nullptr);
+    }
+
+    for (auto t : textures) {
+        dev.dt.destroyImage(dev.hdl, t, nullptr);
+    }
+
+    if (memory != VK_NULL_HANDLE) {
+        dev.dt.freeMemory(dev.hdl, memory, nullptr);
+    }
+}
+
 Texture::~Texture()
 {
     ktxTexture_Destroy(data);
@@ -529,28 +560,49 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         cpu_textures.emplace_back(move(texture));
     }
 
-    vector<LocalImage> gpu_textures;
+    TextureData texture_data(dev);
+    vector<VkImage> &gpu_textures = texture_data.textures;
+    vector<VkDeviceSize> texture_memory_offsets;
 
     gpu_textures.reserve(cpu_textures.size());
+    texture_memory_offsets.reserve(cpu_textures.size());
 
     // FIXME - custom loader or hacked loader that makes doing this mip
     // level by mip level possible
-    VkDeviceSize total_texture_bytes = 0;
+    VkDeviceSize cpu_texture_bytes = 0;
+    VkDeviceSize gpu_texture_bytes = 0;
     for (const shared_ptr<Texture> &texture : cpu_textures) {
         ktxTexture *ktx = texture->data;
 
         for (uint32_t level = 0; level < texture->numLevels; level++) {
-            total_texture_bytes += ktxTexture_GetImageSize(ktx, level);
+            cpu_texture_bytes += ktxTexture_GetImageSize(ktx, level);
         }
 
-        gpu_textures.emplace_back(alloc.makeTexture(
-            texture->width, texture->height, texture->numLevels));
+        auto [texture_img, gpu_bytes, alignment] =
+            alloc.makeTexture(texture->width, texture->height,
+                              texture->numLevels);
+
+        gpu_texture_bytes = alignOffset(gpu_texture_bytes, alignment);
+        texture_memory_offsets.push_back(gpu_texture_bytes);
+        gpu_texture_bytes += gpu_bytes;
+
+        gpu_textures.emplace_back(texture_img);
     }
+
+    texture_data.memory = 
+        alloc.getTextureMemory(gpu_texture_bytes);
+
+    for (uint32_t i = 0; i < gpu_textures.size(); i++) {
+        REQ_VK(dev.dt.bindImageMemory(dev.hdl, gpu_textures[i],
+                                      texture_data.memory,
+                                      texture_memory_offsets[i]));
+    }
+
     const uint32_t num_textures = cpu_textures.size();
 
     optional<HostBuffer> texture_staging;
     if (num_textures > 0) {
-        texture_staging.emplace(alloc.makeStagingBuffer(total_texture_bytes));
+        texture_staging.emplace(alloc.makeStagingBuffer(cpu_texture_bytes));
     }
 
     // Copy all geometry into single buffer
@@ -571,7 +623,8 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     // Set initial texture layouts
     DynArray<VkImageMemoryBarrier> texture_barriers(num_textures);
     for (size_t i = 0; i < num_textures; i++) {
-        const LocalImage &gpu_texture = gpu_textures[i];
+        const auto &cpu_texture = cpu_textures[i];
+        VkImage gpu_texture = gpu_textures[i];
         VkImageMemoryBarrier &barrier = texture_barriers[i];
 
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -582,9 +635,9 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = gpu_texture.image;
+        barrier.image = gpu_texture;
         barrier.subresourceRange = {
-            VK_IMAGE_ASPECT_COLOR_BIT, 0, gpu_texture.mipLevels, 0, 1,
+            VK_IMAGE_ASPECT_COLOR_BIT, 0, cpu_texture->numLevels, 0, 1,
         };
     }
 
@@ -602,7 +655,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         vector<VkBufferImageCopy> copy_infos;
         for (size_t i = 0; i < num_textures; i++) {
             const shared_ptr<Texture> &cpu_texture = cpu_textures[i];
-            const LocalImage &gpu_texture = gpu_textures[i];
+            VkImage gpu_texture = gpu_textures[i];
             uint32_t base_width = cpu_texture->width;
             uint32_t base_height = cpu_texture->height;
             uint32_t num_levels = cpu_texture->numLevels;
@@ -652,7 +705,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
             // between textures to avoid allocs
             dev.dt.cmdCopyBufferToImage(
                 transferStageCommand, texture_staging->buffer,
-                gpu_texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                gpu_texture, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 num_levels, copy_infos.data());
         }
 
@@ -748,21 +801,24 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     waitForFenceInfinitely(dev, fence);
     resetFence(dev, fence);
 
-    vector<VkImageView> texture_views;
+    vector<VkImageView> &texture_views = texture_data.views;
     texture_views.reserve(num_textures);
-    for (const LocalImage &gpu_texture : gpu_textures) {
+    for (uint32_t texture_idx = 0; texture_idx < num_textures; texture_idx++) {
+        const auto &cpu_texture = cpu_textures[texture_idx];
+        VkImage gpu_texture = gpu_textures[texture_idx];
+
         VkImageViewCreateInfo view_info;
         view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         view_info.pNext = nullptr;
         view_info.flags = 0;
-        view_info.image = gpu_texture.image;
+        view_info.image = gpu_texture;
         view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
         view_info.format = alloc.getFormats().sdrTexture;
         view_info.components = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
                                 VK_COMPONENT_SWIZZLE_B,
                                 VK_COMPONENT_SWIZZLE_A};
         view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0,
-                                      gpu_texture.mipLevels, 0, 1};
+                                      cpu_texture->numLevels, 0, 1};
 
         VkImageView view;
         REQ_VK(dev.dt.createImageView(dev.hdl, &view_info, nullptr, &view));
@@ -870,8 +926,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     dev.dt.updateDescriptorSets(dev.hdl, 1, &cull_desc_update, 0, nullptr);
 
     return make_shared<Scene>(Scene {
-        move(gpu_textures),
-        move(texture_views),
+        move(texture_data),
         move(material_set),
         move(cull_set),
         move(data),

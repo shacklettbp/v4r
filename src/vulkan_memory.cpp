@@ -575,9 +575,9 @@ pair<LocalBuffer, VkDeviceMemory> MemoryAllocator::makeDedicatedBuffer(
                 memory);
 }
 
-LocalImage MemoryAllocator::makeTexture(uint32_t width, uint32_t height,
-                                        uint32_t mip_levels,
-                                        bool precomputed_mipmaps)
+tuple<VkImage, VkDeviceSize, VkDeviceSize> MemoryAllocator::makeTexture(
+    uint32_t width, uint32_t height, uint32_t mip_levels,
+    bool precomputed_mipmaps)
 {
     assert(precomputed_mipmaps == true);
 
@@ -586,23 +586,23 @@ LocalImage MemoryAllocator::makeTexture(uint32_t width, uint32_t height,
             precomputed_mipmaps ? ImageFlags::precomputedMipmapTextureUsage :
                 ImageFlags::runtimeMipmapTextureUsage);
 
+    return make_tuple(texture_img, reqs.size, reqs.alignment);
+
+}
+
+VkDeviceMemory MemoryAllocator::getTextureMemory(VkDeviceSize num_bytes)
+{
     VkMemoryAllocateInfo alloc;
     alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     alloc.pNext = nullptr;
-    alloc.allocationSize = reqs.size;
-    if (precomputed_mipmaps) {
-        alloc.memoryTypeIndex = type_indices_.precomputedMipmapTexture;
-    } else {
-        alloc.memoryTypeIndex = type_indices_.runtimeMipmapTexture;
-    }
+    alloc.allocationSize = num_bytes;
+    alloc.memoryTypeIndex = type_indices_.precomputedMipmapTexture;
 
     VkDeviceMemory memory;
     REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &memory));
-    REQ_VK(dev.dt.bindImageMemory(dev.hdl, texture_img, memory, 0));
+    //REQ_VK(dev.dt.bindImageMemory(dev.hdl, texture_img, memory, 0));
 
-    return LocalImage(width, height,
-                      mip_levels, texture_img,
-                      AllocDeleter<false>(memory, *this));
+    return memory;
 }
 
 LocalImage MemoryAllocator::makeDedicatedImage(uint32_t width, uint32_t height,
@@ -655,11 +655,6 @@ LocalImage MemoryAllocator::makeLinearDepthAttachment(uint32_t width,
     return makeDedicatedImage(width, height, 1, formats_.linearDepthAttachment,
                               ImageFlags::colorAttachmentUsage,
                               type_indices_.colorAttachment);
-}
-
-static VkDeviceSize alignOffset(VkDeviceSize offset, VkDeviceSize alignment)
-{
-    return ((offset + alignment - 1) / alignment) * alignment;
 }
 
 VkDeviceSize MemoryAllocator::alignUniformBufferOffset(

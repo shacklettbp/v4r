@@ -126,9 +126,11 @@ public:
     std::pair<LocalBuffer, VkDeviceMemory> makeDedicatedBuffer(
             VkDeviceSize num_bytes);
 
-    LocalImage makeTexture(uint32_t width, uint32_t height,
-                           uint32_t mip_levels,
-                           bool precomputed_mipmaps=true);
+    std::tuple<VkImage, VkDeviceSize, VkDeviceSize> makeTexture(
+        uint32_t width, uint32_t height,
+        uint32_t mip_levels, bool precomputed_mipmaps=true);
+
+    VkDeviceMemory getTextureMemory(VkDeviceSize num_bytes);
 
     LocalImage makeColorAttachment(uint32_t width, uint32_t height);
     LocalImage makeDepthAttachment(uint32_t width, uint32_t height);

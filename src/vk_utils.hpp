@@ -77,6 +77,8 @@ inline void resetFence(const DeviceState &dev, VkFence fence);
 
 inline uint32_t getWorkgroupSize(uint32_t num_items);
 
+inline VkDeviceSize alignOffset(VkDeviceSize offset, VkDeviceSize alignment);
+
 void printVkError(VkResult res, const char *msg);
 
 static inline VkResult checkVk(VkResult res, const char *msg,
