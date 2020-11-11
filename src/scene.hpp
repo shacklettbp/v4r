@@ -4,6 +4,7 @@
 #include <v4r/config.hpp>
 #include <v4r/assets.hpp>
 
+#include <filesystem>
 #include <list>
 #include <mutex>
 #include <string_view>
@@ -45,7 +46,6 @@ struct Texture {
     uint32_t numLevels;
 
     ktxTexture *data;
-    FILE *file;
 
     ~Texture();
 };
@@ -128,7 +128,7 @@ public:
 };
 
 struct MaterialMetadata {
-    std::vector<std::shared_ptr<Texture>> textures;
+    std::vector<std::filesystem::path> textures;
     uint32_t numMaterials;
     uint32_t texturesPerMaterial;
     std::vector<uint32_t> textureIndices;
