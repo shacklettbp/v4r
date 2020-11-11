@@ -870,6 +870,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     dev.dt.updateDescriptorSets(dev.hdl, 1, &cull_desc_update, 0, nullptr);
 
     return make_shared<Scene>(Scene {
+        dev,
         move(gpu_textures),
         move(texture_views),
         move(material_set),
@@ -880,6 +881,13 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         staged.hdr.numMeshes,
         move(env_init),
     });
+}
+
+Scene::~Scene()
+{
+    for (VkImageView v : texture_views) {
+        dev.dt.destroyImageView(dev.hdl, v, nullptr);
+    }
 }
 
 shared_ptr<Texture> LoaderState::loadTexture(const vector<uint8_t> &raw)

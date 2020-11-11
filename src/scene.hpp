@@ -99,6 +99,10 @@ struct EnvironmentInit {
 };
 
 struct Scene {
+    Scene(const Scene &) = delete;
+    Scene(Scene &&) = default;
+    ~Scene();
+    const DeviceState &dev;
     std::vector<LocalImage> textures;
     std::vector<VkImageView> texture_views;
     DescriptorSet materialSet;
