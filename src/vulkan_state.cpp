@@ -128,22 +128,80 @@ static VkRenderPass makeRenderPass(const DeviceState &dev,
 {
     vector<VkAttachmentDescription> attachment_descs;
     vector<VkAttachmentReference> attachment_refs;
+    vector<VkAttachmentReference> resolve_attachment_refs;
+
+    uint32_t num_attachments = 0;
+    if (color_output) {
+        attachment_descs.push_back({
+            0,
+            fmts.colorAttachment,
+            VK_SAMPLE_COUNT_4_BIT,
+            VK_ATTACHMENT_LOAD_OP_CLEAR,
+            VK_ATTACHMENT_STORE_OP_STORE,
+            VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        });
+
+        attachment_refs.push_back({
+            num_attachments++,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        });
+    }
+
+    if (depth_output) {
+        attachment_descs.push_back({
+            0,
+            fmts.linearDepthAttachment,
+            VK_SAMPLE_COUNT_4_BIT,
+            VK_ATTACHMENT_LOAD_OP_CLEAR,
+            VK_ATTACHMENT_STORE_OP_STORE,
+            VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            VK_IMAGE_LAYOUT_UNDEFINED,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        });
+
+        attachment_refs.push_back({
+            num_attachments++,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        });
+    }
+
+    attachment_descs.push_back({
+        0,
+        fmts.depthAttachment,
+        VK_SAMPLE_COUNT_4_BIT,
+        VK_ATTACHMENT_LOAD_OP_CLEAR,
+        VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    });
+
+    VkAttachmentReference depth_attachment_ref = {
+        num_attachments++,
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+    };
 
     if (color_output) {
         attachment_descs.push_back({
             0,
             fmts.colorAttachment,
             VK_SAMPLE_COUNT_1_BIT,
-            VK_ATTACHMENT_LOAD_OP_CLEAR,
+            VK_ATTACHMENT_LOAD_OP_DONT_CARE,
             VK_ATTACHMENT_STORE_OP_STORE,
             VK_ATTACHMENT_LOAD_OP_DONT_CARE,
             VK_ATTACHMENT_STORE_OP_DONT_CARE,
             VK_IMAGE_LAYOUT_UNDEFINED,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         });
 
-        attachment_refs.push_back({
-            0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+        resolve_attachment_refs.push_back({
+            num_attachments++,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         });
     }
 
@@ -152,50 +210,32 @@ static VkRenderPass makeRenderPass(const DeviceState &dev,
             0,
             fmts.linearDepthAttachment,
             VK_SAMPLE_COUNT_1_BIT,
-            VK_ATTACHMENT_LOAD_OP_CLEAR,
+            VK_ATTACHMENT_LOAD_OP_DONT_CARE,
             VK_ATTACHMENT_STORE_OP_STORE,
             VK_ATTACHMENT_LOAD_OP_DONT_CARE,
             VK_ATTACHMENT_STORE_OP_DONT_CARE,
             VK_IMAGE_LAYOUT_UNDEFINED,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         });
 
-        attachment_refs.push_back({
-            static_cast<uint32_t>(attachment_refs.size()),
-            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+        resolve_attachment_refs.push_back({
+            num_attachments++,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         });
     }
 
-    attachment_descs.push_back({
-        0,
-        fmts.depthAttachment,
-        VK_SAMPLE_COUNT_1_BIT,
-        VK_ATTACHMENT_LOAD_OP_CLEAR,
-        VK_ATTACHMENT_STORE_OP_DONT_CARE,
-        VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-        VK_ATTACHMENT_STORE_OP_DONT_CARE,
-        VK_IMAGE_LAYOUT_UNDEFINED,
-        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-    });
-
-    attachment_refs.push_back({
-        static_cast<uint32_t>(attachment_refs.size()),
-        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
-    });
-
     VkSubpassDescription subpass_desc {};
     subpass_desc.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass_desc.colorAttachmentCount =
-        static_cast<uint32_t>(attachment_refs.size() - 1);
-    subpass_desc.pColorAttachments = &attachment_refs[0];
-    subpass_desc.pDepthStencilAttachment = &attachment_refs.back();
+    subpass_desc.colorAttachmentCount = attachment_refs.size(),
+    subpass_desc.pColorAttachments = attachment_refs.data();
+    subpass_desc.pResolveAttachments = resolve_attachment_refs.data();
+    subpass_desc.pDepthStencilAttachment = &depth_attachment_ref;
 
     VkRenderPassCreateInfo render_pass_info;
     render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     render_pass_info.pNext = nullptr;
     render_pass_info.flags = 0;
-    render_pass_info.attachmentCount =
-        static_cast<uint32_t>(attachment_descs.size());
+    render_pass_info.attachmentCount = num_attachments;
     render_pass_info.pAttachments = attachment_descs.data();
     render_pass_info.subpassCount = 1;
     render_pass_info.pSubpasses = &subpass_desc;
@@ -415,7 +455,8 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     if (fb_cfg.colorOutput) {
         attachments.emplace_back(
                 alloc.makeColorAttachment(fb_cfg.totalWidth,
-                                          fb_cfg.totalHeight));
+                                          fb_cfg.totalHeight,
+                                          VK_SAMPLE_COUNT_4_BIT));
 
         VkImageView color_view;
         view_info.image = attachments.back().image;
@@ -430,7 +471,8 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     if (fb_cfg.depthOutput) {
         attachments.emplace_back(
             alloc.makeLinearDepthAttachment(fb_cfg.totalWidth,
-                                            fb_cfg.totalHeight));
+                                            fb_cfg.totalHeight,
+                                            VK_SAMPLE_COUNT_4_BIT));
 
         VkImageView linear_depth_view;
         view_info.image = attachments.back().image;
@@ -443,7 +485,8 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     }
 
     attachments.emplace_back(
-            alloc.makeDepthAttachment(fb_cfg.totalWidth, fb_cfg.totalHeight));
+            alloc.makeDepthAttachment(fb_cfg.totalWidth, fb_cfg.totalHeight,
+                                      VK_SAMPLE_COUNT_4_BIT));
 
     view_info.image = attachments.back().image;
     view_info.format = alloc.getFormats().depthAttachment;
@@ -454,6 +497,39 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
                                   nullptr, &depth_view));
 
     attachment_views.push_back(depth_view);
+
+    if (fb_cfg.colorOutput) {
+        attachments.emplace_back(
+                alloc.makeColorAttachment(fb_cfg.totalWidth,
+                                          fb_cfg.totalHeight,
+                                          VK_SAMPLE_COUNT_1_BIT));
+
+        VkImageView color_resolve_view;
+        view_info.image = attachments.back().image;
+        view_info.format = alloc.getFormats().colorAttachment;
+        view_info_sr.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+
+        REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
+                                      nullptr, &color_resolve_view));
+
+        attachment_views.push_back(color_resolve_view);
+    }
+
+    if (fb_cfg.depthOutput) {
+        attachments.emplace_back(
+            alloc.makeLinearDepthAttachment(fb_cfg.totalWidth,
+                                            fb_cfg.totalHeight,
+                                            VK_SAMPLE_COUNT_1_BIT));
+
+        VkImageView linear_depth_resolve_view;
+        view_info.image = attachments.back().image;
+        view_info.format = alloc.getFormats().linearDepthAttachment;
+
+        REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
+                                      nullptr, &linear_depth_resolve_view));
+
+        attachment_views.push_back(linear_depth_resolve_view);
+    }
 
     VkFramebufferCreateInfo fb_info;
     fb_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -654,8 +730,9 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
     VkPipelineMultisampleStateCreateInfo multisample_info {};
     multisample_info.sType = 
         VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisample_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    multisample_info.sampleShadingEnable = VK_FALSE;
+    multisample_info.rasterizationSamples = VK_SAMPLE_COUNT_4_BIT;
+    multisample_info.sampleShadingEnable = VK_TRUE;
+    multisample_info.minSampleShading = 1.f;
     multisample_info.alphaToCoverageEnable = VK_FALSE;
     multisample_info.alphaToOneEnable = VK_FALSE;
 
@@ -1047,6 +1124,17 @@ static void recordFBToLinearCopy(const DeviceState &dev,
     // FIXME move this to FramebufferState
     vector<VkImageMemoryBarrier> fb_barriers;
 
+    uint32_t color_resolve_index = 2;
+    uint32_t depth_resolve_index = 2;
+
+    if (fb_cfg.colorOutput) {
+        depth_resolve_index += 2;
+    }
+
+    if (fb_cfg.depthOutput) {
+        color_resolve_index++;
+    }
+
     if (fb_cfg.colorOutput) {
         fb_barriers.emplace_back(VkImageMemoryBarrier {
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1057,7 +1145,7 @@ static void recordFBToLinearCopy(const DeviceState &dev,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             VK_QUEUE_FAMILY_IGNORED,
             VK_QUEUE_FAMILY_IGNORED,
-            fb.attachments[0].image,
+            fb.attachments[color_resolve_index].image,
             {
                 VK_IMAGE_ASPECT_COLOR_BIT,
                 0, 1, 0, 1
@@ -1075,7 +1163,7 @@ static void recordFBToLinearCopy(const DeviceState &dev,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             VK_QUEUE_FAMILY_IGNORED,
             VK_QUEUE_FAMILY_IGNORED,
-            fb.attachments[fb.attachments.size() - 2].image,
+            fb.attachments[depth_resolve_index].image,
             {
                 VK_IMAGE_ASPECT_COLOR_BIT,
                 0, 1, 0, 1
@@ -1140,12 +1228,12 @@ static void recordFBToLinearCopy(const DeviceState &dev,
 
     if (fb_cfg.colorOutput) {
         make_copy_cmd(state.colorBufferOffset, sizeof(uint8_t) * 4,
-                      fb.attachments[0].image);
+                      fb.attachments[color_resolve_index].image);
     }
 
     if (fb_cfg.depthOutput) {
         make_copy_cmd(state.depthBufferOffset, sizeof(float),
-                      fb.attachments[fb.attachments.size() - 2].image);
+                      fb.attachments[depth_resolve_index].image);
     }
 
     REQ_VK(dev.dt.endCommandBuffer(copy_cmd));

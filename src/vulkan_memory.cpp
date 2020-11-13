@@ -234,7 +234,8 @@ pair<VkBuffer, VkMemoryRequirements> makeUnboundBuffer(const DeviceState &dev,
 
 pair<VkImage, VkMemoryRequirements> makeUnboundImage(const DeviceState &dev,
         uint32_t width, uint32_t height, uint32_t mip_levels,
-        VkFormat format, VkImageUsageFlags usage)
+        VkFormat format, VkImageUsageFlags usage,
+        VkSampleCountFlagBits num_samples = VK_SAMPLE_COUNT_1_BIT)
 {
     VkImageCreateInfo img_info;
     img_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -245,7 +246,7 @@ pair<VkImage, VkMemoryRequirements> makeUnboundImage(const DeviceState &dev,
     img_info.extent = { width, height, 1 };
     img_info.mipLevels = mip_levels;
     img_info.arrayLayers = 1;
-    img_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    img_info.samples = num_samples;
     img_info.tiling = VK_IMAGE_TILING_OPTIMAL;
     img_info.usage = usage;
     img_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -609,10 +610,11 @@ LocalImage MemoryAllocator::makeDedicatedImage(uint32_t width, uint32_t height,
                                                uint32_t mip_levels,
                                                VkFormat format,
                                                VkImageUsageFlags usage,
-                                               uint32_t type_idx)
+                                               uint32_t type_idx,
+                                               VkSampleCountFlagBits num_samples)
 {
     auto [img, reqs] = makeUnboundImage(dev, width, height, mip_levels,
-                                        format, usage);
+                                        format, usage, num_samples);
     
     VkMemoryDedicatedAllocateInfo dedicated;
     dedicated.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO;
@@ -633,28 +635,31 @@ LocalImage MemoryAllocator::makeDedicatedImage(uint32_t width, uint32_t height,
                       AllocDeleter<false>(memory, *this));
 }
 
-LocalImage MemoryAllocator::makeColorAttachment(uint32_t width,
-                                                uint32_t height)
+LocalImage MemoryAllocator::makeColorAttachment(uint32_t width, uint32_t height,
+                                                VkSampleCountFlagBits num_samples)
 {
     return makeDedicatedImage(width, height, 1, formats_.colorAttachment,
                               ImageFlags::colorAttachmentUsage,
-                              type_indices_.colorAttachment);
+                              type_indices_.colorAttachment,
+                              num_samples);
 }
 
-LocalImage MemoryAllocator::makeDepthAttachment(uint32_t width,
-                                                uint32_t height)
+LocalImage MemoryAllocator::makeDepthAttachment(uint32_t width, uint32_t height,
+                                                VkSampleCountFlagBits num_samples)
 {
     return makeDedicatedImage(width, height, 1, formats_.depthAttachment,
                               ImageFlags::depthAttachmentUsage,
-                              type_indices_.depthAttachment);
+                              type_indices_.depthAttachment,
+                              num_samples);
 }
 
-LocalImage MemoryAllocator::makeLinearDepthAttachment(uint32_t width,
-                                                      uint32_t height)
+LocalImage MemoryAllocator::makeLinearDepthAttachment(uint32_t width, uint32_t height,
+    VkSampleCountFlagBits num_samples)
 {
     return makeDedicatedImage(width, height, 1, formats_.linearDepthAttachment,
                               ImageFlags::colorAttachmentUsage,
-                              type_indices_.colorAttachment);
+                              type_indices_.colorAttachment,
+                              num_samples);
 }
 
 static VkDeviceSize alignOffset(VkDeviceSize offset, VkDeviceSize alignment)

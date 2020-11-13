@@ -130,9 +130,12 @@ public:
                            uint32_t mip_levels,
                            bool precomputed_mipmaps=true);
 
-    LocalImage makeColorAttachment(uint32_t width, uint32_t height);
-    LocalImage makeDepthAttachment(uint32_t width, uint32_t height);
-    LocalImage makeLinearDepthAttachment(uint32_t width, uint32_t height);
+    LocalImage makeColorAttachment(uint32_t width, uint32_t height,
+        VkSampleCountFlagBits num_samples = VK_SAMPLE_COUNT_1_BIT);
+    LocalImage makeDepthAttachment(uint32_t width, uint32_t height,
+        VkSampleCountFlagBits num_samples = VK_SAMPLE_COUNT_1_BIT);
+    LocalImage makeLinearDepthAttachment(uint32_t width, uint32_t height,
+        VkSampleCountFlagBits num_samples = VK_SAMPLE_COUNT_1_BIT);
 
     const ResourceFormats &getFormats() const { return formats_; }
 
@@ -149,8 +152,9 @@ private:
                                 uint32_t mem_idx);
 
     LocalImage makeDedicatedImage(uint32_t width, uint32_t height,
-                                  uint32_t mip_levels, VkFormat format,
-                                  VkImageUsageFlags usage, uint32_t type_idx);
+        uint32_t mip_levels, VkFormat format,
+        VkImageUsageFlags usage, uint32_t type_idx,
+        VkSampleCountFlagBits num_samples = VK_SAMPLE_COUNT_1_BIT);
 
     const DeviceState &dev;
     ResourceFormats formats_;

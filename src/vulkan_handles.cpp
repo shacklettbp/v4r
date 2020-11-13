@@ -307,6 +307,7 @@ DeviceState InstanceState::makeDevice(
     requested_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     requested_features.pNext = &desc_idx_features;
     requested_features.features.samplerAnisotropy = false;
+    requested_features.features.sampleRateShading = true;
 
     // Current indirect draw setup uses instance index as basically
     // draw index for retrieving transform, materials etc
