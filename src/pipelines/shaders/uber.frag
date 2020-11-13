@@ -159,6 +159,6 @@ void main()
 #endif
 
 #ifdef OUTPUT_DEPTH
-    out_linear_depth = in_linear_depth;
+    out_linear_depth = clamp(in_linear_depth, 0.f, 10.f);
 #endif
 }
