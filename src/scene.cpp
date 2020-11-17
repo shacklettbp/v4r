@@ -5,6 +5,10 @@
 #include "shader.hpp"
 #include "utils.hpp"
 
+#define TINYPLY_IMPLEMENTATION
+#include "tinyply.h"
+#undef TINYPLY_IMPLEMENTATION
+
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/string_cast.hpp>
 
@@ -257,6 +261,86 @@ static SceneDescription parseGLTFScene(std::string_view scene_path,
     return scene_desc;
 }
 
+template <typename VertexType>
+static SceneDescription parsePLYScene(string_view scene_path,
+                                      const glm::mat4 &coordinate_txfm)
+{
+    using namespace tinyply;
+
+    ifstream file(filesystem::path(scene_path), ios::binary);
+
+    if (file.fail()) {
+        cerr << "Failed to open: " << scene_path << endl;
+        fatalExit();
+    }
+
+    PlyFile ply_file;
+    ply_file.parse_header(file);
+
+    vector<shared_ptr<Mesh>> geometry;
+    try {
+        auto positions = ply_file.request_properties_from_element(
+            "vertex", {"x", "y", "z"});
+
+        auto colors = ply_file.request_properties_from_element(
+            "vertex", {"red", "green", "blue"});
+
+        auto faces = ply_file.request_properties_from_element(
+            "face", {"vertex_indices"}, 4);
+
+        ply_file.read(file);
+
+        vector<VertexType> vertices(positions->count);
+        glm::vec3 *pos_buffer =
+            reinterpret_cast<glm::vec3 *>(positions->buffer.get());
+        glm::u8vec3 *color_buffer =
+            reinterpret_cast<glm::u8vec3 *>(colors->buffer.get());
+        for (uint32_t i = 0; i < vertices.size(); i++) {
+            auto &v = vertices[i];
+
+            if constexpr (VertexImpl<VertexType>::hasPosition) {
+                v.position = pos_buffer[i];
+            }
+
+            if constexpr (VertexImpl<VertexType>::hasColor) {
+                v.color = color_buffer[i];
+            }
+        }
+
+        uint32_t *quad_indices = reinterpret_cast<uint32_t *>(faces->buffer.get());
+        vector<uint32_t> indices;
+        indices.reserve(faces->count * 6);
+
+        for (uint32_t i = 0; i < faces->count; i++) {
+            uint32_t base_quad_idx = i * 4;
+            indices.push_back(quad_indices[base_quad_idx]);
+            indices.push_back(quad_indices[base_quad_idx + 1]);
+            indices.push_back(quad_indices[base_quad_idx + 2]);
+
+            indices.push_back(quad_indices[base_quad_idx + 2]);
+            indices.push_back(quad_indices[base_quad_idx + 3]);
+            indices.push_back(quad_indices[base_quad_idx]);
+        }
+
+        geometry.emplace_back(makeSharedMesh(move(vertices), move(indices)));
+    } catch (exception &e) {
+        cerr << "Failed to read ply file: " << e.what() << endl;
+        fatalExit();
+    }
+
+    SceneDescription scene_desc(move(geometry), {});
+
+    scene_desc.addInstance(0, 0, coordinate_txfm);
+    
+    return scene_desc;
+}
+
+static bool isPLY(string_view scene_path)
+{
+    auto suffix = scene_path.substr(scene_path.rfind('.') + 1);
+    return suffix == "ply";
+}
+
 template <typename VertexType, typename MaterialParamsType>
 static SceneDescription parseScene(string_view scene_path,
                                    const glm::mat4 &coordinate_txfm)
@@ -264,6 +348,8 @@ static SceneDescription parseScene(string_view scene_path,
     if (isGLTF(scene_path)) {
         return parseGLTFScene<VertexType, MaterialParamsType>(scene_path,
                                                               coordinate_txfm);
+    } else if (isPLY(scene_path)) {
+        return parsePLYScene<VertexType>(scene_path, coordinate_txfm);
     } else {
         cerr << "Only GLTF is supported" << endl;
         abort();

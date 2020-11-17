@@ -104,7 +104,7 @@ int main(int argc, char *argv[]) {
     RenderDoc rdoc;
 
     using Pipeline = Unlit<RenderOutputs::Color,
-                                DataSource::Texture>;
+                           DataSource::Vertex>;
 
     BatchPresentRenderer renderer({0, 1, 1, 1, 1024, 1024, glm::mat4(1.f) },
         RenderFeatures<Pipeline> { RenderOptions::DoubleBuffered |
