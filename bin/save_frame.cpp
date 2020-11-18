@@ -15,7 +15,7 @@ int main(int argc, char *argv[]) {
     uint32_t batch_size = stoul(argv[2]);
 
     using Pipeline = Unlit<RenderOutputs::Color | RenderOutputs::Depth,
-                           DataSource::Texture>;
+                           DataSource::Vertex>;
 
     BatchRendererCUDA renderer({0, 1, 1, batch_size, 256, 256,
         glm::mat4(

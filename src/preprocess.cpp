@@ -264,10 +264,8 @@ optional<ProcessedMesh<VertexType>> processMesh(
     const vector<VertexType> &orig_vertices = orig_mesh.vertices;
     const vector<uint32_t> &orig_indices = orig_mesh.indices;
 
-    //vector<uint32_t> filtered_indices =
-    //    filterDegenerateTriangles(orig_vertices, orig_indices);
-    //
-    auto filtered_indices = orig_indices;
+    vector<uint32_t> filtered_indices =
+        filterDegenerateTriangles(orig_vertices, orig_indices);
 
     if (filtered_indices.size() == 0) {
         cerr << "Warning: removing entire degenerate mesh" << endl;
