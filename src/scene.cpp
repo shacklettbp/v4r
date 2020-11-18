@@ -383,7 +383,8 @@ static SceneLoadInfo loadPreprocessedScene(string_view scene_path_name,
     uint32_t rgb_offset = read_uint();
 
     // FIXME something less hacky to determine this:
-    if constexpr (is_same_v<MaterialParamsType, NoMaterial>) {
+    if constexpr (is_same_v<MaterialParamsType, NoMaterial> &&
+                  !VertexImpl<VertexType>::hasColor) {
         scene_file.seekg(depth_offset * sizeof(uint32_t), ios::cur);
     } else {
         scene_file.seekg(rgb_offset * sizeof(uint32_t), ios::cur);
