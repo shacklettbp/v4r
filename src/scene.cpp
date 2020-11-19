@@ -5,9 +5,12 @@
 #include "shader.hpp"
 #include "utils.hpp"
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wshadow"
 #define TINYPLY_IMPLEMENTATION
 #include "tinyply.h"
 #undef TINYPLY_IMPLEMENTATION
+#pragma GCC diagnostic pop
 
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/string_cast.hpp>

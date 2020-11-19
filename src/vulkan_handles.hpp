@@ -5,7 +5,9 @@
 #include <optional>
 #include <vector>
 
+#define VK_ENABLE_BETA_EXTENSIONS
 #include <vulkan/vulkan.h>
+#undef VK_ENABLE_BETA_EXTENSIONS
 
 #include "dispatch.hpp"
 
@@ -22,6 +24,8 @@ public:
     uint32_t numGraphicsQueues;
     uint32_t numComputeQueues;
     uint32_t numTransferQueues;
+
+    uint32_t rtRecursionDepth;
 
     const VkPhysicalDevice phy;
     const VkDevice hdl;

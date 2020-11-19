@@ -191,6 +191,10 @@ DeviceState InstanceState::makeDevice(
         VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
         VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
         VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME,
+        VK_KHR_RAY_TRACING_EXTENSION_NAME,
+        VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
+        VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+        VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
     };
 
     bool need_present = present_check != nullptr;
@@ -284,6 +288,16 @@ DeviceState InstanceState::makeDevice(
     fillQueueInfo(queue_infos[1], *compute_queue_family, compute_pris);
     fillQueueInfo(queue_infos[2], *transfer_queue_family, transfer_pris);
 
+    VkPhysicalDeviceRayTracingPropertiesKHR rt_props;
+    rt_props.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PROPERTIES_KHR;
+    rt_props.pNext = nullptr;
+
+    VkPhysicalDeviceProperties2 props {};
+    props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    props.pNext = &rt_props;
+    dt.getPhysicalDeviceProperties2(phy, &props);
+
     VkDeviceCreateInfo dev_create_info {};
     dev_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     dev_create_info.queueCreateInfoCount = 3;
@@ -294,10 +308,16 @@ DeviceState InstanceState::makeDevice(
 
     dev_create_info.pEnabledFeatures = nullptr;
 
+    VkPhysicalDeviceRayTracingFeaturesKHR rt_features {};
+    rt_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_FEATURES_KHR;
+    rt_features.pNext = nullptr;
+    rt_features.rayTracing = true;
+    rt_features.rayTracingIndirectTraceRays = true;
+
     VkPhysicalDeviceDescriptorIndexingFeatures desc_idx_features {};
     desc_idx_features.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
-    desc_idx_features.pNext = nullptr;
+    desc_idx_features.pNext = &rt_features;
     desc_idx_features.runtimeDescriptorArray = true;
     desc_idx_features.shaderStorageBufferArrayNonUniformIndexing = true;
     desc_idx_features.shaderSampledImageArrayNonUniformIndexing = true;
@@ -323,6 +343,7 @@ DeviceState InstanceState::makeDevice(
         num_gfx_queues,
         num_compute_queues,
         num_transfer_queues,
+        rt_props.maxRecursionDepth,
         phy,
         dev,
         DeviceDispatch(dev, need_present)
