@@ -561,7 +561,7 @@ std::pair<std::vector<VertexType>, std::vector<uint32_t>> gltfParseMesh(
         }
 
         if constexpr (VertexImpl<VertexType>::hasColor) {
-            vert.color = (*color_accessor)[vert_idx];
+            vert.color = glm::u8vec4((*color_accessor)[vert_idx], 255);
         }
 
         vertices.push_back(vert);

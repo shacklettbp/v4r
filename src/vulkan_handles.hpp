@@ -22,6 +22,8 @@ public:
     uint32_t numTransferQueues;
 
     uint32_t rtRecursionDepth;
+    VkDeviceSize rtShaderGroupBaseAlignment;
+    VkDeviceSize rtShaderGroupHandleSize;
 
     const VkPhysicalDevice phy;
     const VkDevice hdl;

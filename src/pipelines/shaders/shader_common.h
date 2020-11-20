@@ -8,6 +8,8 @@ struct ViewInfo {
 
 struct RenderPushConstant {
     uint batchIdx;
+    uint xOffset;
+    uint yOffset;
 };
 
 struct LightProperties {

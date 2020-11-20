@@ -1,5 +1,8 @@
 set(VERTEX_SHADER shaders/uber.vert)
 set(FRAGMENT_SHADER shaders/uber.frag)
+set(RAYGEN_SHADER shaders/uber.rgen)
+set(CLOSEST_HIT_SHADER shaders/uber.rchit)
+
 set(SHADER_DEPENDENCIES
     shaders/shader_common.h
     shaders/mesh_common.h
@@ -13,6 +16,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 set(CFG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/pipeline_cfg.json")
 set(VERTEX_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${VERTEX_SHADER}")
 set(FRAGMENT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${FRAGMENT_SHADER}")
+set(RAYGEN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${RAYGEN_SHADER}")
+set(CLOSEST_HIT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${CLOSEST_HIT_SHADER}")
 
 set(IFACE_DIR "${CMAKE_CURRENT_BINARY_DIR}/interface")
 set(IMPL_DIR "${CMAKE_CURRENT_BINARY_DIR}/implementation")
@@ -61,5 +66,7 @@ FOREACH(CFG_STR ${SHADER_DEFINES})
 ENDFOREACH()
 
 add_shader("meshcull.comp" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/meshcull.comp" "")
+add_shader("uber.rgen" "${RAYGEN_SRC}" "")
+add_shader("uber.rchit" "${CLOSEST_HIT_SRC}" "")
 
 add_custom_target(compile_shaders DEPENDS ${COMPILED_SHADERS})

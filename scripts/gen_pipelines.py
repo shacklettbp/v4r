@@ -157,8 +157,8 @@ struct VertexImpl<{parent_type}::Vertex> {{
         for attr in self.attributes:
             if attr.type == "vec3":
                 vk_fmt = "VK_FORMAT_R32G32B32_SFLOAT"
-            elif attr.type == "u8vec3":
-                vk_fmt = "VK_FORMAT_R8G8B8_UNORM"
+            elif attr.type == "u8vec4":
+                vk_fmt = "VK_FORMAT_R8G8B8A8_UNORM"
             elif attr.type == "vec2":
                 vk_fmt = "VK_FORMAT_R32G32_SFLOAT"
             else:
@@ -438,7 +438,7 @@ def build_vertex(props, iface):
         vertex.add_property("hasUV", False)
 
     if "needVertexColor" in props:
-        vertex.add_attribute("color", type="u8vec3", in_loc=iface.vert_in(),
+        vertex.add_attribute("color", type="u8vec4", in_loc=iface.vert_in(),
             out_loc=iface.vert_out())
         vertex.add_property("hasColor", True)
     else:

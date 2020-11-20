@@ -308,7 +308,7 @@ static SceneDescription parsePLYScene(string_view scene_path,
             }
 
             if constexpr (VertexImpl<VertexType>::hasColor) {
-                v.color = color_buffer[i];
+                v.color = glm::u8vec4(color_buffer[i], 255);
             }
         }
 
@@ -1104,109 +1104,58 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 
     assert(material_metadata.numMaterials <= VulkanConfig::max_materials);
 
-    DescriptorSet material_set = descriptorManager.makeSet();
+    DescriptorSet scene_set = descriptorManager.makeSet();
 
-    // FIXME null descriptorManager feels a bit indirect
-    if (material_set.hdl != VK_NULL_HANDLE &&
-        material_metadata.numMaterials > 0) {
-        // If there are textures the layout is
-        // 0: sampler
-        // 1 .. # textures: texture arrays
-        // Final: material params
-        vector<VkDescriptorImageInfo> descriptor_views;
-        descriptor_views.reserve(material_metadata.numMaterials *
-                                 material_metadata.texturesPerMaterial);
-        vector<VkWriteDescriptorSet> desc_updates;
-        desc_updates.reserve(material_metadata.texturesPerMaterial + 1);
+    vector<VkWriteDescriptorSet> desc_updates;
+    desc_updates.reserve(3);
 
-        for (uint32_t material_texture_idx = 0;
-             material_texture_idx < material_metadata.texturesPerMaterial;
-             material_texture_idx++) {
-            for (uint32_t mat_idx = 0;
-                 mat_idx < material_metadata.numMaterials; mat_idx++) {
-                VkImageView view = texture_views
-                    [material_metadata.textureIndices
-                         [mat_idx * material_metadata.texturesPerMaterial +
-                          material_texture_idx]];
+    VkWriteDescriptorSetAccelerationStructureKHR desc_update_as;
+    desc_update_as.sType =
+        VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR;
+    desc_update_as.pNext = nullptr;
+    desc_update_as.accelerationStructureCount = 1;
+    desc_update_as.pAccelerationStructures = &tlas;
 
-                descriptor_views.push_back(
-                    {VK_NULL_HANDLE,  // Immutable
-                     view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});
-            }
-            VkWriteDescriptorSet desc_update;
-            desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            desc_update.pNext = nullptr;
-            desc_update.dstSet = material_set.hdl;
-            desc_update.dstBinding = 1 + material_texture_idx;
-            desc_update.dstArrayElement = 0;
-            desc_update.descriptorCount = material_metadata.numMaterials;
-            desc_update.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-            desc_update.pImageInfo =
-                descriptor_views.data() +
-                material_texture_idx * material_metadata.numMaterials;
-            desc_update.pBufferInfo = nullptr;
-            desc_update.pTexelBufferView = nullptr;
+    VkWriteDescriptorSet desc_update;
+    desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    desc_update.pNext = &desc_update_as;
+    desc_update.dstSet = scene_set.hdl;
+    desc_update.dstBinding = 0;
+    desc_update.dstArrayElement = 0;
+    desc_update.descriptorCount = 1;
+    desc_update.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    desc_update.pImageInfo = nullptr;
+    desc_update.pBufferInfo = nullptr;
+    desc_update.pTexelBufferView = nullptr;
+    desc_updates.push_back(desc_update);
 
-            desc_updates.push_back(desc_update);
-        }
+    VkDescriptorBufferInfo vertex_buffer_info;
+    vertex_buffer_info.buffer = data.buffer;
+    vertex_buffer_info.offset = 0;
+    vertex_buffer_info.range = staged.meshMetadata[0].numVertices * vertex_size;
 
-        VkDescriptorBufferInfo material_buffer_info;
-        if (staged.hdr.materialBytes > 0) {
-            uint32_t param_binding = 0;
-            if (material_metadata.texturesPerMaterial > 0) {
-                param_binding = 1 + material_metadata.texturesPerMaterial;
-            }
+    desc_update.pNext = nullptr;
+    desc_update.dstBinding = 1;
+    desc_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    desc_update.pImageInfo = nullptr;
+    desc_update.pBufferInfo = &vertex_buffer_info;
+    desc_updates.push_back(desc_update);
 
-            material_buffer_info.buffer = data.buffer;
-            material_buffer_info.offset = staged.hdr.materialOffset;
-            material_buffer_info.range = staged.hdr.materialBytes;
+    VkDescriptorBufferInfo index_buffer_info;
+    vertex_buffer_info.buffer = data.buffer;
+    vertex_buffer_info.offset = staged.hdr.indexOffset;
+    vertex_buffer_info.range = staged.meshMetadata[0].numIndices * sizeof(uint32_t);
+    desc_update.pBufferInfo = &index_buffer_info;
+    desc_updates.push_back(desc_update);
 
-            VkWriteDescriptorSet desc_update;
-            desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            desc_update.pNext = nullptr;
-            desc_update.dstSet = material_set.hdl;
-            desc_update.dstBinding = param_binding;
-            desc_update.dstArrayElement = 0;
-            desc_update.descriptorCount = 1;
-            desc_update.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            desc_update.pImageInfo = nullptr;
-            desc_update.pBufferInfo = &material_buffer_info;
-            desc_update.pTexelBufferView = nullptr;
-
-            desc_updates.push_back(desc_update);
-        }
-
-        dev.dt.updateDescriptorSets(dev.hdl, desc_updates.size(),
-                                    desc_updates.data(), 0, nullptr);
-    }
-
-    DescriptorSet cull_set = cullDescriptorManager.makeSet();
-
-    VkDescriptorBufferInfo mesh_chunk_buffer_info;
-    mesh_chunk_buffer_info.buffer = data.buffer;
-    mesh_chunk_buffer_info.offset = staged.hdr.meshChunkOffset;
-    mesh_chunk_buffer_info.range = staged.hdr.meshChunkBytes;
-
-    VkWriteDescriptorSet cull_desc_update;
-    cull_desc_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    cull_desc_update.pNext = nullptr;
-    cull_desc_update.dstSet = cull_set.hdl;
-    cull_desc_update.dstBinding = 0;
-    cull_desc_update.dstArrayElement = 0;
-    cull_desc_update.descriptorCount = 1;
-    cull_desc_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    cull_desc_update.pImageInfo = nullptr;
-    cull_desc_update.pBufferInfo = &mesh_chunk_buffer_info;
-    cull_desc_update.pTexelBufferView = nullptr;
-
-    dev.dt.updateDescriptorSets(dev.hdl, 1, &cull_desc_update, 0, nullptr);
+    dev.dt.updateDescriptorSets(dev.hdl, desc_updates.size(),
+                                desc_updates.data(), 0, nullptr);
 
     return make_shared<Scene>(Scene {
         dev,
         move(gpu_textures),
         move(texture_views),
-        move(material_set),
-        move(cull_set),
+        move(scene_set),
         move(data),
         staged.hdr.indexOffset,
         move(staged.meshMetadata),

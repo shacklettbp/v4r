@@ -64,8 +64,11 @@ struct PipelineState {
     VkPipelineLayout gfxLayout;
     VkPipeline gfxPipeline;
 
-    VkPipelineLayout meshCullLayout;
-    VkPipeline meshCullPipeline;
+    HostBuffer shaderBindingTable;
+    VkStridedBufferRegionKHR raygenEntry;
+    VkStridedBufferRegionKHR hitEntry;
+    VkStridedBufferRegionKHR missEntry;
+    VkStridedBufferRegionKHR callableEntry;
 };
 
 struct ParamBufferConfig {
@@ -97,20 +100,11 @@ struct ParamBufferConfig {
 struct RenderState {
     ParamBufferConfig paramPositions;
 
-    VkDescriptorSetLayout meshCullDescriptorLayout;
-    VkDescriptorPool meshCullDescriptorPool;
-
-    VkDescriptorSetLayout meshCullSceneDescriptorLayout;
-    DescriptorManager::MakePoolType makeMeshCullScenePool;
-
     VkDescriptorSetLayout frameDescriptorLayout;
     VkDescriptorPool frameDescriptorPool;
 
     VkDescriptorSetLayout sceneDescriptorLayout;
     DescriptorManager::MakePoolType makeScenePool;
-    VkSampler textureSampler;
-
-    VkRenderPass renderPass;
 };
 
 template <typename PipelineType>
@@ -130,15 +124,14 @@ struct PipelineImpl {
 
     static PipelineState makePipeline(const DeviceState &dev,
                                       const FramebufferConfig &fb_cfg,
-                                      const RenderState &render_state);
+                                      const RenderState &render_state,
+                                      MemoryAllocator &alloc);
 };
 
 struct FramebufferState {
 public:
     std::vector<LocalImage> attachments;
     std::vector<VkImageView> attachmentViews; 
-
-    VkFramebuffer hdl;
 
     LocalBuffer resultBuffer;
     VkDeviceMemory resultMem;
@@ -161,7 +154,6 @@ struct PerFrameState {
     VkDeviceSize colorBufferOffset;
     VkDeviceSize depthBufferOffset;
 
-    VkDescriptorSet cullSet;
     VkDescriptorSet frameSet;
 
     DynArray<VkBuffer> vertexBuffers;
@@ -251,7 +243,6 @@ public:
 private:
     const FramebufferConfig &fb_cfg_;
     const FramebufferState &fb_;
-    VkRenderPass render_pass_;
     HostBuffer per_render_buffer_;
     LocalBuffer indirect_draw_buffer_;
 

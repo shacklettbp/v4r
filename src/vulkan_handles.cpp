@@ -345,6 +345,8 @@ DeviceState InstanceState::makeDevice(
         num_compute_queues,
         num_transfer_queues,
         rt_props.maxRecursionDepth,
+        rt_props.shaderGroupBaseAlignment,
+        rt_props.shaderGroupHandleSize,
         phy,
         dev,
         DeviceDispatch(dev, need_present)

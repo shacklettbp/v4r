@@ -18,6 +18,22 @@ using namespace std;
 
 namespace v4r {
 
+using FrameLayout = DescriptorLayout<
+    BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                  VK_SHADER_STAGE_RAYGEN_BIT_KHR>,
+    BindingConfig<1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1,
+                  VK_SHADER_STAGE_RAYGEN_BIT_KHR>>;
+
+
+using SceneLayout = DescriptorLayout<
+    BindingConfig<0, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1,
+                  VK_SHADER_STAGE_RAYGEN_BIT_KHR |
+                      VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>,
+    BindingConfig<1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                  VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>,
+    BindingConfig<2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                  VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>>;
+
 template <typename PipelineType>
 FramebufferConfig PipelineImpl<PipelineType>::getFramebufferConfig(
     uint32_t batch_size, uint32_t img_width, uint32_t img_height,
@@ -303,18 +319,8 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
         uint32_t num_streams, const RenderOptions &opts,
         MemoryAllocator &alloc)
 {
-    using Props = PipelineProps<PipelineType>;
-
-    ParamBufferConfig param_positions = computeParamBufferConfig(
-            Props::needMaterial, Props::needLighting, batch_size, alloc);
-
-    using FrameLayout = typename Props::PerFrameLayout;
-    array<VkSampler *, FrameLayout::NumBindings> frame_layout_args;
-    frame_layout_args.fill(nullptr);
-
-    VkDescriptorSetLayout frame_descriptor_layout = apply([&](auto ...args) {
-        return FrameLayout::makeSetLayout(dev, args...);
-    }, frame_layout_args);
+    VkDescriptorSetLayout frame_descriptor_layout =
+        FrameLayout::makeSetLayout(dev, nullptr, nullptr);
 
     const uint32_t frames_per_stream =
         (opts & RenderOptions::DoubleBuffered) ? 2 : 1;
@@ -322,82 +328,28 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
     VkDescriptorPool frame_descriptor_pool = FrameLayout::makePool(
             dev, num_streams * frames_per_stream);
 
-    // Descriptor sets for mesh culling
-    using MeshCullLayout = DescriptorLayout<
-        BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                      VK_SHADER_STAGE_COMPUTE_BIT>,
-        BindingConfig<1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                      VK_SHADER_STAGE_COMPUTE_BIT>,
-        BindingConfig<2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                      VK_SHADER_STAGE_COMPUTE_BIT>,
-        BindingConfig<3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                      VK_SHADER_STAGE_COMPUTE_BIT>,
-        BindingConfig<4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                      VK_SHADER_STAGE_COMPUTE_BIT>
-    >;
+    // Scene set
 
-    VkDescriptorSetLayout mesh_cull_descriptor_layout =
-        MeshCullLayout::makeSetLayout(dev, nullptr, nullptr, nullptr,
-                                      nullptr, nullptr);
+    VkDescriptorSetLayout scene_descriptor_layout =
+        SceneLayout::makeSetLayout(dev, nullptr, nullptr, nullptr);
+    DescriptorManager::MakePoolType make_scene_pool =
+        SceneLayout::makePool;
 
-    VkDescriptorPool mesh_cull_descriptor_pool = MeshCullLayout::makePool(
-            dev, num_streams * frames_per_stream);
-
-    using MeshCullSceneLayout = DescriptorLayout<
-        BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                      VK_SHADER_STAGE_COMPUTE_BIT>>;
-
-    VkDescriptorSetLayout mesh_cull_scene_descriptor_layout =
-        MeshCullSceneLayout::makeSetLayout(dev, nullptr);
-
-    DescriptorManager::MakePoolType make_mesh_cull_scene_pool =
-        MeshCullSceneLayout::makePool;
-
-    // Conditional scene set
-    VkSampler texture_sampler = VK_NULL_HANDLE;
-    VkDescriptorSetLayout scene_descriptor_layout = VK_NULL_HANDLE;
-    DescriptorManager::MakePoolType make_scene_pool = nullptr;
-
-    if constexpr (Props::needMaterial) {
-        using SceneLayout = typename Props::PerSceneLayout;
-
-
-        array<VkSampler *, SceneLayout::NumBindings> layout_args;
-        layout_args.fill(nullptr);
-
-        if constexpr (Props::needTextures) {
-            texture_sampler = makeImmutableSampler(dev);
-            layout_args[0] = &texture_sampler;
-        }
-
-        scene_descriptor_layout = apply([&](auto ...args) {
-            return SceneLayout::makeSetLayout(dev, args...);
-        }, layout_args);
-
-        make_scene_pool = SceneLayout::makePool;
-    }
+    ParamBufferConfig param_positions = computeParamBufferConfig(
+            false, false, batch_size, alloc);
 
     return {
         param_positions,
-        mesh_cull_descriptor_layout,
-        mesh_cull_descriptor_pool,
-        mesh_cull_scene_descriptor_layout,
-        make_mesh_cull_scene_pool,
         frame_descriptor_layout,
         frame_descriptor_pool,
         scene_descriptor_layout,
-        make_scene_pool,
-        texture_sampler,
-        makeRenderPass(dev, alloc.getFormats(),
-                       Props::needColorOutput,
-                       Props::needDepthOutput)
+        make_scene_pool
     };
 }
 
 static FramebufferState makeFramebuffer(const DeviceState &dev,
                                         MemoryAllocator &alloc,
-                                        const FramebufferConfig &fb_cfg,
-                                        VkRenderPass render_pass)
+                                        const FramebufferConfig &fb_cfg)
 {
     vector<LocalImage> attachments;
     vector<VkImageView> attachment_views;
@@ -455,27 +407,12 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
 
     attachment_views.push_back(depth_view);
 
-    VkFramebufferCreateInfo fb_info;
-    fb_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    fb_info.pNext = nullptr;
-    fb_info.flags = 0;
-    fb_info.renderPass = render_pass;
-    fb_info.attachmentCount = static_cast<uint32_t>(attachment_views.size());
-    fb_info.pAttachments = attachment_views.data();
-    fb_info.width = fb_cfg.totalWidth;
-    fb_info.height = fb_cfg.totalHeight;
-    fb_info.layers = 1;
-
-    VkFramebuffer fb_handle;
-    REQ_VK(dev.dt.createFramebuffer(dev.hdl, &fb_info, nullptr, &fb_handle));
-
     auto [result_buffer, result_mem] =
         alloc.makeDedicatedBuffer(fb_cfg.totalLinearBytes);
 
     return FramebufferState {
         move(attachments),
         attachment_views,
-        fb_handle,
         move(result_buffer),
         result_mem
     };
@@ -520,66 +457,14 @@ template <typename PipelineType>
 PipelineState PipelineImpl<PipelineType>::makePipeline(
         const DeviceState &dev,
         const FramebufferConfig &fb_cfg,
-        const RenderState &render_state)
+        const RenderState &render_state,
+        MemoryAllocator &alloc)
 {
-    using Props = PipelineProps<PipelineType>;
-    using VertexType = typename PipelineType::Vertex;
-
-    // Vertex input assembly
-    constexpr size_t num_bindings = Props::needMaterial ? 3 : 2;
-
-    array<VkVertexInputBindingDescription, num_bindings> input_bindings;
-    input_bindings[0] = {
-        0, sizeof(VertexType), VK_VERTEX_INPUT_RATE_VERTEX
+    (void)fb_cfg;
+    array<VkDescriptorSetLayout, 2> gfx_desc_layouts {
+        render_state.frameDescriptorLayout,
+        render_state.sceneDescriptorLayout,
     };
-
-    input_bindings[1] = {
-        1, sizeof(glm::mat4x3), VK_VERTEX_INPUT_RATE_INSTANCE
-    };
-
-    if constexpr (Props::needMaterial) {
-        input_bindings[2] = {
-            2, sizeof(uint32_t), VK_VERTEX_INPUT_RATE_INSTANCE
-        };
-    }
-
-    const auto &vertex_attributes = Props::vertexAttributes;
-    constexpr size_t total_attributes = vertex_attributes.size() +
-        3 + (Props::needMaterial ? 1 : 0);
-
-    array<VkVertexInputAttributeDescription, total_attributes>
-        input_attributes;
-
-    std::copy(vertex_attributes.begin(), vertex_attributes.end(),
-              input_attributes.begin());
-
-    // 3 vec4s for mat4x3 transform matrix
-    for (uint32_t idx_offset = 0; idx_offset < 3; idx_offset++) {
-        size_t attr_idx = vertex_attributes.size() + idx_offset;
-        input_attributes[attr_idx] = {
-            Props::transformLocationVertex + idx_offset, 1,
-            VK_FORMAT_R32G32B32A32_SFLOAT,
-            static_cast<uint32_t>(idx_offset * sizeof(glm::vec4))
-        };
-    }
-
-    // FIXME (normal matrix)
-
-    if constexpr (Props::needMaterial) {
-        input_attributes[input_attributes.size() - 1] = {
-            Props::materialLocationVertex, 2,
-            VK_FORMAT_R32_UINT, 0
-        };
-    }
-
-    constexpr size_t total_layouts = Props::needMaterial ? 2 : 1;
-
-    array<VkDescriptorSetLayout, total_layouts> gfx_desc_layouts;
-    gfx_desc_layouts[0] = render_state.frameDescriptorLayout;
-
-    if constexpr (Props::needMaterial) {
-        gfx_desc_layouts[1] = render_state.sceneDescriptorLayout;
-    }
 
     // Pipeline cache (FIXME)
     VkPipelineCacheCreateInfo pcache_info {};
@@ -589,9 +474,8 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
                                       nullptr, &pipeline_cache));
 
     const array<pair<const char *, VkShaderStageFlagBits>, 3> shader_cfg {{
-        {Props::vertexShaderName, VK_SHADER_STAGE_VERTEX_BIT},
-        {Props::fragmentShaderName, VK_SHADER_STAGE_FRAGMENT_BIT},
-        {"meshcull.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT},
+        {"uber.rgen", VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+        {"uber.rchit", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
     }};
 
     constexpr size_t num_shaders = shader_cfg.size();
@@ -616,105 +500,27 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
         };
     }
 
-    VkPipelineVertexInputStateCreateInfo vert_info;
-    vert_info.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vert_info.pNext = nullptr;
-    vert_info.flags = 0;
-    vert_info.vertexBindingDescriptionCount =
-        static_cast<uint32_t>(input_bindings.size());
-    vert_info.pVertexBindingDescriptions = input_bindings.data();
-    vert_info.vertexAttributeDescriptionCount =
-        static_cast<uint32_t>(input_attributes.size());
-    vert_info.pVertexAttributeDescriptions = input_attributes.data();
-    
-    // Assembly
-    VkPipelineInputAssemblyStateCreateInfo input_assembly_info {};
-    input_assembly_info.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    input_assembly_info.topology =
-        VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    input_assembly_info.primitiveRestartEnable = VK_FALSE;
+    array<VkRayTracingShaderGroupCreateInfoKHR, 2> shader_groups;
 
-    // Viewport
-    VkRect2D scissors {
-        { 0, 0 },
-        { fb_cfg.totalWidth, fb_cfg.totalHeight }
-    };
+    shader_groups[0].sType =
+        VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    shader_groups[0].pNext = nullptr;
+    shader_groups[0].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+    shader_groups[0].generalShader = 0;
+    shader_groups[0].closestHitShader = VK_SHADER_UNUSED_KHR;
+    shader_groups[0].anyHitShader = VK_SHADER_UNUSED_KHR;
+    shader_groups[0].intersectionShader = VK_SHADER_UNUSED_KHR;
+    shader_groups[0].pShaderGroupCaptureReplayHandle = nullptr;
 
-    VkPipelineViewportStateCreateInfo viewport_info {};
-    viewport_info.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewport_info.viewportCount = 1;
-    viewport_info.pViewports = nullptr;
-    viewport_info.scissorCount = 1;
-    viewport_info.pScissors = &scissors;
-
-    // Multisample
-    VkPipelineMultisampleStateCreateInfo multisample_info {};
-    multisample_info.sType = 
-        VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisample_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    multisample_info.sampleShadingEnable = VK_FALSE;
-    multisample_info.alphaToCoverageEnable = VK_FALSE;
-    multisample_info.alphaToOneEnable = VK_FALSE;
-
-    // Rasterization
-    VkPipelineRasterizationStateCreateInfo raster_info {};
-    raster_info.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    raster_info.depthClampEnable = VK_FALSE;
-    raster_info.rasterizerDiscardEnable = VK_FALSE;
-    raster_info.polygonMode = VK_POLYGON_MODE_FILL;
-    raster_info.cullMode = VK_CULL_MODE_BACK_BIT;
-    raster_info.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    raster_info.depthBiasEnable = VK_FALSE;
-    raster_info.lineWidth = 1.0f;
-    
-    // Depth/Stencil
-    VkPipelineDepthStencilStateCreateInfo depth_info {};
-    depth_info.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depth_info.depthTestEnable = VK_TRUE;
-    depth_info.depthWriteEnable = VK_TRUE;
-    depth_info.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-    depth_info.depthBoundsTestEnable = VK_FALSE;
-    depth_info.stencilTestEnable = VK_FALSE;
-    depth_info.back.compareOp = VK_COMPARE_OP_ALWAYS;
-
-    // Blend
-    VkPipelineColorBlendAttachmentState blend_attach {};
-    blend_attach.blendEnable = VK_FALSE;
-    blend_attach.colorWriteMask =
-        VK_COLOR_COMPONENT_R_BIT |
-        VK_COLOR_COMPONENT_G_BIT |
-        VK_COLOR_COMPONENT_B_BIT |
-        VK_COLOR_COMPONENT_A_BIT;
-
-    vector<VkPipelineColorBlendAttachmentState> blend_attachments;
-    if (fb_cfg.colorOutput) {
-        blend_attachments.push_back(blend_attach);
-    }
-
-    if (fb_cfg.depthOutput) {
-        blend_attachments.push_back(blend_attach);
-    }
-
-    VkPipelineColorBlendStateCreateInfo blend_info {};
-    blend_info.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-    blend_info.logicOpEnable = VK_FALSE;
-    blend_info.attachmentCount =
-        static_cast<uint32_t>(blend_attachments.size());
-    blend_info.pAttachments = blend_attachments.data();
-
-    // Dynamic
-    VkDynamicState dyn_viewport_enable = VK_DYNAMIC_STATE_VIEWPORT;
-
-    VkPipelineDynamicStateCreateInfo dyn_info {};
-    dyn_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-    dyn_info.dynamicStateCount = 1;
-    dyn_info.pDynamicStates = &dyn_viewport_enable;
+    shader_groups[1].sType =
+        VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    shader_groups[1].pNext = nullptr;
+    shader_groups[1].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+    shader_groups[1].generalShader = VK_SHADER_UNUSED_KHR;
+    shader_groups[1].closestHitShader = 1;
+    shader_groups[1].anyHitShader = VK_SHADER_UNUSED_KHR;
+    shader_groups[1].intersectionShader = VK_SHADER_UNUSED_KHR;
+    shader_groups[1].pShaderGroupCaptureReplayHandle = nullptr;
 
     // Push constant
     VkPushConstantRange push_const {
@@ -740,82 +546,80 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
     REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &gfx_layout_info,
                                        nullptr, &gfx_layout));
 
-
-    VkGraphicsPipelineCreateInfo gfx_info;
-    gfx_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    gfx_info.pNext = nullptr;
-    gfx_info.flags = 0;
-    gfx_info.stageCount = 2;
-    gfx_info.pStages = shader_stages.data();
-    gfx_info.pVertexInputState = &vert_info;
-    gfx_info.pInputAssemblyState = &input_assembly_info;
-    gfx_info.pTessellationState = nullptr;
-    gfx_info.pViewportState = &viewport_info;
-    gfx_info.pRasterizationState = &raster_info;
-    gfx_info.pMultisampleState = &multisample_info;
-    gfx_info.pDepthStencilState = &depth_info;
-    gfx_info.pColorBlendState = &blend_info;
-    gfx_info.pDynamicState = &dyn_info;
-    gfx_info.layout = gfx_layout;
-    gfx_info.renderPass = render_state.renderPass;
-    gfx_info.subpass = 0;
-    gfx_info.basePipelineHandle = VK_NULL_HANDLE;
-    gfx_info.basePipelineIndex = -1;
+    VkRayTracingPipelineCreateInfoKHR rt_pipeline_info;
+    rt_pipeline_info.sType =
+        VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
+    rt_pipeline_info.pNext = nullptr;
+    rt_pipeline_info.flags = 0;
+    rt_pipeline_info.stageCount = shader_stages.size();
+    rt_pipeline_info.pStages = shader_stages.data();
+    rt_pipeline_info.groupCount = shader_groups.size();
+    rt_pipeline_info.pGroups = shader_groups.data();
+    rt_pipeline_info.maxRecursionDepth = 1;
+    rt_pipeline_info.libraries.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR;
+    rt_pipeline_info.libraries.pNext = nullptr;
+    rt_pipeline_info.libraries.libraryCount = 0;
+    rt_pipeline_info.libraries.pLibraries = nullptr;
+    rt_pipeline_info.pLibraryInterface = nullptr;;
+    rt_pipeline_info.layout = gfx_layout;
+    rt_pipeline_info.basePipelineHandle = 0;
+    rt_pipeline_info.basePipelineIndex = 0;
 
     VkPipeline gfx_pipeline;
-    REQ_VK(dev.dt.createGraphicsPipelines(dev.hdl, pipeline_cache, 1,
-                                          &gfx_info, nullptr,
-                                          &gfx_pipeline));
+    REQ_VK(dev.dt.createRayTracingPipelinesKHR(dev.hdl, VK_NULL_HANDLE,
+                                               1, &rt_pipeline_info,
+                                               nullptr, &gfx_pipeline));
 
-    // Compute shaders for culling
-    array cull_layouts { render_state.meshCullDescriptorLayout,
-                         render_state.meshCullSceneDescriptorLayout };
+    // FIXME device local shader binding table?
+    const VkDeviceSize sbt_size =
+        dev.rtShaderGroupBaseAlignment * shader_groups.size();
 
+    HostBuffer shader_binding_table = alloc.makeHostBuffer(sbt_size);
 
-    VkPushConstantRange cull_const {
-        VK_SHADER_STAGE_COMPUTE_BIT,
+    DynArray<uint8_t> sbt_scratch(sbt_size);
+    REQ_VK(dev.dt.getRayTracingShaderGroupHandlesKHR(dev.hdl, gfx_pipeline, 0,
+                                                     shader_groups.size(),
+                                                     sbt_size,
+                                                     sbt_scratch.data()));
+
+    uint8_t *sbt_ptr = (uint8_t *)shader_binding_table.ptr;
+    for (uint32_t i = 0; i < shader_groups.size(); i++) {
+        memcpy(sbt_ptr, sbt_scratch.data() + i * dev.rtShaderGroupHandleSize,
+               dev.rtShaderGroupHandleSize);
+
+        sbt_ptr += dev.rtShaderGroupBaseAlignment;
+    }
+
+    shader_binding_table.flush(dev);
+
+    VkStridedBufferRegionKHR raygen_entry {
+        shader_binding_table.buffer,
         0,
-        sizeof(CullPushConstant)
+        dev.rtShaderGroupBaseAlignment,
+        sbt_size,
     };
 
-    VkPipelineLayoutCreateInfo mesh_cull_layout_info;
-    mesh_cull_layout_info.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    mesh_cull_layout_info.pNext = nullptr;
-    mesh_cull_layout_info.flags = 0;
-    mesh_cull_layout_info.setLayoutCount = cull_layouts.size();
-    mesh_cull_layout_info.pSetLayouts = cull_layouts.data();
-    mesh_cull_layout_info.pushConstantRangeCount = 1;
-    mesh_cull_layout_info.pPushConstantRanges = &cull_const;
+    VkStridedBufferRegionKHR hit_entry {
+        shader_binding_table.buffer,
+        dev.rtShaderGroupBaseAlignment,
+        dev.rtShaderGroupBaseAlignment,
+        sbt_size,
+    };
 
-    VkPipelineLayout mesh_cull_layout;
-    REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &mesh_cull_layout_info,
-                                       nullptr, &mesh_cull_layout));
-  
-    array<VkComputePipelineCreateInfo, 1> compute_infos;
-    VkComputePipelineCreateInfo &mesh_cull_info = compute_infos[0];
-    mesh_cull_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-    mesh_cull_info.pNext = nullptr;
-    mesh_cull_info.flags = 0;
-    mesh_cull_info.stage = shader_stages[2];
-    mesh_cull_info.layout = mesh_cull_layout;
-    mesh_cull_info.basePipelineHandle = VK_NULL_HANDLE;
-    mesh_cull_info.basePipelineIndex = -1;
-
-    array<VkPipeline, compute_infos.size()> compute_pipelines;
-    REQ_VK(dev.dt.createComputePipelines(dev.hdl, pipeline_cache, 
-                                         compute_pipelines.size(),
-                                         compute_infos.data(), 
-                                         nullptr,
-                                         compute_pipelines.data()));
+    VkStridedBufferRegionKHR miss_entry {};
+    VkStridedBufferRegionKHR callable_entry {};
 
     return PipelineState {
         shader_modules,
         pipeline_cache,
         gfx_layout,
         gfx_pipeline,
-        mesh_cull_layout,
-        compute_pipelines[0]
+        move(shader_binding_table),
+        raygen_entry,
+        hit_entry,
+        miss_entry,
+        callable_entry,
     };
 }
 
@@ -830,20 +634,20 @@ static glm::u32vec2 computeFBPosition(uint32_t batch_idx,
 
 static PerFrameState makeFrameState(const DeviceState &dev,
                                     const FramebufferConfig &fb_cfg,
+                                    const FramebufferState &fb,
                                     const ParamBufferConfig &param_config,
                                     const HostBuffer &param_buffer,
                                     const LocalBuffer &indirect_buffer,
                                     VkCommandPool gfx_pool,
                                     VkDescriptorPool frame_set_pool,
                                     VkDescriptorSetLayout frame_set_layout,
-                                    VkDescriptorPool mesh_cull_set_pool,
-                                    VkDescriptorSetLayout mesh_cull_set_layout,
                                     bool cpu_sync,
                                     uint32_t batch_size,
                                     uint32_t frame_idx,
                                     uint32_t num_frames_per_stream,
                                     uint32_t stream_idx)
 {
+    (void)indirect_buffer;
     VkCommandBuffer render_command = makeCmdBuffer(dev, gfx_pool);
     VkCommandBuffer copy_command = makeCmdBuffer(dev, gfx_pool);
 
@@ -871,7 +675,7 @@ static PerFrameState makeFrameState(const DeviceState &dev,
     VkDescriptorSet frame_set = makeDescriptorSet(dev, frame_set_pool,
                                                   frame_set_layout);
     vector<VkWriteDescriptorSet> desc_set_updates;
-    desc_set_updates.reserve(2 + 5); // Frame set + cull set
+    desc_set_updates.reserve(2); // Frame set
 
     const size_t num_vertex_inputs = use_materials ? 3 : 2;
 
@@ -913,6 +717,18 @@ static PerFrameState makeFrameState(const DeviceState &dev,
     binding_update.pImageInfo = nullptr;
     binding_update.pBufferInfo = &view_buffer_info;
     binding_update.pTexelBufferView = nullptr;
+    desc_set_updates.push_back(binding_update);
+                                             
+    VkDescriptorImageInfo storage_image_info = {
+        VK_NULL_HANDLE,                      
+        fb.attachmentViews[0],
+        VK_IMAGE_LAYOUT_GENERAL,
+    };
+
+    binding_update.dstBinding = 1;
+    binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    binding_update.pImageInfo = &storage_image_info;
+    binding_update.pBufferInfo = nullptr;
     desc_set_updates.push_back(binding_update);
 
     uint32_t *material_ptr = nullptr;
@@ -961,55 +777,6 @@ static PerFrameState makeFrameState(const DeviceState &dev,
     VkDeviceSize draw_indirect_offset = 
         base_indirect_offset + param_config.drawIndirectOffset;
 
-    VkDescriptorSet cull_set = makeDescriptorSet(dev, mesh_cull_set_pool,
-                                                 mesh_cull_set_layout);
-
-    VkDescriptorBufferInfo transform_info {
-        param_buffer.buffer,
-        base_offset,
-        param_config.totalTransformBytes
-    };
-    
-    binding_update.dstSet = cull_set;
-    binding_update.dstBinding = 0;
-    binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    binding_update.pBufferInfo = &transform_info;
-    desc_set_updates.push_back(binding_update);
-
-    binding_update.dstBinding = 1;
-    binding_update.pBufferInfo = &view_buffer_info;
-    desc_set_updates.push_back(binding_update);
-
-    VkDescriptorBufferInfo indirect_input_buffer_info {
-        param_buffer.buffer,
-        param_config.cullInputOffset,
-        param_config.totalCullInputBytes
-    };
-
-    binding_update.dstBinding = 2;
-    binding_update.pBufferInfo = &indirect_input_buffer_info;
-    desc_set_updates.push_back(binding_update);
-
-    VkDescriptorBufferInfo indirect_output_buffer_info {
-        indirect_buffer.buffer,
-        draw_indirect_offset,
-        param_config.totalDrawIndirectBytes
-    };
-
-    binding_update.dstBinding = 3;
-    binding_update.pBufferInfo = &indirect_output_buffer_info;
-    desc_set_updates.push_back(binding_update);
-
-    VkDescriptorBufferInfo indirect_count_buffer_info {
-        indirect_buffer.buffer,
-        count_indirect_offset,
-        param_config.totalCountIndirectBytes
-    };
-
-    binding_update.dstBinding = 4;
-    binding_update.pBufferInfo = &indirect_count_buffer_info;
-    desc_set_updates.push_back(binding_update);
-
     dev.dt.updateDescriptorSets(dev.hdl,
             static_cast<uint32_t>(desc_set_updates.size()),
             desc_set_updates.data(), 0, nullptr);
@@ -1026,7 +793,6 @@ static PerFrameState makeFrameState(const DeviceState &dev,
         move(batch_fb_offsets),
         color_buffer_offset,
         depth_buffer_offset,
-        cull_set,
         frame_set,
         move(vertex_buffers),
         move(vertex_offsets),
@@ -1051,9 +817,9 @@ static void recordFBToLinearCopy(const DeviceState &dev,
         fb_barriers.emplace_back(VkImageMemoryBarrier {
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             nullptr,
-            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_ACCESS_SHADER_WRITE_BIT,
             VK_ACCESS_TRANSFER_READ_BIT,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_IMAGE_LAYOUT_GENERAL,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             VK_QUEUE_FAMILY_IGNORED,
             VK_QUEUE_FAMILY_IGNORED,
@@ -1069,9 +835,9 @@ static void recordFBToLinearCopy(const DeviceState &dev,
         fb_barriers.emplace_back(VkImageMemoryBarrier {
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             nullptr,
-            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_ACCESS_SHADER_WRITE_BIT,
             VK_ACCESS_TRANSFER_READ_BIT,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_IMAGE_LAYOUT_GENERAL,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             VK_QUEUE_FAMILY_IGNORED,
             VK_QUEUE_FAMILY_IGNORED,
@@ -1172,7 +938,6 @@ CommandStreamState::CommandStreamState(
       alloc(alc),
       fb_cfg_(fb_cfg),
       fb_(framebuffer),
-      render_pass_(render_state.renderPass),
       per_render_buffer_(alloc.makeHostBuffer(
           render_state.paramPositions.totalParamBytes *
               num_frames_inflight)),
@@ -1198,14 +963,13 @@ CommandStreamState::CommandStreamState(
          frame_idx++) {
         frame_states_.emplace_back(makeFrameState(dev,
                 fb_cfg,
+                fb_,
                 render_state.paramPositions,
                 per_render_buffer_,
                 indirect_draw_buffer_,
                 gfxPool,
                 render_state.frameDescriptorPool,
                 render_state.frameDescriptorLayout,
-                render_state.meshCullDescriptorPool,
-                render_state.meshCullDescriptorLayout,
                 cpu_sync, batch_size,
                 frame_idx, num_frames_inflight, stream_idx));
 
@@ -1264,8 +1028,8 @@ VulkanState::VulkanState(const RenderConfig &cfg,
               dev, cfg.batchSize, cfg.numStreams,
               features.options, alloc)),
       pipeline(PipelineImpl<PipelineType>::makePipeline(
-              dev, fbCfg, renderState)),
-      fb(makeFramebuffer(dev, alloc, fbCfg, renderState.renderPass)),
+              dev, fbCfg, renderState, alloc)),
+      fb(makeFramebuffer(dev, alloc, fbCfg)),
       globalTransform(cfg.coordinateTransform),
       loader_impl_(
               LoaderImpl::create<typename PipelineType::Vertex,
@@ -1287,8 +1051,8 @@ LoaderState VulkanState::makeLoader()
     return LoaderState(dev, loader_impl_,
                        renderState.sceneDescriptorLayout,
                        renderState.makeScenePool,
-                       renderState.meshCullSceneDescriptorLayout,
-                       renderState.makeMeshCullScenePool,
+                       VK_NULL_HANDLE,
+                       nullptr,
                        alloc, queueMgr,
                        globalTransform);
 }

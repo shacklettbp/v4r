@@ -16,7 +16,8 @@ namespace BufferFlags {
     static constexpr VkBufferUsageFlags shaderUsage =
         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+        VK_BUFFER_USAGE_RAY_TRACING_BIT_KHR;
 
     static constexpr VkBufferUsageFlags hostGenericUsage =
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | shaderUsage;
@@ -35,7 +36,8 @@ namespace BufferFlags {
         VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
 
     static constexpr VkBufferUsageFlags localGenericUsage =
-        geometryUsage | shaderUsage;
+        geometryUsage | shaderUsage |
+        VK_BUFFER_USAGE_RAY_TRACING_BIT_KHR;
 
     static constexpr VkBufferUsageFlags dedicatedUsage =
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
@@ -61,12 +63,12 @@ namespace ImageFlags {
         VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
 
     static constexpr VkImageUsageFlags colorAttachmentUsage = 
-        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+        //VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
         VK_IMAGE_USAGE_STORAGE_BIT |
         VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
     static constexpr VkFormatFeatureFlags colorAttachmentReqs =
-        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
+        //VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
         VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
         VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
 

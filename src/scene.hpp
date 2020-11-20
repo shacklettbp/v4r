@@ -111,8 +111,7 @@ struct Scene {
     const DeviceState &dev;
     std::vector<LocalImage> textures;
     std::vector<VkImageView> texture_views;
-    DescriptorSet materialSet;
-    DescriptorSet cullSet;
+    DescriptorSet sceneSet;
     LocalBuffer data;
     VkDeviceSize indexOffset;
     std::vector<MeshInfo> meshMetadata;
