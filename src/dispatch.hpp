@@ -1,7 +1,9 @@
 #ifndef DISPATCH_HPP_INCLUDED
 #define DISPATCH_HPP_INCLUDED
 
+#define VK_ENABLE_BETA_EXTENSIONS
 #include <vulkan/vulkan.h>
+#undef VK_ENABLE_BETA_EXTENSIONS
 
 namespace v4r {
 

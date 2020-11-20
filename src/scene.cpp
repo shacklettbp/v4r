@@ -1,4 +1,5 @@
 #include "scene.hpp"
+#include <vulkan/vulkan_core.h>
 #include "loader_definitions.inl"
 
 #include "asset_load.hpp"
@@ -16,6 +17,7 @@
 #include <glm/gtx/string_cast.hpp>
 
 #include <cassert>
+#include <cstring>
 #include <iostream>
 #include <unordered_map>
 
@@ -452,7 +454,8 @@ static SceneLoadInfo loadPreprocessedScene(string_view scene_path_name,
                               move(mesh_infos),
                           },
                           move(materials),
-                          EnvironmentInit(move(instances), {}, hdr.numMeshes)};
+                          EnvironmentInit(move(instances), {}, hdr.numMeshes),
+                          sizeof(VertexType)};
 }
 
 template <typename VertexType, typename MaterialParamsType>
@@ -571,6 +574,7 @@ shared_ptr<Scene> LoaderState::loadScene(string_view scene_path)
 
 shared_ptr<Scene> LoaderState::makeScene(const SceneDescription &desc)
 {
+#if 0
     auto [staged_params, material_metadata] =
         stageMaterials(desc.getMaterials());
 
@@ -583,11 +587,25 @@ shared_ptr<Scene> LoaderState::makeScene(const SceneDescription &desc)
         EnvironmentInit(desc.getDefaultInstances(), desc.getDefaultLights(),
                         staged_scene.hdr.numMeshes),
     });
+#endif
+
+    (void)desc;
+    return nullptr;
+}
+
+static VkDeviceAddress getBufferDeviceAddress(const DeviceState &dev,
+                                              VkBuffer hdl)
+{
+    VkBufferDeviceAddressInfo addr_info;
+    addr_info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    addr_info.pNext = nullptr;
+    addr_info.buffer = hdl;
+    return dev.dt.getBufferDeviceAddressKHR(dev.hdl, &addr_info);
 }
 
 shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 {
-    auto &[staged, material_metadata, env_init] = load_info;
+    auto &[staged, material_metadata, env_init, vertex_size] = load_info;
 
     vector<shared_ptr<Texture>> cpu_textures;
     cpu_textures.reserve(material_metadata.textures.size());
@@ -646,6 +664,196 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     // Copy all geometry into single buffer
 
     LocalBuffer data = alloc.makeLocalBuffer(staged.hdr.totalBytes);
+
+    // FIXME more than one mesh
+    VkAccelerationStructureCreateGeometryTypeInfoKHR blas_geo_info;
+    blas_geo_info.sType =
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_GEOMETRY_TYPE_INFO_KHR;
+    blas_geo_info.pNext = nullptr;
+    blas_geo_info.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    blas_geo_info.maxPrimitiveCount = staged.meshMetadata[0].numIndices / 3;
+    blas_geo_info.indexType = VK_INDEX_TYPE_UINT32;
+    blas_geo_info.maxVertexCount = staged.meshMetadata[0].numVertices;
+    blas_geo_info.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    blas_geo_info.allowsTransforms = false;
+
+    VkAccelerationStructureCreateInfoKHR blas_info;
+    blas_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    blas_info.pNext = nullptr;
+    blas_info.flags =
+        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    blas_info.maxGeometryCount = 1;
+    blas_info.pGeometryInfos = &blas_geo_info;
+
+    VkAccelerationStructureKHR blas;
+    REQ_VK(dev.dt.createAccelerationStructureKHR(dev.hdl, &blas_info, nullptr,
+                                                 &blas));
+
+    VkDeviceMemory blas_memory = alloc.allocateAccelerationStructureMemory(blas);
+
+    VkBindAccelerationStructureMemoryInfoKHR as_bind_info;
+    as_bind_info.sType =
+        VK_STRUCTURE_TYPE_BIND_ACCELERATION_STRUCTURE_MEMORY_INFO_KHR;
+    as_bind_info.pNext = nullptr;
+    as_bind_info.accelerationStructure = blas;
+    as_bind_info.memory = blas_memory;
+    REQ_VK(dev.dt.bindAccelerationStructureMemoryKHR(dev.hdl, 1, &as_bind_info));
+
+    VkDeviceOrHostAddressConstKHR vertex_dev_addr;
+    vertex_dev_addr.deviceAddress = getBufferDeviceAddress(dev, data.buffer);
+
+    VkDeviceOrHostAddressConstKHR index_dev_addr;
+    index_dev_addr.deviceAddress =
+        vertex_dev_addr.deviceAddress + staged.meshMetadata[0].indexOffset;
+
+    VkAccelerationStructureGeometryKHR blas_geo;
+    blas_geo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    blas_geo.pNext = nullptr;
+    blas_geo.geometryType = blas_geo_info.geometryType;
+    blas_geo.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+
+    VkAccelerationStructureGeometryTrianglesDataKHR &blas_tri_data =
+        blas_geo.geometry.triangles;
+
+    blas_tri_data.sType = 
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    blas_tri_data.pNext = nullptr;
+    blas_tri_data.vertexFormat = blas_geo_info.vertexFormat;
+    blas_tri_data.vertexData = vertex_dev_addr;
+    blas_tri_data.vertexStride = vertex_size;
+    blas_tri_data.indexType = blas_geo_info.indexType;
+    blas_tri_data.indexData = index_dev_addr;
+    blas_tri_data.transformData.hostAddress = nullptr;
+
+    LocalBuffer blas_scratch = alloc.makeAccelerationStructureScratchBuffer(blas);
+    VkDeviceAddress blas_scratch_dev_addr =
+        getBufferDeviceAddress(dev, blas_scratch.buffer);
+
+    VkAccelerationStructureGeometryKHR *blas_geo_ptr = &blas_geo;
+
+    VkAccelerationStructureBuildGeometryInfoKHR blas_build_info;
+    blas_build_info.sType =
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    blas_build_info.pNext = nullptr;
+    blas_build_info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    blas_build_info.update = VK_FALSE;
+    blas_build_info.srcAccelerationStructure = VK_NULL_HANDLE;
+    blas_build_info.dstAccelerationStructure = blas;
+    blas_build_info.geometryArrayOfPointers = VK_FALSE;
+    blas_build_info.geometryCount = 1;
+    blas_build_info.ppGeometries = &blas_geo_ptr;
+    blas_build_info.scratchData.deviceAddress = blas_scratch_dev_addr;
+
+    VkAccelerationStructureBuildOffsetInfoKHR blas_offset;
+    blas_offset.primitiveOffset = 0;
+    blas_offset.primitiveCount = blas_geo_info.maxPrimitiveCount;
+    blas_offset.firstVertex = 0;
+    blas_offset.transformOffset = 0;
+
+    auto blas_offset_ptr = &blas_offset;
+
+    VkAccelerationStructureDeviceAddressInfoKHR blas_addr_info;
+    blas_addr_info.sType =
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+    blas_addr_info.pNext = nullptr;
+    blas_addr_info.accelerationStructure = blas;
+
+
+    AccelerationStructure blas_data {
+        blas,
+        dev.dt.getAccelerationStructureDeviceAddressKHR(dev.hdl, &blas_addr_info),
+        blas_memory,
+    };
+
+    VkAccelerationStructureCreateGeometryTypeInfoKHR tlas_geo_info;
+    tlas_geo_info.sType =
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_GEOMETRY_TYPE_INFO_KHR;
+    tlas_geo_info.pNext = nullptr;
+    tlas_geo_info.maxPrimitiveCount = 1;
+    tlas_geo_info.allowsTransforms = VK_FALSE;
+
+    VkAccelerationStructureCreateInfoKHR tlas_info;
+    tlas_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
+    tlas_info.pNext = nullptr;
+    tlas_info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    tlas_info.maxGeometryCount = 1;
+    tlas_info.pGeometryInfos = &tlas_geo_info;
+
+    VkAccelerationStructureKHR tlas;
+    REQ_VK(dev.dt.createAccelerationStructureKHR(dev.hdl, &tlas_info,
+                                                 nullptr, &tlas));
+
+    VkDeviceMemory tlas_memory = alloc.allocateAccelerationStructureMemory(tlas);
+
+    VkBindAccelerationStructureMemoryInfoKHR tlas_bind_info;
+    tlas_bind_info.sType =
+        VK_STRUCTURE_TYPE_BIND_ACCELERATION_STRUCTURE_MEMORY_INFO_KHR;
+    tlas_bind_info.accelerationStructure = tlas;
+    tlas_bind_info.memory = tlas_memory;
+    REQ_VK(dev.dt.bindAccelerationStructureMemoryKHR(dev.hdl, 1, &tlas_bind_info));
+
+    VkTransformMatrixKHR tlas_txfm {{
+        {1.f, 0.f, 0.f, 0.f},
+        {0.f, 1.f, 0.f, 0.f},
+        {0.f, 0.f, 1.f, 0.f},
+    }};
+
+    VkAccelerationStructureInstanceKHR tlas_instance;
+    tlas_instance.transform = tlas_txfm;
+    tlas_instance.instanceCustomIndex = 0;
+    tlas_instance.mask = 0xFF;
+    tlas_instance.instanceShaderBindingTableRecordOffset = 0;
+    tlas_instance.flags = 0;
+    tlas_instance.accelerationStructureReference = blas_data.devAddr;
+
+    HostBuffer inst_buffer = alloc.makeHostBuffer(sizeof(tlas_instance));
+    memcpy(inst_buffer.ptr, &tlas_instance, sizeof(tlas_instance));
+
+    VkDeviceOrHostAddressConstKHR inst_buffer_addr;
+    inst_buffer_addr.deviceAddress =
+        getBufferDeviceAddress(dev, inst_buffer.buffer);
+
+    VkAccelerationStructureGeometryKHR tlas_geo;
+    tlas_geo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
+    tlas_geo.pNext = nullptr;
+    tlas_geo.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
+    tlas_geo.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+
+    VkAccelerationStructureGeometryInstancesDataKHR &tlas_geo_inst =
+        tlas_geo.geometry.instances;
+
+    tlas_geo_inst.sType = 
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR;
+    tlas_geo_inst.pNext = nullptr;
+    tlas_geo_inst.arrayOfPointers = false;
+    tlas_geo_inst.data = inst_buffer_addr;
+
+    auto tlas_geo_ptr = &tlas_geo;
+
+    LocalBuffer tlas_scratch = alloc.makeAccelerationStructureScratchBuffer(tlas);
+    VkDeviceAddress tlas_scratch_dev_addr =
+        getBufferDeviceAddress(dev, tlas_scratch.buffer);
+
+    VkAccelerationStructureBuildGeometryInfoKHR tlas_build_info;
+    tlas_build_info.sType =
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    tlas_build_info.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    tlas_build_info.flags =
+        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    tlas_build_info.update = VK_FALSE;
+    tlas_build_info.srcAccelerationStructure = VK_NULL_HANDLE;
+    tlas_build_info.dstAccelerationStructure = tlas;
+    tlas_build_info.geometryArrayOfPointers = VK_FALSE;
+    tlas_build_info.geometryCount = 1;
+    tlas_build_info.ppGeometries = &tlas_geo_ptr;
+    tlas_build_info.scratchData.deviceAddress = tlas_scratch_dev_addr;
+
+    VkAccelerationStructureDeviceAddressInfoKHR tlas_addr_info;
+    blas_addr_info.sType =
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
+    blas_addr_info.pNext = nullptr;
+    blas_addr_info.accelerationStructure = tlas;
+
 
     // Start recording for transfer queue
     VkCommandBufferBeginInfo begin_info {};
@@ -798,12 +1006,15 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     // dependent stages
     geometry_barrier.srcAccessMask = 0;
     geometry_barrier.dstAccessMask =
-        VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
+        VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT |
+        VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
 
     dev.dt.cmdPipelineBarrier(gfxCopyCommand,
-                              VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                              VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, 0, 0,
-                              nullptr, 1, &geometry_barrier, 0, nullptr);
+        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_VERTEX_INPUT_BIT |
+        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+        0, 0,
+        nullptr, 1, &geometry_barrier, 0, nullptr);
 
     if (num_textures > 0) {
         for (VkImageMemoryBarrier &barrier : texture_barriers) {
@@ -821,6 +1032,37 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr,
             texture_barriers.size(), texture_barriers.data());
     }
+
+    dev.dt.cmdBuildAccelerationStructureKHR(gfxCopyCommand, 1,
+                                            &blas_build_info,
+                                            &blas_offset_ptr);
+
+    VkMemoryBarrier as_barrier;
+    as_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    as_barrier.pNext = nullptr;
+    as_barrier.srcAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR;
+    as_barrier.dstAccessMask = VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+
+    // Is this barrier between BLAS and TLAS actually necessary?
+    dev.dt.cmdPipelineBarrier(gfxCopyCommand,
+        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+        0,
+        1, &as_barrier,
+        0, nullptr,
+        0, nullptr);
+
+    dev.dt.cmdBuildAccelerationStructureKHR(gfxCopyCommand, 1,
+                                            &tlas_build_info,
+                                            &blas_offset_ptr);
+
+    dev.dt.cmdPipelineBarrier(gfxCopyCommand,
+        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+        VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+        0,
+        1, &as_barrier,
+        0, nullptr,
+        0, nullptr);
 
     REQ_VK(dev.dt.endCommandBuffer(gfxCopyCommand));
 
@@ -969,6 +1211,13 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         staged.hdr.indexOffset,
         move(staged.meshMetadata),
         staged.hdr.numMeshes,
+        AccelerationStructure {
+            tlas,
+            dev.dt.getAccelerationStructureDeviceAddressKHR(dev.hdl,
+                                                            &tlas_addr_info),
+            tlas_memory,
+        },
+        { blas_data },
         move(env_init),
     });
 }
@@ -977,6 +1226,19 @@ Scene::~Scene()
 {
     for (VkImageView v : texture_views) {
         dev.dt.destroyImageView(dev.hdl, v, nullptr);
+    }
+
+    dev.dt.destroyAccelerationStructureKHR(dev.hdl, tlas.accelerationStructure,
+                                           nullptr);
+
+    dev.dt.freeMemory(dev.hdl, tlas.memory, nullptr);
+
+    for (auto &blas : blases) {
+        dev.dt.destroyAccelerationStructureKHR(dev.hdl,
+                                               blas.accelerationStructure,
+                                               nullptr);
+
+        dev.dt.freeMemory(dev.hdl, blas.memory, nullptr);
     }
 }
 

@@ -70,6 +70,17 @@ device:
 - vkCmdSetViewport
 - vkGetMemoryFdKHR
 - vkGetSemaphoreFdKHR
+- vkGetBufferDeviceAddressKHR
+- vkBindAccelerationStructureMemoryKHR
+- vkCreateAccelerationStructureKHR
+- vkDestroyAccelerationStructureKHR
+- vkGetAccelerationStructureMemoryRequirementsKHR
+- vkCmdBuildAccelerationStructureKHR
+- vkBuildAccelerationStructureKHR
+- vkGetAccelerationStructureDeviceAddressKHR
+- vkCmdTraceRaysKHR
+- vkGetRayTracingShaderGroupHandlesKHR
+- vkCreateRayTracingPipelinesKHR
 - need_present:
     - vkCreateSwapchainKHR
     - vkGetSwapchainImagesKHR

@@ -644,6 +644,8 @@ def generate_pipelines(cfg_file, interface_path, implementation_path, cmake):
                  loader_defn_file, render_inst_file, loader_inst_file,
                  entry_file, display_entry_file)
 
+    print("#include <cstring>\n", file=loader_defn_file)
+
     for f in all_files:
         print("namespace v4r {\n", file=f)
 

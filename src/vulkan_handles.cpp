@@ -5,6 +5,7 @@
 #include "vk_utils.hpp"
 
 #include <csignal>
+#include <cstring>
 #include <iostream>
 #include <optional>
 #include <vector>

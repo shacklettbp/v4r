@@ -5,10 +5,6 @@
 #include <optional>
 #include <vector>
 
-#define VK_ENABLE_BETA_EXTENSIONS
-#include <vulkan/vulkan.h>
-#undef VK_ENABLE_BETA_EXTENSIONS
-
 #include "dispatch.hpp"
 
 namespace v4r {

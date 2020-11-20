@@ -377,12 +377,20 @@ static ProcessedGeometry<VertexType> processGeometry(
         mesh_infos.push_back(MeshInfo {
             uint32_t(chunk_offset),
             uint32_t(mesh.chunks.size()),
+            uint32_t(mesh.vertices.size()),
+            uint32_t(mesh.indices.size()),
+            uint64_t(num_vertices) * sizeof(VertexType),
+            uint64_t(num_indices),
         });
 
         num_vertices += mesh.vertices.size();
         num_indices += mesh.indices.size();
         num_meshlets += mesh.meshlets.size();
         num_chunks += mesh.chunks.size();
+    }
+
+    for (auto &mesh_info : mesh_infos) {
+        mesh_info.indexOffset += num_vertices * sizeof(VertexType);
     }
 
     return ProcessedGeometry<VertexType> {

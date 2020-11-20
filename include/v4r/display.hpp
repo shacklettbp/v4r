@@ -3,7 +3,10 @@
 
 #include <v4r.hpp>
 
-#define GLFW_INCLUDE_VULKAN
+#define VK_ENABLE_BETA_EXTENSIONS
+#include <vulkan/vulkan.h>
+#undef VK_ENABLE_BETA_EXTENSIONS
+
 #include <GLFW/glfw3.h>
 
 namespace v4r {

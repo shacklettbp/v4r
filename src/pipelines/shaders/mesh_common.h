@@ -43,6 +43,10 @@ struct MeshChunk {
 struct MeshInfo {
     uint32_t chunkOffset;
     uint32_t numChunks;
+    uint32_t numVertices;
+    uint32_t numIndices;
+    uint64_t vertexOffset;
+    uint64_t indexOffset;
 };
 
 #endif

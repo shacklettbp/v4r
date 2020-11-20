@@ -98,6 +98,12 @@ struct EnvironmentInit {
     std::vector<uint32_t> lightReverseIDs;
 };
 
+struct AccelerationStructure {
+    VkAccelerationStructureKHR accelerationStructure;
+    VkDeviceAddress devAddr;
+    VkDeviceMemory memory;
+};
+
 struct Scene {
     Scene(const Scene &) = delete;
     Scene(Scene &&) = default;
@@ -111,6 +117,8 @@ struct Scene {
     VkDeviceSize indexOffset;
     std::vector<MeshInfo> meshMetadata;
     uint32_t numMeshes;
+    AccelerationStructure tlas;
+    std::vector<AccelerationStructure> blases;
     EnvironmentInit envDefaults;
 };
 
@@ -166,6 +174,7 @@ struct SceneLoadInfo {
     StagedScene scene;
     MaterialMetadata materialMetadata;
     EnvironmentInit envInit;
+    uint32_t vertexSize;
 };
 
 struct LoaderImpl {

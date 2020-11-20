@@ -1,7 +1,7 @@
 #ifndef VULKAN_CONFIG_HPP_INCLUDED
 #define VULKAN_CONFIG_HPP_INCLUDED
 
-#include <vulkan/vulkan.hpp>
+#include <cstdint>
 
 namespace v4r {
 

@@ -139,6 +139,12 @@ public:
     VkDeviceSize alignUniformBufferOffset(VkDeviceSize offset) const;
     VkDeviceSize alignStorageBufferOffset(VkDeviceSize offset) const;
 
+    VkDeviceMemory allocateAccelerationStructureMemory(
+        VkAccelerationStructureKHR as);
+
+    LocalBuffer makeAccelerationStructureScratchBuffer(
+        VkAccelerationStructureKHR as);
+
 private:
     HostBuffer makeHostBuffer(VkDeviceSize num_bytes,
                               VkBufferUsageFlags usage,

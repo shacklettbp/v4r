@@ -3,6 +3,7 @@
 
 #include <array>
 #include <atomic>
+#include <cstring>
 #include <deque>
 #include <memory>
 #include <optional>

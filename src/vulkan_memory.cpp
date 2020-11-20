@@ -15,7 +15,8 @@ namespace BufferFlags {
 
     static constexpr VkBufferUsageFlags shaderUsage =
         VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
-        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 
     static constexpr VkBufferUsageFlags hostGenericUsage =
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | shaderUsage;
@@ -23,7 +24,8 @@ namespace BufferFlags {
     static constexpr VkBufferUsageFlags geometryUsage =
         VK_BUFFER_USAGE_TRANSFER_DST_BIT |
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
 
     static constexpr VkBufferUsageFlags indirectUsage =
         VK_BUFFER_USAGE_TRANSFER_DST_BIT |
@@ -60,10 +62,12 @@ namespace ImageFlags {
 
     static constexpr VkImageUsageFlags colorAttachmentUsage = 
         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+        VK_IMAGE_USAGE_STORAGE_BIT |
         VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
     static constexpr VkFormatFeatureFlags colorAttachmentReqs =
         VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
+        VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
         VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
 
     static constexpr VkImageUsageFlags depthAttachmentUsage = 
@@ -263,9 +267,9 @@ pair<VkImage, VkMemoryRequirements> makeUnboundImage(const DeviceState &dev,
 }
 
 
-uint32_t findMemoryTypeIndex(uint32_t allowed_type_bits,
-        VkMemoryPropertyFlags required_props,
-        VkPhysicalDeviceMemoryProperties2 &mem_props)
+static uint32_t findMemoryTypeIndex(uint32_t allowed_type_bits,
+    VkMemoryPropertyFlags required_props,
+    VkPhysicalDeviceMemoryProperties2 &mem_props)
 {
     uint32_t num_mems = mem_props.memoryProperties.memoryTypeCount;
 
@@ -672,6 +676,61 @@ VkDeviceSize MemoryAllocator::alignStorageBufferOffset(
         VkDeviceSize offset) const
 {
     return alignOffset(offset, alignments_.storageBuffer);
+}
+
+VkDeviceMemory MemoryAllocator::allocateAccelerationStructureMemory(
+    VkAccelerationStructureKHR as)
+{
+    VkAccelerationStructureMemoryRequirementsInfoKHR as_mem_info;
+    as_mem_info.sType =
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_INFO_KHR;
+    as_mem_info.pNext = nullptr;
+    as_mem_info.type =
+        VK_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_TYPE_OBJECT_KHR;
+    as_mem_info.buildType = VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR;
+    as_mem_info.accelerationStructure = as;
+
+    VkMemoryRequirements2 as_mem_reqs;
+    as_mem_reqs.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+    as_mem_reqs.pNext = nullptr;
+    dev.dt.getAccelerationStructureMemoryRequirementsKHR(dev.hdl, &as_mem_info,
+                                                         &as_mem_reqs);
+
+    VkMemoryAllocateInfo alloc_info;
+    alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_info.allocationSize = as_mem_reqs.memoryRequirements.size;
+
+    // FIXME
+    alloc_info.memoryTypeIndex = type_indices_.localGeometryBuffer;
+
+    VkDeviceMemory as_memory;
+    REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc_info, nullptr, &as_memory));
+
+    return as_memory;
+}
+
+LocalBuffer MemoryAllocator::makeAccelerationStructureScratchBuffer(
+    VkAccelerationStructureKHR as)
+{
+    VkAccelerationStructureMemoryRequirementsInfoKHR as_mem_info;
+    as_mem_info.sType =
+        VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_INFO_KHR;
+    as_mem_info.pNext = nullptr;
+    as_mem_info.type =
+        VK_ACCELERATION_STRUCTURE_MEMORY_REQUIREMENTS_TYPE_BUILD_SCRATCH_KHR;
+    as_mem_info.buildType = VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR;
+    as_mem_info.accelerationStructure = as;
+
+    VkMemoryRequirements2 as_mem_reqs;
+    as_mem_reqs.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+    as_mem_reqs.pNext = nullptr;
+    dev.dt.getAccelerationStructureMemoryRequirementsKHR(dev.hdl, &as_mem_info,
+                                                         &as_mem_reqs);
+
+    return makeLocalBuffer(as_mem_reqs.memoryRequirements.size,
+                           VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+                           VK_BUFFER_USAGE_RAY_TRACING_BIT_KHR,
+                           type_indices_.localGeometryBuffer);
 }
 
 }
