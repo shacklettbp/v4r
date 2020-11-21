@@ -365,19 +365,14 @@ void assimpParseInstances(SceneDescription &desc,
                 glm::make_mat4(reinterpret_cast<const float *>(&raw_txfm.a1)));
 
         if (cur_node->mNumChildren == 0) {
-            if (cur_node->mNumMeshes != 1) {
-                std::cerr <<
-"Assimp loading: only leaf nodes with a single mesh are supported" <<
-                    std::endl;
-                fatalExit();
+            for (uint32_t i = 0; i < cur_node->mNumMeshes; i++) {
+                uint32_t mesh_idx = cur_node->mMeshes[i];
+
+                desc.addInstance(mesh_idx,
+                                 mesh_materials.size() > 0 ?
+                                     mesh_materials[mesh_idx] : 0,
+                                 cur_txfm);
             }
-
-            uint32_t mesh_idx = cur_node->mMeshes[0];
-
-            desc.addInstance(mesh_idx,
-                             mesh_materials.size() > 0 ?
-                                 mesh_materials[mesh_idx] : 0,
-                             cur_txfm);
         } else {
             for (unsigned child_idx = 0; child_idx < cur_node->mNumChildren;
                     child_idx++) {

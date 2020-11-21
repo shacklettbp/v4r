@@ -341,7 +341,7 @@ template <typename VertexType, typename MaterialParamsType>
 static SceneDescription parseScene(string_view scene_path,
                                    const glm::mat4 &coordinate_txfm)
 {
-    if (isGLTF(scene_path)) {
+    if (false && isGLTF(scene_path)) {
         return parseGLTFScene<VertexType, MaterialParamsType>(
                 scene_path, coordinate_txfm);
     } else {
