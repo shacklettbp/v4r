@@ -99,6 +99,12 @@ struct EnvironmentInit {
 };
 
 struct AccelerationStructure {
+    AccelerationStructure(VkAccelerationStructureKHR as,
+                          VkDeviceAddress dev_addr,
+                          VkDeviceMemory mem);
+    AccelerationStructure(const AccelerationStructure &o) = delete;
+    AccelerationStructure(AccelerationStructure &&o);
+
     VkAccelerationStructureKHR accelerationStructure;
     VkDeviceAddress devAddr;
     VkDeviceMemory memory;
@@ -117,7 +123,7 @@ struct Scene {
     std::vector<MeshInfo> meshMetadata;
     uint32_t numMeshes;
     AccelerationStructure tlas;
-    std::vector<AccelerationStructure> blases;
+    AccelerationStructure blas;
     EnvironmentInit envDefaults;
 };
 

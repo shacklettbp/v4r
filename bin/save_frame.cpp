@@ -14,7 +14,7 @@ int main(int argc, char *argv[]) {
 
     uint32_t batch_size = stoul(argv[2]);
 
-    using Pipeline = Unlit<RenderOutputs::Color | RenderOutputs::Depth,
+    using Pipeline = Unlit<RenderOutputs::Color,
                            DataSource::Vertex>;
 
     BatchRendererCUDA renderer({0, 1, 1, batch_size, 256, 256,
@@ -54,14 +54,10 @@ int main(int argc, char *argv[]) {
     rdoc.endFrame();
 
     uint8_t *base_color_ptr = cmd_stream.getColorDevicePtr();
-    float *base_depth_ptr = cmd_stream.getDepthDevicePtr();
 
     for (uint32_t batch_idx = 0; batch_idx < batch_size; batch_idx++) {
         saveFrame(("/tmp/out_color_" + to_string(batch_idx) + ".bmp").c_str(),
                   base_color_ptr + batch_idx * 256 * 256 * 4,
                   256, 256, 4);
-        saveFrame(("/tmp/out_depth_" + to_string(batch_idx) + ".bmp").c_str(),
-                  base_depth_ptr + batch_idx * 256 * 256,
-                  256, 256, 1);
     }
 }

@@ -707,7 +707,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 
     VkDeviceOrHostAddressConstKHR index_dev_addr;
     index_dev_addr.deviceAddress =
-        vertex_dev_addr.deviceAddress + staged.meshMetadata[0].indexOffset;
+        vertex_dev_addr.deviceAddress + staged.hdr.indexOffset;
 
     VkAccelerationStructureGeometryKHR blas_geo;
     blas_geo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -791,6 +791,14 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     REQ_VK(dev.dt.createAccelerationStructureKHR(dev.hdl, &tlas_info,
                                                  nullptr, &tlas));
 
+    VkAccelerationStructureBuildOffsetInfoKHR tlas_offset;
+    tlas_offset.primitiveOffset = 0;
+    tlas_offset.primitiveCount = tlas_geo_info.maxPrimitiveCount;
+    tlas_offset.firstVertex = 0;
+    tlas_offset.transformOffset = 0;
+
+    auto tlas_offset_ptr = &tlas_offset;
+
     VkDeviceMemory tlas_memory = alloc.allocateAccelerationStructureMemory(tlas);
 
     VkBindAccelerationStructureMemoryInfoKHR tlas_bind_info {};
@@ -858,10 +866,10 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     tlas_build_info.scratchData.deviceAddress = tlas_scratch_dev_addr;
 
     VkAccelerationStructureDeviceAddressInfoKHR tlas_addr_info;
-    blas_addr_info.sType =
+    tlas_addr_info.sType =
         VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
-    blas_addr_info.pNext = nullptr;
-    blas_addr_info.accelerationStructure = tlas;
+    tlas_addr_info.pNext = nullptr;
+    tlas_addr_info.accelerationStructure = tlas;
 
 
     // Start recording for transfer queue
@@ -1063,7 +1071,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 
     dev.dt.cmdBuildAccelerationStructureKHR(gfxCopyCommand, 1,
                                             &tlas_build_info,
-                                            &blas_offset_ptr);
+                                            &tlas_offset_ptr);
 
     dev.dt.cmdPipelineBarrier(gfxCopyCommand,
         VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
@@ -1151,9 +1159,11 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     desc_updates.push_back(desc_update);
 
     VkDescriptorBufferInfo index_buffer_info;
-    vertex_buffer_info.buffer = data.buffer;
-    vertex_buffer_info.offset = staged.hdr.indexOffset;
-    vertex_buffer_info.range = staged.meshMetadata[0].numIndices * sizeof(uint32_t);
+    index_buffer_info.buffer = data.buffer;
+    index_buffer_info.offset = staged.hdr.indexOffset;
+    index_buffer_info.range = staged.meshMetadata[0].numIndices * sizeof(uint32_t);
+
+    desc_update.dstBinding = 2;
     desc_update.pBufferInfo = &index_buffer_info;
     desc_updates.push_back(desc_update);
 
@@ -1169,15 +1179,31 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         staged.hdr.indexOffset,
         move(staged.meshMetadata),
         staged.hdr.numMeshes,
-        AccelerationStructure {
-            tlas,
+        AccelerationStructure(tlas,
             dev.dt.getAccelerationStructureDeviceAddressKHR(dev.hdl,
                                                             &tlas_addr_info),
-            tlas_memory,
-        },
-        { blas_data },
+            tlas_memory),
+        { move(blas_data) },
         move(env_init),
     });
+}
+
+AccelerationStructure::AccelerationStructure(VkAccelerationStructureKHR as,
+                          VkDeviceAddress dev_addr,
+                          VkDeviceMemory mem)
+    : accelerationStructure(as),
+      devAddr(dev_addr),
+      memory(mem)
+{}
+
+AccelerationStructure::AccelerationStructure(AccelerationStructure &&o)
+    : accelerationStructure(o.accelerationStructure),
+      devAddr(o.devAddr),
+      memory(o.memory)
+{
+    o.accelerationStructure = VK_NULL_HANDLE;
+    o.devAddr = VK_NULL_HANDLE;
+    o.memory = VK_NULL_HANDLE;
 }
 
 Scene::~Scene()
@@ -1186,12 +1212,14 @@ Scene::~Scene()
         dev.dt.destroyImageView(dev.hdl, v, nullptr);
     }
 
-    dev.dt.destroyAccelerationStructureKHR(dev.hdl, tlas.accelerationStructure,
-                                           nullptr);
+    if (tlas.accelerationStructure != VK_NULL_HANDLE) {
+        dev.dt.destroyAccelerationStructureKHR(dev.hdl, tlas.accelerationStructure,
+                                               nullptr);
 
-    dev.dt.freeMemory(dev.hdl, tlas.memory, nullptr);
+        dev.dt.freeMemory(dev.hdl, tlas.memory, nullptr);
+    }
 
-    for (auto &blas : blases) {
+    if (blas.accelerationStructure != VK_NULL_HANDLE) {
         dev.dt.destroyAccelerationStructureKHR(dev.hdl,
                                                blas.accelerationStructure,
                                                nullptr);

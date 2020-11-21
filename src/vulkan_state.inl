@@ -55,7 +55,7 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
                                 &render_const);
 
         dev.dt.cmdBindDescriptorSets(render_cmd,
-                                     VK_PIPELINE_BIND_POINT_COMPUTE,
+                                     VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
                                      pipeline.gfxLayout, 1,
                                      1, &scene.sceneSet.hdl,
                                      0, nullptr);

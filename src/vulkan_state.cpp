@@ -393,20 +393,6 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
 
         attachment_views.push_back(linear_depth_view);
     }
-
-    attachments.emplace_back(
-            alloc.makeDepthAttachment(fb_cfg.totalWidth, fb_cfg.totalHeight));
-
-    view_info.image = attachments.back().image;
-    view_info.format = alloc.getFormats().depthAttachment;
-    view_info_sr.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-
-    VkImageView depth_view;
-    REQ_VK(dev.dt.createImageView(dev.hdl, &view_info,
-                                  nullptr, &depth_view));
-
-    attachment_views.push_back(depth_view);
-
     auto [result_buffer, result_mem] =
         alloc.makeDedicatedBuffer(fb_cfg.totalLinearBytes);
 
@@ -855,7 +841,7 @@ static void recordFBToLinearCopy(const DeviceState &dev,
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     REQ_VK(dev.dt.beginCommandBuffer(copy_cmd, &begin_info));
     dev.dt.cmdPipelineBarrier(copy_cmd,
-                              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                              VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
                               VK_PIPELINE_STAGE_TRANSFER_BIT,
                               VK_DEPENDENCY_BY_REGION_BIT,
                               0, nullptr, 0, nullptr,
@@ -913,6 +899,21 @@ static void recordFBToLinearCopy(const DeviceState &dev,
         make_copy_cmd(state.depthBufferOffset, sizeof(float),
                       fb.attachments[fb.attachments.size() - 2].image);
     }
+
+    for (auto &barrier : fb_barriers) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    }
+
+    dev.dt.cmdPipelineBarrier(copy_cmd,
+                              VK_PIPELINE_STAGE_TRANSFER_BIT,
+                              VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                              VK_DEPENDENCY_BY_REGION_BIT,
+                              0, nullptr, 0, nullptr,
+                              static_cast<uint32_t>(fb_barriers.size()),
+                              fb_barriers.data());
 
     REQ_VK(dev.dt.endCommandBuffer(copy_cmd));
 }
@@ -975,6 +976,49 @@ CommandStreamState::CommandStreamState(
 
         recordFBToLinearCopy(dev, frame_states_.back(), fb_cfg_, fb_);
     }
+
+    VkCommandBuffer fb_init_command = frame_states_[0].commands[0];
+
+    VkCommandBufferBeginInfo begin_info {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    REQ_VK(dev.dt.beginCommandBuffer(fb_init_command, &begin_info));
+
+    VkImageMemoryBarrier storage_barrier {
+        VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        nullptr,
+        0,
+        VK_ACCESS_SHADER_WRITE_BIT,
+        VK_IMAGE_LAYOUT_UNDEFINED,
+        VK_IMAGE_LAYOUT_GENERAL,
+        VK_QUEUE_FAMILY_IGNORED,
+        VK_QUEUE_FAMILY_IGNORED,
+        fb_.attachments[0].image,
+        {
+            VK_IMAGE_ASPECT_COLOR_BIT,
+            0, 1, 0, 1
+        }
+    };
+
+    dev.dt.cmdPipelineBarrier(fb_init_command,
+                              VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                              VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                              0,
+                              0, nullptr, 0, nullptr,
+                              1, &storage_barrier);
+
+    REQ_VK(dev.dt.endCommandBuffer(fb_init_command));
+
+    VkSubmitInfo gfx_submit {
+        VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        nullptr,
+        0, nullptr, nullptr,
+        1, &fb_init_command,
+        0, nullptr
+    };
+
+    gfxQueue.submit(dev, 1, &gfx_submit, frame_states_[0].fence);
+    waitForFenceInfinitely(dev, frame_states_[0].fence);
+    resetFence(dev, frame_states_[0].fence);
 }
 
 uint32_t CommandStreamState::render(const vector<Environment> &envs)
