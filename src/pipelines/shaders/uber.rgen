@@ -36,7 +36,10 @@ void main()
 
     payload = vec3(0.f, 0.f, 0.f);
 
-    traceRayEXT(tlas, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, o.xyz, tmin, d.xyz, tmax, 0);
+    traceRayEXT(tlas, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, o.xyz,
+                tmin, d.xyz, tmax, 0);
 
-	imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(payload, 1.f));
+	imageStore(image, ivec2(gl_LaunchIDEXT.xy) + ivec2(render_const.xOffset,
+                                                       render_const.yOffset),
+               vec4(payload, 1.f));
 }
