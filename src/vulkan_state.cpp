@@ -459,9 +459,10 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
     REQ_VK(dev.dt.createPipelineCache(dev.hdl, &pcache_info,
                                       nullptr, &pipeline_cache));
 
-    const array<pair<const char *, VkShaderStageFlagBits>, 2> shader_cfg {{
+    const array<pair<const char *, VkShaderStageFlagBits>, 3> shader_cfg {{
         {"uber.rgen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR},
         {"uber.rchit.spv", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
+        {"uber.rmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR},
     }};
 
     constexpr size_t num_shaders = shader_cfg.size();
@@ -486,7 +487,7 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
         };
     }
 
-    array<VkRayTracingShaderGroupCreateInfoKHR, 2> shader_groups;
+    array<VkRayTracingShaderGroupCreateInfoKHR, 3> shader_groups;
 
     shader_groups[0].sType =
         VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
@@ -508,6 +509,17 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
     shader_groups[1].anyHitShader = VK_SHADER_UNUSED_KHR;
     shader_groups[1].intersectionShader = VK_SHADER_UNUSED_KHR;
     shader_groups[1].pShaderGroupCaptureReplayHandle = nullptr;
+
+    shader_groups[2].sType =
+        VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+    shader_groups[2].pNext = nullptr;
+    shader_groups[2].type =
+        VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+    shader_groups[2].generalShader = 2;
+    shader_groups[2].closestHitShader = VK_SHADER_UNUSED_KHR;
+    shader_groups[2].anyHitShader = VK_SHADER_UNUSED_KHR;
+    shader_groups[2].intersectionShader = VK_SHADER_UNUSED_KHR;
+    shader_groups[2].pShaderGroupCaptureReplayHandle = nullptr;
 
     // Push constant
     VkPushConstantRange push_const {
@@ -593,7 +605,13 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
         sbt_size,
     };
 
-    VkStridedBufferRegionKHR miss_entry {};
+    VkStridedBufferRegionKHR miss_entry {
+        shader_binding_table.buffer,
+        dev.rtShaderGroupBaseAlignment * 2,
+        dev.rtShaderGroupBaseAlignment,
+        sbt_size,
+    };
+
     VkStridedBufferRegionKHR callable_entry {};
 
     return PipelineState {

@@ -10,7 +10,9 @@ struct Vertex
     u8vec4 color;
 };
 
-layout(location = 0) rayPayloadInEXT vec3 hitPayload;
+layout(location = 0) rayPayloadInEXT vec3 payload;
+
+layout (set = 1, binding = 0) uniform accelerationStructureEXT tlas;
 
 layout(set = 1, binding = 1, scalar) buffer Vertices {
     Vertex vertices[];
@@ -31,7 +33,7 @@ void main()
     const vec3 barycentrics = vec3(1.f - hitAttrs.x - hitAttrs.y,
         hitAttrs.x, hitAttrs.y);
     
-    hitPayload = color0 * barycentrics.x +
+    payload = color0 * barycentrics.x +
         color1 * barycentrics.y +
         color2 * barycentrics.z;
 }

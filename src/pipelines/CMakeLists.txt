@@ -2,6 +2,7 @@ set(VERTEX_SHADER shaders/uber.vert)
 set(FRAGMENT_SHADER shaders/uber.frag)
 set(RAYGEN_SHADER shaders/uber.rgen)
 set(CLOSEST_HIT_SHADER shaders/uber.rchit)
+set(MISS_SHADER shaders/uber.rmiss)
 
 set(SHADER_DEPENDENCIES
     shaders/shader_common.h
@@ -18,6 +19,7 @@ set(VERTEX_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${VERTEX_SHADER}")
 set(FRAGMENT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${FRAGMENT_SHADER}")
 set(RAYGEN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${RAYGEN_SHADER}")
 set(CLOSEST_HIT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${CLOSEST_HIT_SHADER}")
+set(MISS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${MISS_SHADER}")
 
 set(IFACE_DIR "${CMAKE_CURRENT_BINARY_DIR}/interface")
 set(IMPL_DIR "${CMAKE_CURRENT_BINARY_DIR}/implementation")
@@ -68,5 +70,6 @@ ENDFOREACH()
 add_shader("meshcull.comp" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/meshcull.comp" "")
 add_shader("uber.rgen" "${RAYGEN_SRC}" "")
 add_shader("uber.rchit" "${CLOSEST_HIT_SRC}" "")
+add_shader("uber.rmiss" "${MISS_SRC}" "")
 
 add_custom_target(compile_shaders DEPENDS ${COMPILED_SHADERS})

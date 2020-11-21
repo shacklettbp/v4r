@@ -16,7 +16,7 @@ layout (set = 0, binding = 1, rgba8) uniform image2D image;
 
 layout (set = 1, binding = 0) uniform accelerationStructureEXT tlas;
 
-layout (location = 0) rayPayloadEXT vec3 hitPayload;
+layout (location = 0) rayPayloadEXT vec3 payload;
 
 void main()
 {
@@ -34,9 +34,9 @@ void main()
 	float tmin = 0.00001f;
 	float tmax = 1e10f;
 
-    hitPayload = vec3(0.f);
+    payload = vec3(0.f, 0.f, 0.f);
 
     traceRayEXT(tlas, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, o.xyz, tmin, d.xyz, tmax, 0);
 
-	imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(hitPayload, 1.f));
+	imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(payload, 1.f));
 }
