@@ -808,11 +808,10 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     tlas_bind_info.memory = tlas_memory;
     REQ_VK(dev.dt.bindAccelerationStructureMemoryKHR(dev.hdl, 1, &tlas_bind_info));
 
-    VkTransformMatrixKHR tlas_txfm {{
-        {1.f, 0.f, 0.f, 0.f},
-        {0.f, 1.f, 0.f, 0.f},
-        {0.f, 0.f, 1.f, 0.f},
-    }};
+    VkTransformMatrixKHR tlas_txfm;
+    memcpy(tlas_txfm.matrix,
+           glm::value_ptr(glm::transpose(env_init.transforms[0][0])),
+           sizeof(glm::mat4x3));
 
     VkAccelerationStructureInstanceKHR tlas_instance;
     tlas_instance.transform = tlas_txfm;
