@@ -12,11 +12,11 @@ struct Vertex
 
 layout(location = 0) rayPayloadInEXT vec3 hitPayload;
 
-layout(set = 0, binding = 1, scalar) buffer Vertices {
+layout(set = 1, binding = 1, scalar) buffer Vertices {
     Vertex vertices[];
 };
 
-layout(set = 0, binding = 2) buffer Indices {
+layout(set = 1, binding = 2) buffer Indices {
     uint indices[];
 };
 
@@ -24,7 +24,6 @@ hitAttributeEXT vec3 hitAttrs;
 
 void main()
 {
-
     vec3 color0 = uvec3(vertices[indices[3 * gl_PrimitiveID]].color).xyz / 255.f;
     vec3 color1 = uvec3(vertices[indices[3 * gl_PrimitiveID + 1]].color).xyz / 255.f;
     vec3 color2 = uvec3(vertices[indices[3 * gl_PrimitiveID + 2]].color).xyz / 255.f;

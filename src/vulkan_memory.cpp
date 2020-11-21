@@ -700,8 +700,8 @@ VkDeviceMemory MemoryAllocator::allocateAccelerationStructureMemory(
 
     VkMemoryAllocateInfo alloc_info;
     alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_info.pNext = nullptr;
     alloc_info.allocationSize = as_mem_reqs.memoryRequirements.size;
-
     // FIXME
     alloc_info.memoryTypeIndex = type_indices_.localGeometryBuffer;
 

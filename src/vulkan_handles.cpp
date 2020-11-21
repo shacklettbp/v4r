@@ -196,6 +196,7 @@ DeviceState InstanceState::makeDevice(
         VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
         VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
         VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+        VK_KHR_8BIT_STORAGE_EXTENSION_NAME,
     };
 
     bool need_present = present_check != nullptr;
@@ -315,10 +316,22 @@ DeviceState InstanceState::makeDevice(
     rt_features.rayTracing = true;
     rt_features.rayTracingIndirectTraceRays = true;
 
+    VkPhysicalDevice8BitStorageFeaturesKHR eightbit_features {};
+    eightbit_features.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES_KHR;
+    eightbit_features.pNext = &rt_features;
+    eightbit_features.storageBuffer8BitAccess = true;
+
+    VkPhysicalDeviceBufferDeviceAddressFeaturesEXT dev_addr_features {};
+    dev_addr_features.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_EXT;
+    dev_addr_features.pNext = &eightbit_features;
+    dev_addr_features.bufferDeviceAddress = true;
+
     VkPhysicalDeviceDescriptorIndexingFeatures desc_idx_features {};
     desc_idx_features.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
-    desc_idx_features.pNext = &rt_features;
+    desc_idx_features.pNext = &dev_addr_features;
     desc_idx_features.runtimeDescriptorArray = true;
     desc_idx_features.shaderStorageBufferArrayNonUniformIndexing = true;
     desc_idx_features.shaderSampledImageArrayNonUniformIndexing = true;

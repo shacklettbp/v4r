@@ -666,7 +666,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     LocalBuffer data = alloc.makeLocalBuffer(staged.hdr.totalBytes);
 
     // FIXME more than one mesh
-    VkAccelerationStructureCreateGeometryTypeInfoKHR blas_geo_info;
+    VkAccelerationStructureCreateGeometryTypeInfoKHR blas_geo_info {};
     blas_geo_info.sType =
         VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_GEOMETRY_TYPE_INFO_KHR;
     blas_geo_info.pNext = nullptr;
@@ -680,10 +680,13 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     VkAccelerationStructureCreateInfoKHR blas_info;
     blas_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
     blas_info.pNext = nullptr;
+    blas_info.compactedSize = 0;
+    blas_info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
     blas_info.flags =
         VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
     blas_info.maxGeometryCount = 1;
     blas_info.pGeometryInfos = &blas_geo_info;
+    blas_info.deviceAddress = 0;
 
     VkAccelerationStructureKHR blas;
     REQ_VK(dev.dt.createAccelerationStructureKHR(dev.hdl, &blas_info, nullptr,
@@ -691,13 +694,13 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 
     VkDeviceMemory blas_memory = alloc.allocateAccelerationStructureMemory(blas);
 
-    VkBindAccelerationStructureMemoryInfoKHR as_bind_info;
-    as_bind_info.sType =
+    VkBindAccelerationStructureMemoryInfoKHR blas_bind_info {};
+    blas_bind_info.sType =
         VK_STRUCTURE_TYPE_BIND_ACCELERATION_STRUCTURE_MEMORY_INFO_KHR;
-    as_bind_info.pNext = nullptr;
-    as_bind_info.accelerationStructure = blas;
-    as_bind_info.memory = blas_memory;
-    REQ_VK(dev.dt.bindAccelerationStructureMemoryKHR(dev.hdl, 1, &as_bind_info));
+    blas_bind_info.pNext = nullptr;
+    blas_bind_info.accelerationStructure = blas;
+    blas_bind_info.memory = blas_memory;
+    REQ_VK(dev.dt.bindAccelerationStructureMemoryKHR(dev.hdl, 1, &blas_bind_info));
 
     VkDeviceOrHostAddressConstKHR vertex_dev_addr;
     vertex_dev_addr.deviceAddress = getBufferDeviceAddress(dev, data.buffer);
@@ -735,6 +738,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     blas_build_info.sType =
         VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
     blas_build_info.pNext = nullptr;
+    blas_build_info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
     blas_build_info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
     blas_build_info.update = VK_FALSE;
     blas_build_info.srcAccelerationStructure = VK_NULL_HANDLE;
@@ -765,19 +769,23 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         blas_memory,
     };
 
-    VkAccelerationStructureCreateGeometryTypeInfoKHR tlas_geo_info;
+    VkAccelerationStructureCreateGeometryTypeInfoKHR tlas_geo_info {};
     tlas_geo_info.sType =
         VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_GEOMETRY_TYPE_INFO_KHR;
     tlas_geo_info.pNext = nullptr;
+    tlas_geo_info.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
     tlas_geo_info.maxPrimitiveCount = 1;
-    tlas_geo_info.allowsTransforms = VK_FALSE;
 
     VkAccelerationStructureCreateInfoKHR tlas_info;
     tlas_info.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
     tlas_info.pNext = nullptr;
-    tlas_info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+    tlas_info.compactedSize = 0;
+    tlas_info.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+    tlas_info.flags =
+        VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
     tlas_info.maxGeometryCount = 1;
     tlas_info.pGeometryInfos = &tlas_geo_info;
+    tlas_info.deviceAddress = 0;
 
     VkAccelerationStructureKHR tlas;
     REQ_VK(dev.dt.createAccelerationStructureKHR(dev.hdl, &tlas_info,
@@ -785,7 +793,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
 
     VkDeviceMemory tlas_memory = alloc.allocateAccelerationStructureMemory(tlas);
 
-    VkBindAccelerationStructureMemoryInfoKHR tlas_bind_info;
+    VkBindAccelerationStructureMemoryInfoKHR tlas_bind_info {};
     tlas_bind_info.sType =
         VK_STRUCTURE_TYPE_BIND_ACCELERATION_STRUCTURE_MEMORY_INFO_KHR;
     tlas_bind_info.accelerationStructure = tlas;
@@ -837,6 +845,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     VkAccelerationStructureBuildGeometryInfoKHR tlas_build_info;
     tlas_build_info.sType =
         VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
+    tlas_build_info.pNext = nullptr;
     tlas_build_info.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
     tlas_build_info.flags =
         VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;

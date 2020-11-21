@@ -473,9 +473,9 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
     REQ_VK(dev.dt.createPipelineCache(dev.hdl, &pcache_info,
                                       nullptr, &pipeline_cache));
 
-    const array<pair<const char *, VkShaderStageFlagBits>, 3> shader_cfg {{
-        {"uber.rgen", VK_SHADER_STAGE_RAYGEN_BIT_KHR},
-        {"uber.rchit", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
+    const array<pair<const char *, VkShaderStageFlagBits>, 2> shader_cfg {{
+        {"uber.rgen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+        {"uber.rchit.spv", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
     }};
 
     constexpr size_t num_shaders = shader_cfg.size();
@@ -515,7 +515,8 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
     shader_groups[1].sType =
         VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
     shader_groups[1].pNext = nullptr;
-    shader_groups[1].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+    shader_groups[1].type =
+        VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
     shader_groups[1].generalShader = VK_SHADER_UNUSED_KHR;
     shader_groups[1].closestHitShader = 1;
     shader_groups[1].anyHitShader = VK_SHADER_UNUSED_KHR;
@@ -524,8 +525,7 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
 
     // Push constant
     VkPushConstantRange push_const {
-        VK_SHADER_STAGE_VERTEX_BIT |
-            VK_SHADER_STAGE_FRAGMENT_BIT, // FIXME this isn't necessary for all pipelines
+        VK_SHADER_STAGE_RAYGEN_BIT_KHR,
         0,
         sizeof(RenderPushConstant)
     };
