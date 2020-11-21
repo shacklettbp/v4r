@@ -368,14 +368,16 @@ void assimpParseInstances(SceneDescription &desc,
             for (uint32_t i = 0; i < cur_node->mNumMeshes; i++) {
                 uint32_t mesh_idx = cur_node->mMeshes[i];
 
-                uint32_t material_idx = mesh_materials[mesh_idx];
-                if (material_idx > raw_scene->mNumMaterials) {
-                    material_idx = 0;
+                uint32_t material_idx = 0;
+                if (mesh_materials.size() > 0) {
+                    material_idx = mesh_materials[mesh_idx];
+                    if (material_idx > raw_scene->mNumMaterials) {
+                        material_idx = 0;
+                    }
                 }
 
                 desc.addInstance(mesh_idx,
-                                 mesh_materials.size() > 0 ?
-                                     material_idx : 0,
+                                 material_idx,
                                  cur_txfm);
             }
         } else {
