@@ -21,7 +21,7 @@ struct SceneData {
 };
 
 using DepthPipeline = Unlit<RenderOutputs::Depth, DataSource::None>;
-using RGBPipeline = Unlit<RenderOutputs::Color, DataSource::Texture>;
+using RGBPipeline = BlinnPhong<RenderOutputs::Color, DataSource::Uniform, DataSource::Uniform, DataSource::Uniform>;
 
 static SceneData parseSceneData(string_view gltf_path)
 {
@@ -361,21 +361,24 @@ static ProcessedGeometry<VertexType> processGeometry(
 
     vector<MeshInfo> mesh_infos;
     for (auto &mesh : processed_meshes) {
-        // Need to change all chunk offsets to be global
-        // to the whole scene
+        // Need to change all chunk offsets to be global to the whole scene
         for (auto &chunk : mesh.chunks) {
-            // Chunk vertex offset just equal to start of mesh
-            // offset
-            // FIXME: why not just reindex and get rid of vertexOffset
-            // entirely?
-            chunk.vertexOffset = num_vertices;
             chunk.indexOffset += num_indices;
             chunk.meshletOffset += num_meshlets;
         }
 
-        uint32_t chunk_offset = num_chunks;
+        // Rewrite indices to refer to the global vertex array
+        // (Note this only really matters for RT to allow gl_CustomIndexEXT
+        // to simply hold the base index of a mesh)
+        for (uint32_t &idx : mesh.indices) {
+            idx += num_vertices;
+        }
+
         mesh_infos.push_back(MeshInfo {
-            uint32_t(chunk_offset),
+            num_indices,
+            num_chunks,
+            uint32_t(mesh.indices.size() / 3),
+            uint32_t(mesh.vertices.size()),
             uint32_t(mesh.chunks.size()),
         });
 
@@ -397,9 +400,62 @@ static ProcessedGeometry<VertexType> processGeometry(
     };
 }
 
-// FIXME
-extern pair<vector<uint8_t>, MaterialMetadata> stageMaterials(
-        const vector<shared_ptr<Material>> &materials);
+// FIXME, needs to be rewritten with some way to maintain
+// texture names from loading phase
+static pair<vector<uint8_t>, MaterialMetadata> stageMaterials(
+        const vector<shared_ptr<Material>> &materials)
+{
+    vector<filesystem::path> textures;
+    unordered_map<string, size_t> texture_tracker;
+    vector<size_t> param_offsets;
+    param_offsets.reserve(materials.size());
+
+    uint64_t num_material_bytes = 0;
+    for (const auto &material : materials) {
+        num_material_bytes += material->paramBytes.size();
+    }
+
+    vector<uint8_t> packed_params(num_material_bytes);
+    uint8_t *cur_param_ptr = packed_params.data();
+
+    uint32_t textures_per_material = 0;
+    if (materials.size() > 0) {
+        textures_per_material = materials[0]->textures.size();
+    }
+
+    vector<uint32_t> texture_indices;
+    texture_indices.reserve(materials.size() * textures_per_material);
+
+    for (const auto &material : materials) {
+        memcpy(cur_param_ptr, material->paramBytes.data(),
+               material->paramBytes.size());
+
+        for (const auto &texture : material->textures) {
+            // FIXME
+            (void)texture;
+            string texture_name = to_string(textures.size()) + ".ktx2";
+            auto [iter, inserted] =
+                texture_tracker.emplace(texture_name, textures.size());
+
+            if (inserted) {
+                textures.emplace_back(texture_name);
+            }
+
+            texture_indices.push_back(iter->second);
+        }
+
+        param_offsets.push_back(cur_param_ptr - packed_params.data());
+        cur_param_ptr += material->paramBytes.size();
+    }
+
+    return {move(packed_params),
+            {
+                textures,
+                uint32_t(materials.size()),
+                textures_per_material,
+                texture_indices,
+            }};
+}
 
 void ScenePreprocessor::dump(string_view out_path_name)
 {
@@ -440,6 +496,9 @@ void ScenePreprocessor::dump(string_view out_path_name)
         uint64_t vertex_bytes = vertex_size * geometry.totalVertices;
 
         StagingHeader hdr;
+        hdr.numVertices = geometry.totalVertices;
+        hdr.numIndices = geometry.totalIndices;
+
         hdr.indexOffset = align_offset(vertex_bytes);
 
         hdr.meshletBufferOffset = align_offset(

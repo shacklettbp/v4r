@@ -63,9 +63,13 @@ struct PipelineState {
     VkPipelineLayout gfxLayout;
     VkPipeline gfxPipeline;
 
-    VkPipelineLayout meshCullLayout;
-    VkPipeline meshCullPipeline;
+    HostBuffer shaderBindingTable;
+    VkStridedDeviceAddressRegionKHR raygenEntry;
+    VkStridedDeviceAddressRegionKHR missEntry;
+    VkStridedDeviceAddressRegionKHR hitEntry;
+    VkStridedDeviceAddressRegionKHR callableEntry;
 };
+
 
 struct ParamBufferConfig {
     VkDeviceSize totalTransformBytes;
@@ -107,6 +111,16 @@ struct RenderState {
 
     VkDescriptorSetLayout sceneDescriptorLayout;
     DescriptorManager::MakePoolType makeScenePool;
+
+    VkDescriptorSetLayout rtDescriptorLayout;
+    DescriptorManager::MakePoolType makeRTDescriptorPool;
+
+    VkDescriptorSetLayout rtImageDescriptorLayout;
+    VkDescriptorPool rtImageDescriptorPool;
+
+    VkDescriptorSetLayout rtSceneDescriptorLayout;
+    DescriptorManager::MakePoolType makeRTScenePool;
+
     VkSampler textureSampler;
 
     VkRenderPass renderPass;
@@ -129,7 +143,8 @@ struct PipelineImpl {
 
     static PipelineState makePipeline(const DeviceState &dev,
                                       const FramebufferConfig &fb_cfg,
-                                      const RenderState &render_state);
+                                      const RenderState &render_state,
+                                      MemoryAllocator &alloc);
 };
 
 struct FramebufferState {
@@ -162,6 +177,7 @@ struct PerFrameState {
 
     VkDescriptorSet cullSet;
     VkDescriptorSet frameSet;
+    VkDescriptorSet rtSet;
 
     DynArray<VkBuffer> vertexBuffers;
     DynArray<VkDeviceSize> vertexOffsets;
@@ -186,7 +202,8 @@ public:
                        uint32_t batch_size,
                        uint32_t stream_idx,
                        uint32_t num_frames_inflight,
-                       bool cpu_sync);
+                       bool cpu_sync,
+                       bool enable_rt);
 
     CommandStreamState(const CommandStreamState &) = delete;
     CommandStreamState(CommandStreamState &&) = default;
@@ -237,6 +254,9 @@ public:
         return per_batch_render_size_;
     }
 
+    EnvironmentState makeEnvironment(const std::shared_ptr<Scene> &scene,
+                                     const glm::mat4 &perspective);
+
     const InstanceState &inst;
     const DeviceState &dev;
 
@@ -254,6 +274,8 @@ private:
     HostBuffer per_render_buffer_;
     LocalBuffer indirect_draw_buffer_;
 
+    DescriptorManager rt_desc_mgr_;
+
     uint32_t mini_batch_size_;
     uint32_t num_mini_batches_;
     glm::u32vec2 per_elem_render_size_;
@@ -261,6 +283,8 @@ private:
     glm::u32vec2 per_batch_render_size_;
     std::vector<PerFrameState> frame_states_;
     uint32_t cur_frame_;
+    bool enable_rt_;
+    VkCommandBuffer tlas_build_cmd_;
 };
 
 struct CoreVulkanHandles {
@@ -314,12 +338,14 @@ private:
     const uint32_t max_num_loaders_;
     const uint32_t max_num_streams_;
 
-    DynArray<QueueState> transferQueues;
-    DynArray<QueueState> graphicsQueues;
+    DynArray<QueueState> transfer_queues_;
+    DynArray<QueueState> graphics_queues_;
+    DynArray<QueueState> compute_queues_;
 
     const uint32_t batch_size_;
     const bool double_buffered_;
     const bool cpu_sync_;
+    const bool enable_rt_;
 };
 
 }

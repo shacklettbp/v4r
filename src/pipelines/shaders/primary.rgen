@@ -1,0 +1,44 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_scalar_block_layout : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "shader_common.h"
+
+layout (push_constant, scalar) uniform PushConstant {
+    RTRenderPushConstant render_const;
+};
+
+layout (set = 0, binding = 0, rgba8) uniform image2D image;
+
+layout (set = 0, binding = 1) readonly buffer ViewInfos {
+    ViewInfo view_info[];
+};
+
+layout (set = 1, binding = 0) uniform accelerationStructureEXT tlas;
+
+layout (location = 0) rayPayloadEXT vec3 payload;
+
+void main()
+{
+	const vec2 raster = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
+	const vec2 norm_raster = raster / vec2(gl_LaunchSizeEXT.xy);
+	vec2 screen = norm_raster * 2.0 - 1.0;
+
+    mat4 view_inv = inverse(view_info[render_const.batchIdx].view);
+    mat4 proj_inv = inverse(view_info[render_const.batchIdx].projection);
+
+	vec4 o = view_inv * vec4(0, 0, 0, 1);
+	vec4 cam_pos = proj_inv * vec4(screen.x, screen.y, 1, 1);
+	vec4 d = view_inv * vec4(normalize(cam_pos.xyz), 0);
+
+	float tmin = 0.00001f;
+	float tmax = 10000.f;
+
+    traceRayEXT(tlas, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, o.xyz,
+                tmin, d.xyz, tmax, 0);
+
+	imageStore(image, ivec2(gl_LaunchIDEXT.xy) + ivec2(render_const.xOffset,
+                                                       render_const.yOffset),
+               vec4(payload, 1.f));
+}

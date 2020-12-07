@@ -1,5 +1,6 @@
 set(VERTEX_SHADER shaders/uber.vert)
 set(FRAGMENT_SHADER shaders/uber.frag)
+set(PRIMARY_HIT_SHADER shaders/primary_uber.rchit)
 set(SHADER_DEPENDENCIES
     shaders/shader_common.h
     shaders/mesh_common.h
@@ -13,6 +14,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 set(CFG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/pipeline_cfg.json")
 set(VERTEX_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${VERTEX_SHADER}")
 set(FRAGMENT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${FRAGMENT_SHADER}")
+set(PRIMARY_HIT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${PRIMARY_HIT_SHADER}")
 
 set(IFACE_DIR "${CMAKE_CURRENT_BINARY_DIR}/interface")
 set(IMPL_DIR "${CMAKE_CURRENT_BINARY_DIR}/implementation")
@@ -31,7 +33,7 @@ if (NOT ${SHADER_SUCCESS} EQUAL 0)
     message(FATAL_ERROR "Failed to generate shader permutations ${CFG_ERROR}")
 endif()
 
-find_program(GLSLC glslc)
+find_program(GLSLANG_VALIDATOR glslangValidator)
 
 set(COMPILED_SHADERS "")
 file(MAKE_DIRECTORY "${SHADER_DIR}")
@@ -45,7 +47,7 @@ function(add_shader SHADER_NAME SHADER_SRC COMPILER_ARGS)
         OUTPUT
             ${COMPILED_SHADER}
         COMMAND
-            ${GLSLC} -c ${SHADER_SRC} -o ${COMPILED_SHADER} --target-env=vulkan1.1 ${COMPILER_ARGS}
+            ${GLSLANG_VALIDATOR} -V ${SHADER_SRC} -o ${COMPILED_SHADER} --target-env spirv1.4 ${COMPILER_ARGS}
         DEPENDS
             ${SHADER_SRC} ${SHADER_DEPENDENCIES}
     )
@@ -58,8 +60,11 @@ FOREACH(CFG_STR ${SHADER_DEFINES})
 
     add_shader("${SHADER_NAME}.vert" "${VERTEX_SRC}" "${SHADER_ARGS}")
     add_shader("${SHADER_NAME}.frag" "${FRAGMENT_SRC}" "${SHADER_ARGS}")
+    add_shader("primary_${SHADER_NAME}.rchit" "${PRIMARY_HIT_SRC}" "${SHADER_ARGS}")
 ENDFOREACH()
 
 add_shader("meshcull.comp" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/meshcull.comp" "")
+add_shader("primary.rgen" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/primary.rgen" "")
+add_shader("primary.rmiss" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/primary.rmiss" "")
 
 add_custom_target(compile_shaders DEPENDS ${COMPILED_SHADERS})

@@ -113,7 +113,8 @@ Environment CommandStream::makeEnvironment(const shared_ptr<Scene> &scene,
         makePerspectiveMatrix(hfov, render_width_, render_height_,
                               near, far);
 
-    return Environment(make_handle<EnvironmentState>(scene, perspective));
+    return Environment(make_handle<EnvironmentState>(
+        state_->makeEnvironment(scene, perspective)));
 }
 
 uint32_t CommandStream::render(const std::vector<Environment> &elems)

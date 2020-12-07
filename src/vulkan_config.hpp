@@ -1,7 +1,7 @@
 #ifndef VULKAN_CONFIG_HPP_INCLUDED
 #define VULKAN_CONFIG_HPP_INCLUDED
 
-#include <vulkan/vulkan.hpp>
+#include <cstdint>
 
 namespace v4r {
 
@@ -13,7 +13,8 @@ constexpr float transfer_priority = 1.0;
 constexpr uint32_t descriptor_pool_size = 10;
 constexpr uint32_t minibatch_divisor = 4;
 
-constexpr uint64_t texture_backing_size = 1ul << 29;
+constexpr uint64_t num_allocator_freelists = 5;
+constexpr uint64_t allocator_backing_size = 1ul << 29;
 
 static constexpr int num_meshlet_vertices = 64;
 static constexpr int num_meshlet_triangles = 126;

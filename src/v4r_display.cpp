@@ -439,11 +439,13 @@ uint32_t PresentCommandStream::render(const vector<Environment> &elems)
 }
 
 CoreVulkanHandles makeCoreHandles(const RenderConfig &config,
-                                  const DeviceUUID &dev_id) {
+                                  const DeviceUUID &dev_id,
+                                  bool enable_rt) {
     InstanceState inst_state(true, getGLFWPresentationExtensions());
 
     DeviceState dev_state = inst_state.makeDevice(
-        dev_id, config.numStreams + config.numLoaders,
+        dev_id, enable_rt,
+        config.numStreams + config.numLoaders,
         1, config.numLoaders, presentationSupportWrapper);
 
     return CoreVulkanHandles {
@@ -458,7 +460,8 @@ BatchPresentRenderer::BatchPresentRenderer(
         const RenderFeatures<PipelineType> &features,
         bool benchmark_mode)
     : BatchRenderer(make_handle<VulkanState>(cfg, features, makeCoreHandles(
-            cfg, getUUIDFromCudaID(cfg.gpuID)))),
+            cfg, getUUIDFromCudaID(cfg.gpuID),
+            features.options & RenderOptions::RayTracePrimary))),
       benchmark_mode_(benchmark_mode)
 {
     assert(benchmark_mode || state_->fbCfg.colorOutput);

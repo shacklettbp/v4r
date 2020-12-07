@@ -103,13 +103,16 @@ int main(int argc, char *argv[]) {
 
     RenderDoc rdoc;
 
-    using Pipeline = Unlit<RenderOutputs::Color,
-                                DataSource::Texture>;
+    using Pipeline = BlinnPhong<RenderOutputs::Color,
+                                DataSource::Uniform,
+                                DataSource::Uniform,
+                                DataSource::Uniform>;
 
-    BatchPresentRenderer renderer({0, 1, 1, 1, 1024, 1024, 4ul << 30,
+    BatchPresentRenderer renderer({0, 1, 1, 1, 1024, 1024,
         glm::mat4(1.f) },
         RenderFeatures<Pipeline> { RenderOptions::DoubleBuffered |
-                                   RenderOptions::CpuSynchronization }, false);
+                                   RenderOptions::CpuSynchronization |
+                                   RenderOptions::RayTracePrimary }, false);
 
     auto loader = renderer.makeLoader();
     auto scene = loader.loadScene(argv[1]);
@@ -130,8 +133,8 @@ int main(int argc, char *argv[]) {
     envs.emplace_back(cmd_stream.makeEnvironment(scene, 90));
 
     envs[0].setCameraView(cam.eye, cam.look, cam.up);
-    envs[0].addLight(glm::vec3(5, 10, 0), glm::vec3(1, 2, 2));
-    envs[0].addLight(glm::vec3(4, 10, -4), glm::vec3(2, 2, 1));
+    envs[0].addLight(glm::vec3(5, 6, 0), glm::vec3(1, 2, 2));
+    envs[0].addLight(glm::vec3(4, 6, -4), glm::vec3(2, 2, 1));
 
     glfwSetKeyCallback(window, windowKeyHandler);
 

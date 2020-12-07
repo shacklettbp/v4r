@@ -25,7 +25,8 @@ InstanceDispatch::InstanceDispatch(VkInstance ctx, bool need_present)
 #include "dispatch_instance_impl.cpp"
 {}
 
-DeviceDispatch::DeviceDispatch(VkDevice ctx, bool need_present)
+DeviceDispatch::DeviceDispatch(VkDevice ctx, bool need_present,
+                               bool need_rt)
 #include "dispatch_device_impl.cpp"
 {}
 

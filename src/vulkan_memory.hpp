@@ -86,12 +86,11 @@ private:
     friend class MemoryAllocator;
 };
 
-struct SparseTexture {
+struct LocalTexture {
     uint32_t width;
     uint32_t height;
     uint32_t mipLevels;
     VkImage image;
-    VkImageView view;
 };
 
 struct MemoryChunk {
@@ -106,6 +105,7 @@ struct MemoryTypeIndices {
     uint32_t dedicatedBuffer;
     uint32_t colorAttachment;
     uint32_t depthAttachment;
+    uint32_t rtStorage;
 };
 
 struct ResourceFormats {
@@ -114,6 +114,7 @@ struct ResourceFormats {
     VkFormat colorAttachment;
     VkFormat depthAttachment;
     VkFormat linearDepthAttachment;
+    VkFormat rtStorageImage;
 };
 
 struct Alignments {
@@ -121,43 +122,47 @@ struct Alignments {
     VkDeviceSize storageBuffer;
 };
 
-struct SparseAttributes {
-    glm::u32vec2 tileDim;
-    uint32_t tileBytes;
+struct TextureRequirements {
+    VkDeviceSize alignment;
+    VkDeviceSize size;
 };
 
 class MemoryAllocator {
 public:
     MemoryAllocator(const DeviceState &dev, const InstanceState &inst,
-                    VkDeviceSize texture_memory_budget);
+                    bool enable_rt_usage);
     MemoryAllocator(const MemoryAllocator &) = delete;
     MemoryAllocator(MemoryAllocator &&) = default;
 
     HostBuffer makeStagingBuffer(VkDeviceSize num_bytes);
     HostBuffer makeParamBuffer(VkDeviceSize num_bytes);
+    HostBuffer makeSBTBuffer(VkDeviceSize num_bytes);
 
-    LocalBuffer makeGeometryBuffer(VkDeviceSize num_bytes);
-    LocalBuffer makeIndirectBuffer(VkDeviceSize num_bytes);
-    LocalBuffer makeLocalBuffer(VkDeviceSize num_bytes);
+    std::optional<LocalBuffer> makeIndirectBuffer(VkDeviceSize num_bytes);
+    std::optional<LocalBuffer> makeLocalBuffer(VkDeviceSize num_bytes);
+
+    std::optional<LocalBuffer> makeAccelerationStructureScratchBuffer(
+        VkDeviceSize num_bytes);
+    std::optional<LocalBuffer> makeAccelerationStructureBuffer(
+        VkDeviceSize num_bytes);
+    HostBuffer makeAccelerationStructureInstanceBuffer(
+        VkDeviceSize num_bytes);
 
     std::pair<LocalBuffer, VkDeviceMemory> makeDedicatedBuffer(
-            VkDeviceSize num_bytes);
+        VkDeviceSize num_bytes);
 
-    SparseAttributes sparseAttributes() const { return sparse_; }
+    std::pair<LocalTexture, TextureRequirements> makeTexture(
+        uint32_t width, uint32_t height, uint32_t mip_levels);
 
-    VkDeviceSize getMipTailOffset(VkImage image) const;
+    void destroyTexture(LocalTexture &&texture);
 
-    SparseTexture makeTexture(uint32_t width, uint32_t height,
-                              uint32_t mip_levels);
-
-    void destroyTexture(SparseTexture &&texture);
-
-    std::optional<MemoryChunk> getChunk();
-    void returnChunk(MemoryChunk memory);
+    std::optional<MemoryChunk> alloc(VkDeviceSize num_bytes);
+    void free(MemoryChunk memory);
 
     LocalImage makeColorAttachment(uint32_t width, uint32_t height);
     LocalImage makeDepthAttachment(uint32_t width, uint32_t height);
     LocalImage makeLinearDepthAttachment(uint32_t width, uint32_t height);
+    LocalImage makeRTStorageImage(uint32_t width, uint32_t height);
 
     const ResourceFormats &getFormats() const { return formats_; }
 
@@ -168,8 +173,8 @@ private:
     HostBuffer makeHostBuffer(VkDeviceSize num_bytes,
                               VkBufferUsageFlags usage);
 
-    LocalBuffer makeLocalBuffer(VkDeviceSize num_bytes,
-                                VkBufferUsageFlags usage);
+    std::optional<LocalBuffer> makeLocalBuffer(VkDeviceSize num_bytes,
+                                               VkBufferUsageFlags usage);
 
     LocalImage makeDedicatedImage(uint32_t width, uint32_t height,
                                   uint32_t mip_levels, VkFormat format,
@@ -179,47 +184,10 @@ private:
     ResourceFormats formats_;
     MemoryTypeIndices type_indices_;
     Alignments alignments_;
-    SparseAttributes sparse_;
-
-    std::vector<VkDeviceMemory> texture_memory_;
-
-    struct FreeChunk {
-        MemoryChunk chunk;
-        std::atomic_uint32_t next;
-    };
-
-    DynArray<FreeChunk> freelist_store_;
-
-    struct Head {
-        uint32_t index;
-        uint32_t counter;
-    };
-    static_assert(std::atomic<Head>::is_always_lock_free);
-
-    std::atomic<Head> freelist_head_;
+    VkBufferUsageFlags local_buffer_usage_flags_;
 
     template<bool> friend class AllocDeleter;
 };
-
-#if 0
-class TextureManager {
-public:
-    TextureManager(MemoryAllocator &alloc);
-
-    void dropTextures(const std::vector<uint32_t> &indices);
-
-private:
-    MemoryAllocator &alloc_;
-
-    struct TextureChunk {
-        MemoryChunk memory;
-        uint32_t textureIdx;
-    };
-
-    std::vector<TextureChunk> evictable_chunks_;
-    std::vector<SparseTexture> textures_;
-};
-#endif
 
 }
 

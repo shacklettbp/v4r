@@ -77,6 +77,17 @@ device:
     - vkGetSwapchainImagesKHR
     - vkAcquireNextImageKHR
     - vkQueuePresentKHR
+- need_rt:
+    - vkCreateAccelerationStructureKHR
+    - vkGetAccelerationStructureBuildSizesKHR
+    - vkGetAccelerationStructureDeviceAddressKHR
+    - vkGetBufferDeviceAddressKHR
+    - vkCmdBuildAccelerationStructuresKHR
+    - vkDestroyAccelerationStructureKHR
+    - vkCreateRayTracingPipelinesKHR
+    - vkGetRayTracingShaderGroupHandlesKHR
+    - vkCmdTraceRaysKHR
+    
 
 instance:
 - vkEnumeratePhysicalDevices

@@ -6,6 +6,7 @@
 #extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int16 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
+#extension GL_GOOGLE_include_directive : require
 
 #include "shader_common.h"
 #include "mesh_common.h"
@@ -110,6 +111,6 @@ void main()
     outputCommands[out_idx].indexCount = chunks[chunk_id].numMeshlets; // FIXME
     outputCommands[out_idx].instanceCount = 1;
     outputCommands[out_idx].firstIndex = chunks[chunk_id].indexOffset;
-    outputCommands[out_idx].vertexOffset = chunks[chunk_id].vertexOffset;
+    outputCommands[out_idx].vertexOffset = 0;
     outputCommands[out_idx].firstInstance = inst_id;
 }

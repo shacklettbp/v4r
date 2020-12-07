@@ -99,13 +99,47 @@ struct EnvironmentInit {
 };
 
 struct TextureData {
+    TextureData(const DeviceState &d, MemoryAllocator &a);
     TextureData(const TextureData &) = delete;
-    TextureData(TextureData &&) = default;
+    TextureData(TextureData &&);
     ~TextureData();
 
-    std::vector<SparseTexture> textures;
-    std::vector<MemoryChunk> textureMemory;
+    std::vector<LocalTexture> textures;
+    std::vector<VkImageView> views;
+    MemoryChunk memory;
+    const DeviceState &dev;
     MemoryAllocator &alloc;
+};
+
+struct AccelBuildInfo {
+    VkDeviceAddress vertexAddress;
+    VkDeviceAddress indexAddress;
+    uint32_t numTriangles;
+    uint32_t maxVertexIndex;
+};
+
+struct MeshInfo {
+    uint32_t indexOffset;
+    uint32_t chunkOffset;
+    uint32_t numTriangles;
+    uint32_t numVertices;
+    uint32_t numChunks;
+};
+
+struct BLAS {
+    VkAccelerationStructureKHR accelStruct;
+    VkDeviceAddress devAddr;
+};
+
+class BLASData {
+public:
+    BLASData(const BLASData &) = delete;
+    BLASData(BLASData &&) = default;
+    ~BLASData();
+
+    const DeviceState &dev;
+    std::vector<BLAS> accelStructs;
+    LocalBuffer storage;
 };
 
 struct Scene {
@@ -117,11 +151,25 @@ struct Scene {
     std::vector<MeshInfo> meshMetadata;
     uint32_t numMeshes;
     EnvironmentInit envDefaults;
+    std::optional<DescriptorSet> rtSet;
+    std::optional<BLASData> blases;
+};
+
+struct RTEnvironmentState {
+    VkAccelerationStructureKHR tlas;
+    DescriptorSet tlasSet;
+    LocalBuffer storage;
 };
 
 class EnvironmentState {
 public:
-    EnvironmentState(const std::shared_ptr<Scene> &s, const glm::mat4 &proj);
+    EnvironmentState(const DeviceState &d, MemoryAllocator &alloc,
+                     const std::shared_ptr<Scene> &s, const glm::mat4 &proj,
+                     bool enable_rt, DescriptorSet &&rt_desc_set,
+                     VkCommandBuffer build_cmd, const QueueState &build_queue);
+    EnvironmentState(const EnvironmentState &) = delete;
+    EnvironmentState(EnvironmentState &&);
+    ~EnvironmentState();
 
     std::shared_ptr<Scene> scene;
     glm::mat4 projection;
@@ -134,6 +182,9 @@ public:
     std::vector<uint32_t> freeLightIDs;
     std::vector<uint32_t> lightIDs;
     std::vector<uint32_t> lightReverseIDs;
+
+    const DeviceState &dev;
+    std::optional<RTEnvironmentState> rtState;
 };
 
 struct MaterialMetadata {
@@ -145,6 +196,8 @@ struct MaterialMetadata {
 
 struct StagingHeader {
     // Geometry data
+    uint32_t numVertices;
+    uint32_t numIndices;
     uint64_t indexOffset;
     uint64_t meshletBufferOffset;
     uint64_t meshletBufferBytes;
@@ -189,6 +242,8 @@ struct LoaderImpl {
         SceneLoadInfo(std::string_view, const glm::mat4 &, MemoryAllocator &)>
         loadPreprocessedScene;
 
+    uint32_t vertexSize;
+
     template <typename VertexType, typename MaterialParamsType>
     static LoaderImpl create();
 };
@@ -201,11 +256,14 @@ public:
                 DescriptorManager::MakePoolType make_scene_pool,
                 const VkDescriptorSetLayout &mesh_cull_scene_set_layout,
                 DescriptorManager::MakePoolType make_mesh_cull_scene_pool,
+                const VkDescriptorSetLayout &rt_scene_set_layout,
+                DescriptorManager::MakePoolType make_rt_scene_pool,
                 MemoryAllocator &alc,
-                const QueueState &bind_queue,
                 const QueueState &transfer_queue,
                 const QueueState &gfx_queue,
-                const glm::mat4 &coordinateTransform);
+                const glm::mat4 &coordinateTransform,
+                const QueueState *compute_queue,
+                bool need_acceleration_structure);
 
     std::shared_ptr<Scene> loadScene(std::string_view scene_path);
 
@@ -224,7 +282,6 @@ public:
 
     const DeviceState &dev;
 
-    const QueueState &bindQueue;
     const QueueState &transferQueue;
     const QueueState &gfxQueue;
 
@@ -234,20 +291,26 @@ public:
     const VkCommandPool transferPool;
     const VkCommandBuffer transferStageCommand;
 
-    const VkSemaphore bindSemaphore;
     const VkSemaphore ownershipSemaphore;
     const VkFence fence;
 
     MemoryAllocator &alloc;
     DescriptorManager descriptorManager;
     DescriptorManager cullDescriptorManager;
+    DescriptorManager rtDescriptorManager;
 
     glm::mat4 coordinateTransform;
+
+    const QueueState *computeQueue;
+    const VkCommandPool computePool;
+    const VkCommandBuffer asBuildCommand;
+    const VkSemaphore accelBuildSemaphore;
 
 private:
     std::shared_ptr<Scene> makeScene(SceneLoadInfo load_info);
 
     const LoaderImpl impl_;
+    bool need_acceleration_structure_;
 };
 
 }

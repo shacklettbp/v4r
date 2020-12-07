@@ -23,7 +23,8 @@ enum class RenderOutputs : uint32_t {
 enum class RenderOptions : uint32_t {
     CpuSynchronization = 1 << 0,
     DoubleBuffered = 1 << 1,
-    VerticalSync = 1 << 2
+    VerticalSync = 1 << 2,
+    RayTracePrimary = 1 << 3,
 };
 
 struct NoMaterial {
@@ -46,7 +47,6 @@ struct RenderConfig {
     uint32_t batchSize;
     uint32_t imgWidth;
     uint32_t imgHeight;
-    uint64_t textureMemoryBudget;
     glm::mat4 coordinateTransform;
 };
 

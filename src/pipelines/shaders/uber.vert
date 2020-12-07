@@ -1,5 +1,6 @@
 #version 450
 #extension GL_EXT_scalar_block_layout : require
+#extension GL_GOOGLE_include_directive : require
 
 #include "shader_common.h"
 
@@ -37,7 +38,7 @@ layout (location = UV_LOC) out vec2 out_uv;
 #endif
 
 #ifdef VERTEX_COLOR
-layout (location = COLOR_IN_LOC) in vec3 in_color;
+layout (location = COLOR_IN_LOC) in vec4 in_color;
 layout (location = COLOR_LOC) out vec3 out_color;
 #endif
 
@@ -85,7 +86,7 @@ void main()
 #endif
 
 #ifdef VERTEX_COLOR
-    out_color = in_color;
+    out_color = in_color.xyz;
 #endif
 
 #ifdef OUTPUT_DEPTH

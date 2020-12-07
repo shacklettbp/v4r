@@ -28,6 +28,10 @@ namespace BufferFlags {
     static constexpr VkBufferUsageFlags paramUsage =
         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
 
+    static constexpr VkBufferUsageFlags hostRTUsage =
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+
     static constexpr VkBufferUsageFlags hostUsage =
         stageUsage | shaderUsage | paramUsage;
 
@@ -40,6 +44,22 @@ namespace BufferFlags {
     static constexpr VkBufferUsageFlags dedicatedUsage =
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
         VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+    static constexpr VkBufferUsageFlags rtGeometryUsage =
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR |
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+
+    static constexpr VkBufferUsageFlags rtAccelScratchUsage =
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+
+    static constexpr VkBufferUsageFlags rtAccelUsage =
+        VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR |
+        VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+
+    static constexpr VkBufferUsageFlags localRTUsage =
+        rtGeometryUsage | rtAccelScratchUsage | rtAccelUsage;
 };
 
 namespace ImageFlags {
@@ -65,6 +85,14 @@ namespace ImageFlags {
     static constexpr VkFormatFeatureFlags depthAttachmentReqs =
         VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT |
         VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
+
+    static constexpr VkImageUsageFlags rtStorageUsage =
+        VK_IMAGE_USAGE_STORAGE_BIT |
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
+    static constexpr VkFormatFeatureFlags rtStorageReqs =
+        VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT |
+        VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
 };
 
 template<bool host_mapped>
@@ -283,30 +311,10 @@ static VkMemoryRequirements getImageMemReqs(const DeviceState &dev,
     return reqs;
 }
 
-static VkSparseImageMemoryRequirements getSparseTextureMemReqs(
-        const DeviceState &dev, VkImage img)
-{
-    uint32_t num_requirements;
-    dev.dt.getImageSparseMemoryRequirements(dev.hdl, img, &num_requirements,
-                                            nullptr);
-
-    DynArray<VkSparseImageMemoryRequirements> reqs(num_requirements);
-    dev.dt.getImageSparseMemoryRequirements(dev.hdl, img, &num_requirements,
-                                            reqs.data());
-
-    for (uint32_t i = 0; i < num_requirements; i++) {
-        if (reqs[i].formatProperties.aspectMask == VK_IMAGE_ASPECT_COLOR_BIT) {
-            return reqs[i];
-        }
-    }
-
-    cerr << "Unable to get memory requirements for sparse texture" << endl;
-    fatalExit();
-}
-
 static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
                                          const InstanceState &inst,
-                                         const ResourceFormats &formats)
+                                         const ResourceFormats &formats,
+                                         bool enable_rt_usage)
 {
     auto get_generic_buffer_reqs = [&](VkBufferUsageFlags usage_flags) {
         auto [test_buffer, reqs] = makeUnboundBuffer(dev, 1, usage_flags);
@@ -335,7 +343,9 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
     inst.dt.getPhysicalDeviceMemoryProperties2(dev.phy, &dev_mem_props);
 
     VkMemoryRequirements host_generic_reqs = 
-        get_generic_buffer_reqs(BufferFlags::hostUsage);
+        get_generic_buffer_reqs(enable_rt_usage ?
+            (BufferFlags::hostUsage | BufferFlags::hostRTUsage) :
+            BufferFlags::hostUsage);
 
     uint32_t host_type_idx = findMemoryTypeIndex(
             host_generic_reqs.memoryTypeBits,
@@ -344,12 +354,12 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
             dev_mem_props);
 
     VkMemoryRequirements buffer_local_reqs =
-        get_generic_buffer_reqs(BufferFlags::localUsage);
+        get_generic_buffer_reqs(enable_rt_usage ?
+            (BufferFlags::localUsage | BufferFlags::localRTUsage) : 
+            BufferFlags::localUsage);
 
     VkMemoryRequirements tex_local_reqs =
-        get_generic_image_reqs(formats.sdrTexture, ImageFlags::textureUsage,
-                               VK_IMAGE_CREATE_SPARSE_BINDING_BIT |
-                               VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT);
+        get_generic_image_reqs(formats.sdrTexture, ImageFlags::textureUsage);
 
     uint32_t local_type_idx = findMemoryTypeIndex(
             buffer_local_reqs.memoryTypeBits & tex_local_reqs.memoryTypeBits,
@@ -382,12 +392,25 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             dev_mem_props);
 
+    uint32_t rt_storage_idx = -1;
+    if (enable_rt_usage) {
+        VkMemoryRequirements rt_storage_reqs =
+            get_generic_image_reqs(formats.rtStorageImage,
+                                   ImageFlags::rtStorageUsage);
+
+        rt_storage_idx = findMemoryTypeIndex(
+            rt_storage_reqs.memoryTypeBits,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            dev_mem_props);
+    }
+
     return MemoryTypeIndices {
         host_type_idx,
         local_type_idx,
         dedicated_type_idx,
         color_attachment_idx,
-        depth_attachment_idx
+        depth_attachment_idx,
+        rt_storage_idx,
     };
 }
 
@@ -404,41 +427,9 @@ static Alignments getMemoryAlignments(const InstanceState &inst,
     };
 }
 
-static SparseAttributes getSparseAttributes(const DeviceState &dev,
-                                            VkFormat texture_format)
-{
-    VkImage test_img = makeImage(dev, 1, 1, 1,
-        texture_format, ImageFlags::textureUsage,
-        VK_IMAGE_CREATE_SPARSE_BINDING_BIT |
-        VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT);
-
-    auto mem_reqs = getImageMemReqs(dev, test_img);
-    auto sparse_reqs = getSparseTextureMemReqs(dev, test_img);
-
-    dev.dt.destroyImage(dev.hdl, test_img, nullptr);
-
-    glm::u32vec2 tile_dim(
-        sparse_reqs.formatProperties.imageGranularity.width,
-        sparse_reqs.formatProperties.imageGranularity.height);
-    uint32_t tile_bytes = mem_reqs.alignment;
-    uint32_t tail_bytes = sparse_reqs.imageMipTailSize;
-
-    // 28.4.2 Miptail size is guaranteed to be an integer multiple of the
-    // sparse block size in bytes FIXME add support for multiples
-    if (tile_bytes != tail_bytes) {
-        cerr << "Mip tail larger than sparse block size not supported" << endl;
-        fatalExit();
-    }
-
-    return SparseAttributes {
-        tile_dim,
-        tile_bytes,
-    };
-}
-
 MemoryAllocator::MemoryAllocator(const DeviceState &d,
                                  const InstanceState &inst,
-                                 VkDeviceSize texture_memory_budget)
+                                 bool enable_rt_usage)
     : dev(d),
       formats_ {
           chooseFormat(dev.phy, inst,
@@ -456,75 +447,17 @@ MemoryAllocator::MemoryAllocator(const DeviceState &d,
                                VK_FORMAT_D32_SFLOAT_S8_UINT }),
           chooseFormat(dev.phy, inst,
                        ImageFlags::colorAttachmentReqs,
-                       array { VK_FORMAT_R32_SFLOAT })
+                       array { VK_FORMAT_R32_SFLOAT }),
+          chooseFormat(dev.phy, inst,
+                       ImageFlags::rtStorageReqs,
+                       array { VK_FORMAT_R8G8B8A8_UNORM })
       },
-      type_indices_(findTypeIndices(dev, inst, formats_)),
+      type_indices_(findTypeIndices(dev, inst, formats_, enable_rt_usage)),
       alignments_(getMemoryAlignments(inst, dev.phy)),
-      sparse_(getSparseAttributes(dev, formats_.sdrTexture)),
-      texture_memory_(),
-      freelist_store_([&]() {
-          uint32_t num_full_backing_allocations =
-              texture_memory_budget / VulkanConfig::texture_backing_size;
-
-          uint32_t tiles_per_allocation =
-              VulkanConfig::texture_backing_size / sparse_.tileBytes;
-
-          VkDeviceSize overflow = texture_memory_budget -
-              num_full_backing_allocations *
-                  VulkanConfig::texture_backing_size;
-
-          uint32_t extra_tiles = overflow / sparse_.tileBytes;
-
-          assert(VulkanConfig::texture_backing_size % sparse_.tileBytes == 0);
-
-          return num_full_backing_allocations * tiles_per_allocation +
-              extra_tiles;
-      }()),
-      freelist_head_(Head {
-          0,
-          0,
-      })
-{
-    VkDeviceSize rounded_memory_budget =
-        (texture_memory_budget / sparse_.tileBytes) * sparse_.tileBytes;
-    VkMemoryAllocateInfo alloc;
-    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    alloc.pNext = nullptr;
-    alloc.memoryTypeIndex = type_indices_.local;
-
-    VkDeviceSize allocated_memory = 0;
-    VkDeviceSize assigned_memory = 0;
-    for (uint32_t chunk_id = 0; chunk_id < freelist_store_.size();
-         chunk_id++) {
-        if (assigned_memory == allocated_memory) {
-            alloc.allocationSize =
-                min(VulkanConfig::texture_backing_size,
-                    rounded_memory_budget - allocated_memory);
-
-            allocated_memory += alloc.allocationSize;
-
-            VkDeviceMemory memory;
-            REQ_VK(dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &memory));
-            texture_memory_.push_back(memory);
-        }
-
-        freelist_store_[chunk_id].chunk = MemoryChunk {
-            texture_memory_.back(),
-            uint32_t(assigned_memory % VulkanConfig::texture_backing_size),
-            chunk_id,
-        };
-
-        assigned_memory += sparse_.tileBytes;
-
-        freelist_store_[chunk_id].next.store(chunk_id + 1,
-                                             memory_order_relaxed);
-    }
-
-    freelist_store_[freelist_store_.size() - 1].next.store(~0U,
-        memory_order_relaxed);
-
-    atomic_thread_fence(memory_order_release);
-}
+      local_buffer_usage_flags_(enable_rt_usage ? 
+          (BufferFlags::localUsage | BufferFlags::localRTUsage) :
+          BufferFlags::localUsage)
+{}
 
 HostBuffer MemoryAllocator::makeHostBuffer(VkDeviceSize num_bytes,
                                            VkBufferUsageFlags usage)
@@ -569,8 +502,21 @@ HostBuffer MemoryAllocator::makeParamBuffer(VkDeviceSize num_bytes)
                               BufferFlags::paramUsage);
 }
 
-LocalBuffer MemoryAllocator::makeLocalBuffer(VkDeviceSize num_bytes,
-                                             VkBufferUsageFlags usage)
+HostBuffer MemoryAllocator::makeSBTBuffer(VkDeviceSize num_bytes)
+{
+    return makeHostBuffer(num_bytes,
+                          VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR |
+                          VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_KHR);
+}
+
+HostBuffer MemoryAllocator::makeAccelerationStructureInstanceBuffer(
+    VkDeviceSize num_bytes)
+{
+    return makeHostBuffer(num_bytes, BufferFlags::hostRTUsage);
+}
+
+optional<LocalBuffer> MemoryAllocator::makeLocalBuffer(VkDeviceSize num_bytes,
+                                                       VkBufferUsageFlags usage)
 {
     auto [buffer, reqs] = makeUnboundBuffer(dev, num_bytes,
                                             usage);
@@ -588,19 +534,12 @@ LocalBuffer MemoryAllocator::makeLocalBuffer(VkDeviceSize num_bytes,
     return LocalBuffer(buffer, AllocDeleter<false>(memory, *this));
 }
 
-LocalBuffer MemoryAllocator::makeLocalBuffer(VkDeviceSize num_bytes)
+optional<LocalBuffer> MemoryAllocator::makeLocalBuffer(VkDeviceSize num_bytes)
 {
-    return makeLocalBuffer(num_bytes, BufferFlags::localUsage);
+    return makeLocalBuffer(num_bytes, local_buffer_usage_flags_);
 }
 
-LocalBuffer MemoryAllocator::makeGeometryBuffer(VkDeviceSize num_bytes)
-{
-    return makeLocalBuffer(num_bytes,
-                           BufferFlags::commonUsage |
-                               BufferFlags::geometryUsage);
-}
-
-LocalBuffer MemoryAllocator::makeIndirectBuffer(VkDeviceSize num_bytes)
+optional<LocalBuffer> MemoryAllocator::makeIndirectBuffer(VkDeviceSize num_bytes)
 {
     return makeLocalBuffer(num_bytes,
                            BufferFlags::commonUsage |
@@ -608,6 +547,17 @@ LocalBuffer MemoryAllocator::makeIndirectBuffer(VkDeviceSize num_bytes)
                                BufferFlags::indirectUsage);
 }
 
+optional<LocalBuffer> MemoryAllocator::makeAccelerationStructureScratchBuffer(
+    VkDeviceSize num_bytes)
+{
+    return makeLocalBuffer(num_bytes, BufferFlags::rtAccelScratchUsage);
+}
+
+optional<LocalBuffer> MemoryAllocator::makeAccelerationStructureBuffer(
+    VkDeviceSize num_bytes)
+{
+    return makeLocalBuffer(num_bytes, BufferFlags::rtAccelUsage);
+}
 
 pair<LocalBuffer, VkDeviceMemory> MemoryAllocator::makeDedicatedBuffer(
         VkDeviceSize num_bytes)
@@ -634,92 +584,60 @@ pair<LocalBuffer, VkDeviceMemory> MemoryAllocator::makeDedicatedBuffer(
                 memory);
 }
 
-VkDeviceSize MemoryAllocator::getMipTailOffset(VkImage image) const
-{
-    auto sparse_reqs = getSparseTextureMemReqs(dev, image);
-
-    return sparse_reqs.imageMipTailOffset;
-}
-
-SparseTexture MemoryAllocator::makeTexture(uint32_t width, uint32_t height,
-                                           uint32_t mip_levels)
+pair<LocalTexture, TextureRequirements> MemoryAllocator::makeTexture(
+    uint32_t width, uint32_t height, uint32_t mip_levels)
 {
     VkImage texture_img = makeImage(dev, width, height, mip_levels,
-            formats_.sdrTexture, ImageFlags::textureUsage,
-            VK_IMAGE_CREATE_SPARSE_BINDING_BIT | 
-            VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT);
+            formats_.sdrTexture, ImageFlags::textureUsage);
 
-    VkImageViewCreateInfo view_info;
-    view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    view_info.pNext = nullptr;
-    view_info.flags = 0;
-    view_info.image = texture_img;
-    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    view_info.format = formats_.sdrTexture;
-    view_info.components = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
-                            VK_COMPONENT_SWIZZLE_B,
-                            VK_COMPONENT_SWIZZLE_A};
-    view_info.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0,
-                                  mip_levels, 0, 1};
+    auto reqs = getImageMemReqs(dev, texture_img);
 
-    VkImageView view;
-    REQ_VK(dev.dt.createImageView(dev.hdl, &view_info, nullptr, &view));
-
-    return SparseTexture {
-        width,
-        height,
-        mip_levels,
-        texture_img,
-        view,
+    return {
+        LocalTexture {
+            width,
+            height,
+            mip_levels,
+            texture_img,
+        },
+        TextureRequirements {
+            reqs.alignment,
+            reqs.size,
+        },
     };
 }
 
-void MemoryAllocator::destroyTexture(SparseTexture &&texture)
+void MemoryAllocator::destroyTexture(LocalTexture &&texture)
 {
-    dev.dt.destroyImageView(dev.hdl, texture.view, nullptr);
     dev.dt.destroyImage(dev.hdl, texture.image, nullptr);
 }
 
-optional<MemoryChunk> MemoryAllocator::getChunk()
+optional<MemoryChunk> MemoryAllocator::alloc(VkDeviceSize num_bytes)
 {
-    Head cur_head = freelist_head_.load(memory_order_acquire);
-    Head new_head;
+    VkMemoryAllocateInfo alloc;
+    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc.pNext = nullptr;
+    alloc.allocationSize = num_bytes;
+    alloc.memoryTypeIndex = type_indices_.local;
 
-    do {
-        uint32_t cur_idx = cur_head.index;
-        if (cur_idx == ~0U) return optional<MemoryChunk>();
+    VkDeviceMemory memory;
+    VkResult alloc_res = dev.dt.allocateMemory(dev.hdl, &alloc, nullptr, &memory);
 
-        uint32_t next_idx =
-            freelist_store_[cur_idx].next.load(std::memory_order_relaxed);
+    if (alloc_res == VK_ERROR_OUT_OF_DEVICE_MEMORY) {
+        return optional<MemoryChunk>();
+    }
 
-        new_head.index = next_idx;
-        new_head.counter = cur_head.counter + 1;
-    } while (!freelist_head_.compare_exchange_weak(cur_head,
-                                                   new_head,
-                                                   memory_order_release,
-                                                   memory_order_acquire));
+    REQ_VK(alloc_res);
 
-    return freelist_store_[cur_head.index].chunk;
-}
-
-void MemoryAllocator::returnChunk(MemoryChunk memory)
-{
-    FreeChunk &freelist_node = freelist_store_[memory.chunkID];
-
-    Head cur_head = freelist_head_.load(memory_order_relaxed);
-
-    Head new_head = { 
-        memory.chunkID,
+    return MemoryChunk {
+        memory,
+        0,
         0,
     };
+}
 
-    do {
-        freelist_node.next.store(cur_head.index, memory_order_relaxed);
-        new_head.counter = cur_head.counter + 1;
-    } while (!freelist_head_.compare_exchange_weak(cur_head,
-                                                   new_head,
-                                                   memory_order_release,
-                                                   memory_order_relaxed));
+void MemoryAllocator::free(MemoryChunk memory)
+{
+    dev.dt.freeMemory(dev.hdl, memory.hdl, nullptr);
 }
 
 LocalImage MemoryAllocator::makeDedicatedImage(uint32_t width, uint32_t height,
@@ -774,9 +692,12 @@ LocalImage MemoryAllocator::makeLinearDepthAttachment(uint32_t width,
                               type_indices_.colorAttachment);
 }
 
-static VkDeviceSize alignOffset(VkDeviceSize offset, VkDeviceSize alignment)
+LocalImage MemoryAllocator::makeRTStorageImage(uint32_t width,
+                                               uint32_t height)
 {
-    return ((offset + alignment - 1) / alignment) * alignment;
+    return makeDedicatedImage(width, height, 1, formats_.rtStorageImage,
+                              ImageFlags::rtStorageUsage,
+                              type_indices_.rtStorage);
 }
 
 VkDeviceSize MemoryAllocator::alignUniformBufferOffset(

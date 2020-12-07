@@ -14,7 +14,7 @@ struct InstanceDispatch {
 struct DeviceDispatch {
 #include "dispatch_device_impl.hpp"
 
-    DeviceDispatch(VkDevice dev, bool need_present);
+    DeviceDispatch(VkDevice dev, bool need_present, bool need_rt);
 };
 
 }

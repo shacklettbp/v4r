@@ -173,6 +173,11 @@ uint32_t getWorkgroupSize(uint32_t num_items)
         VulkanConfig::compute_workgroup_size;
 }
 
+VkDeviceSize alignOffset(VkDeviceSize offset, VkDeviceSize alignment)
+{
+    return ((offset + alignment - 1) / alignment) * alignment;
+}
+
 }
 
 #endif

@@ -10,6 +10,12 @@ struct RenderPushConstant {
     uint batchIdx;
 };
 
+struct RTRenderPushConstant {
+    uint batchIdx;
+    uint xOffset;
+    uint yOffset;
+};
+
 struct LightProperties {
     vec4 position;
     vec4 color;

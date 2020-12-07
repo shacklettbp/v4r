@@ -1,10 +1,12 @@
 #include "vulkan_handles.hpp"
+#include <vulkan/vulkan_core.h>
 
 #include "utils.hpp"
 #include "vulkan_config.hpp"
 #include "vk_utils.hpp"
 
 #include <csignal>
+#include <cstring>
 #include <iostream>
 #include <optional>
 #include <vector>
@@ -179,6 +181,7 @@ VkPhysicalDevice InstanceState::findPhysicalDevice(
 
 DeviceState InstanceState::makeDevice(
         const DeviceUUID &uuid,
+        bool enable_rt,
         uint32_t desired_gfx_queues,
         uint32_t desired_compute_queues,
         uint32_t desired_transfer_queues,
@@ -191,7 +194,19 @@ DeviceState InstanceState::makeDevice(
         VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
         VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
         VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME,
+        VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
+        VK_KHR_SPIRV_1_4_EXTENSION_NAME,
     };
+
+    if (enable_rt) {
+        extensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+        extensions.push_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+        extensions.push_back(VK_KHR_8BIT_STORAGE_EXTENSION_NAME);
+    }
 
     bool need_present = present_check != nullptr;
 
@@ -284,6 +299,19 @@ DeviceState InstanceState::makeDevice(
     fillQueueInfo(queue_infos[1], *compute_queue_family, compute_pris);
     fillQueueInfo(queue_infos[2], *transfer_queue_family, transfer_pris);
 
+    VkPhysicalDeviceRayTracingPipelinePropertiesKHR rt_props {};
+
+    if (enable_rt) {
+        rt_props.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+        rt_props.pNext = nullptr;
+
+        VkPhysicalDeviceProperties2 props {};
+        props.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        props.pNext = &rt_props;
+        dt.getPhysicalDeviceProperties2(phy, &props);
+    }
+
     VkDeviceCreateInfo dev_create_info {};
     dev_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     dev_create_info.queueCreateInfoCount = 3;
@@ -294,10 +322,45 @@ DeviceState InstanceState::makeDevice(
 
     dev_create_info.pEnabledFeatures = nullptr;
 
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR accel_features {};
+    accel_features.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+    accel_features.pNext = nullptr;
+    accel_features.accelerationStructure = true;
+
+    VkPhysicalDeviceRayQueryFeaturesKHR rq_features {};
+    rq_features.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+    rq_features.pNext = &accel_features;
+    rq_features.rayQuery = true;
+
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rt_features {};
+    rt_features.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+    rt_features.pNext = &rq_features;
+    rt_features.rayTracingPipeline = true;
+    rt_features.rayTracingPipelineTraceRaysIndirect = true;
+
+    VkPhysicalDevice8BitStorageFeaturesKHR eightbit_features {};
+    eightbit_features.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES_KHR;
+    eightbit_features.pNext = &rt_features;
+    eightbit_features.storageBuffer8BitAccess = true;
+
+    VkPhysicalDeviceBufferDeviceAddressFeaturesEXT dev_addr_features {};
+    dev_addr_features.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_EXT;
+    dev_addr_features.pNext = &eightbit_features;
+    dev_addr_features.bufferDeviceAddress = true;
+
     VkPhysicalDeviceDescriptorIndexingFeatures desc_idx_features {};
     desc_idx_features.sType =
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
-    desc_idx_features.pNext = nullptr;
+    if (enable_rt) {
+        desc_idx_features.pNext = &dev_addr_features;
+    } else {
+        desc_idx_features.pNext = nullptr;
+    }
     desc_idx_features.runtimeDescriptorArray = true;
     desc_idx_features.shaderStorageBufferArrayNonUniformIndexing = true;
     desc_idx_features.shaderSampledImageArrayNonUniformIndexing = true;
@@ -312,11 +375,6 @@ DeviceState InstanceState::makeDevice(
     // draw index for retrieving transform, materials etc
     requested_features.features.drawIndirectFirstInstance = true;
 
-    requested_features.features.sparseBinding = true;
-    requested_features.features.sparseResidencyImage2D = true;
-    requested_features.features.shaderResourceResidency = true;
-    requested_features.features.shaderResourceMinLod = true;
-
     dev_create_info.pNext = &requested_features;
 
     VkDevice dev;
@@ -329,9 +387,12 @@ DeviceState InstanceState::makeDevice(
         num_gfx_queues,
         num_compute_queues,
         num_transfer_queues,
+        rt_props.maxRayRecursionDepth,
+        rt_props.shaderGroupBaseAlignment,
+        rt_props.shaderGroupHandleSize,
         phy,
         dev,
-        DeviceDispatch(dev, need_present)
+        DeviceDispatch(dev, need_present, enable_rt)
     };
 }
 

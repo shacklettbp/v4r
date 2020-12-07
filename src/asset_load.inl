@@ -6,6 +6,7 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/transform.hpp>
 #include <glm/gtx/string_cast.hpp>
 
 #include <cassert>
@@ -97,6 +98,8 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
             });
         }
 
+        std::cout << "Buffers" << std::endl;
+
         for (const auto &view : scene.root["bufferViews"]) {
             uint64_t stride_res;
             auto stride_error = view["byteStride"].get(stride_res);
@@ -110,6 +113,8 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
                 static_cast<uint32_t>(view["byteLength"].get_uint64()),
             });
         }
+
+        std::cout << "bufferViews" << std::endl;
 
         for (const auto &accessor : scene.root["accessors"]) {
             GLTFComponentType type;
@@ -126,13 +131,21 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
                 fatalExit();
             }
 
+            uint64_t byte_offset;
+            auto offset_error = accessor["byteOffset"].get(byte_offset);
+            if (offset_error) {
+                byte_offset = 0;
+            }
+
             scene.accessors.push_back(GLTFAccessor {
                 static_cast<uint32_t>(accessor["bufferView"].get_uint64()),
-                static_cast<uint32_t>(accessor["byteOffset"].get_uint64()),
+                static_cast<uint32_t>(byte_offset),
                 static_cast<uint32_t>(accessor["count"].get_uint64()),
                 type,
             });
         }
+
+        std::cout << "accessors" << std::endl;
 
         for (const auto &json_image : scene.root["images"]) {
             GLTFImage img {};
@@ -158,6 +171,8 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
             scene.images.push_back(img);
         }
 
+        std::cout << "images" << std::endl;
+
         for (const auto &texture : scene.root["textures"]) {
             uint64_t source_idx;
             auto src_err = texture["source"].get(source_idx);
@@ -173,11 +188,19 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
                 }
             }
 
+            uint64_t sampler_idx;
+            auto sampler_error = texture["sampler"].get(sampler_idx);
+            if (sampler_error) {
+                sampler_idx = 0;
+            }
+
             scene.textures.push_back(GLTFTexture {
                 static_cast<uint32_t>(source_idx),
-                static_cast<uint32_t>(texture["sampler"].get_uint64()),
+                static_cast<uint32_t>(sampler_idx),
             });
         }
+
+        std::cout << "textures" << std::endl;
 
         for (const auto &material : scene.root["materials"]) {
             const auto &pbr = material["pbrMetallicRoughness"];
@@ -219,6 +242,8 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
                 static_cast<float>(roughness),
             });
         }
+
+        std::cout << "materials" << std::endl;
 
         for (const auto &mesh : scene.root["meshes"]) {
             simdjson::dom::array prims = mesh["primitives"];
@@ -272,6 +297,8 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
             });
         }
 
+        std::cout << "meshes" << std::endl;
+
         for (const auto &node : scene.root["nodes"]) {
             std::vector<uint32_t> children;
             simdjson::dom::array json_children;
@@ -299,13 +326,54 @@ inline GLTFScene gltfLoad(const std::string_view gltf_path) noexcept
                     *txfm_data = mat_elem;
                     txfm_data++;
                 }
-            }
+            } else {
+                glm::mat4 translation(1.f);
+                simdjson::dom::array translate_raw;
+                auto translate_error = node["translation"].get(translate_raw);
+                if (!translate_error) {
+                    glm::vec3 translate_vec;
+                    float *translate_ptr = glm::value_ptr(translate_vec);
+                    for (double vec_elem : translate_raw) {
+                        *translate_ptr = vec_elem;
+                        translate_ptr++;
+                    }
+                    translation = glm::translate(translate_vec);
+                }
 
-            // FIXME TRS support
+                glm::mat4 rotation(1.f);
+                simdjson::dom::array quat_raw;
+                auto quat_error = node["rotation"].get(quat_raw);
+                if (!quat_error) {
+                    glm::quat quat_vec;
+                    float *quat_ptr = glm::value_ptr(quat_vec);
+                    for (double vec_elem : quat_raw) {
+                        *quat_ptr = vec_elem;
+                        quat_ptr++;
+                    }
+                    rotation = glm::mat4_cast(quat_vec);
+                }
+
+                glm::mat4 scale(1.f);
+                simdjson::dom::array scale_raw;
+                auto scale_error = node["scale"].get(scale_raw);
+                if (!scale_error) {
+                    glm::vec3 scale_vec;
+                    float *scale_ptr = glm::value_ptr(scale_vec);
+                    for (double vec_elem : scale_raw) {
+                        *scale_ptr = vec_elem;
+                        scale_ptr++;
+                    }
+                    scale = glm::scale(scale_vec);
+                }
+
+                txfm = translation * rotation * scale;
+            }
 
             scene.nodes.push_back(GLTFNode {
                 move(children), static_cast<uint32_t>(mesh_idx), txfm});
         }
+
+        std::cout << "nodes" << std::endl;
 
         simdjson::dom::array scenes = scene.root["scenes"];
         if (scenes.size() > 1) {
@@ -494,18 +562,24 @@ std::pair<std::vector<VertexType>, std::vector<uint32_t>> gltfParseMesh(
     }
 
     if constexpr (VertexImpl<VertexType>::hasNormal) {
-        normal_accessor = getGLTFAccessorView<const glm::vec3>(
-            scene, mesh.normalIdx.value());
+        if (mesh.normalIdx.has_value()) {
+            normal_accessor = getGLTFAccessorView<const glm::vec3>(
+                scene, mesh.normalIdx.value());
+        }
     }
 
     if constexpr (VertexImpl<VertexType>::hasUV) {
-        uv_accessor =
-            getGLTFAccessorView<const glm::vec2>(scene, mesh.uvIdx.value());
+        if (mesh.uvIdx.has_value()) {
+            uv_accessor = getGLTFAccessorView<const glm::vec2>(scene,
+                mesh.uvIdx.value());
+        }
     }
 
     if constexpr (VertexImpl<VertexType>::hasColor) {
-        color_accessor = getGLTFAccessorView<const glm::u8vec3>(
-            scene, mesh.colorIdx.value());
+        if (mesh.colorIdx.has_value()) {
+            color_accessor = getGLTFAccessorView<const glm::u8vec3>(
+                scene, mesh.colorIdx.value());
+        }
     }
 
     uint32_t max_idx = 0;
@@ -546,22 +620,28 @@ std::pair<std::vector<VertexType>, std::vector<uint32_t>> gltfParseMesh(
 
     vertices.reserve(max_idx + 1);
     for (uint32_t vert_idx = 0; vert_idx <= max_idx; vert_idx++) {
-        VertexType vert;
+        VertexType vert {};
 
         if constexpr (VertexImpl<VertexType>::hasPosition) {
             vert.position = (*position_accessor)[vert_idx];
         }
 
         if constexpr (VertexImpl<VertexType>::hasNormal) {
-            vert.normal = (*normal_accessor)[vert_idx];
+            if (normal_accessor.has_value()) {
+                vert.normal = (*normal_accessor)[vert_idx];
+            }
         }
 
         if constexpr (VertexImpl<VertexType>::hasUV) {
-            vert.uv = (*uv_accessor)[vert_idx];
+            if (uv_accessor.has_value()) {
+                vert.uv = (*uv_accessor)[vert_idx];
+            }
         }
 
         if constexpr (VertexImpl<VertexType>::hasColor) {
-            vert.color = (*color_accessor)[vert_idx];
+            if (color_accessor.has_value()) {
+                vert.color = glm::u8vec4((*color_accessor)[vert_idx], 255);
+            }
         }
 
         vertices.push_back(vert);

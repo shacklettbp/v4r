@@ -58,7 +58,7 @@ int main(int argc, char *argv[]) {
         batch_size = stoul(argv[2]);
     }
 
-    BatchRendererCUDA renderer({0, 1, 1, batch_size, 256, 256, 4ul << 30,
+    BatchRendererCUDA renderer({0, 1, 1, batch_size, 256, 256,
         glm::mat4(1.f)},
         RenderFeatures<Pipeline> { 
             RenderOptions::CpuSynchronization | RenderOptions::DoubleBuffered

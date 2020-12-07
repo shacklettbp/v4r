@@ -5,8 +5,6 @@
 #include <optional>
 #include <vector>
 
-#include <vulkan/vulkan.h>
-
 #include "dispatch.hpp"
 
 namespace v4r {
@@ -22,6 +20,10 @@ public:
     uint32_t numGraphicsQueues;
     uint32_t numComputeQueues;
     uint32_t numTransferQueues;
+
+    uint32_t rtRecursionDepth;
+    VkDeviceSize rtShaderGroupBaseAlignment;
+    VkDeviceSize rtShaderGroupHandleSize;
 
     const VkPhysicalDevice phy;
     const VkDevice hdl;
@@ -43,6 +45,7 @@ public:
     InstanceState(InstanceState &&) = default;
 
     DeviceState makeDevice(const DeviceUUID &uuid,
+                           bool enable_rt,
                            uint32_t desired_gfx_queues,
                            uint32_t desired_compute_queues,
                            uint32_t desired_transfer_queues,
