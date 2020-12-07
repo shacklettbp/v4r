@@ -129,7 +129,8 @@ struct SparseAttributes {
 class MemoryAllocator {
 public:
     MemoryAllocator(const DeviceState &dev, const InstanceState &inst,
-                    VkDeviceSize texture_memory_budget);
+                    VkDeviceSize memory_budget,
+                    bool use_dynamic_blocks);
     MemoryAllocator(const MemoryAllocator &) = delete;
     MemoryAllocator(MemoryAllocator &&) = default;
 
@@ -200,26 +201,6 @@ private:
 
     template<bool> friend class AllocDeleter;
 };
-
-#if 0
-class TextureManager {
-public:
-    TextureManager(MemoryAllocator &alloc);
-
-    void dropTextures(const std::vector<uint32_t> &indices);
-
-private:
-    MemoryAllocator &alloc_;
-
-    struct TextureChunk {
-        MemoryChunk memory;
-        uint32_t textureIdx;
-    };
-
-    std::vector<TextureChunk> evictable_chunks_;
-    std::vector<SparseTexture> textures_;
-};
-#endif
 
 }
 

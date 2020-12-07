@@ -438,7 +438,8 @@ static SparseAttributes getSparseAttributes(const DeviceState &dev,
 
 MemoryAllocator::MemoryAllocator(const DeviceState &d,
                                  const InstanceState &inst,
-                                 VkDeviceSize texture_memory_budget)
+                                 VkDeviceSize memory_budget,
+                                 bool use_dynamic_blocks)
     : dev(d),
       formats_ {
           chooseFormat(dev.phy, inst,
@@ -464,12 +465,12 @@ MemoryAllocator::MemoryAllocator(const DeviceState &d,
       texture_memory_(),
       freelist_store_([&]() {
           uint32_t num_full_backing_allocations =
-              texture_memory_budget / VulkanConfig::texture_backing_size;
+              memory_budget / VulkanConfig::texture_backing_size;
 
           uint32_t tiles_per_allocation =
               VulkanConfig::texture_backing_size / sparse_.tileBytes;
 
-          VkDeviceSize overflow = texture_memory_budget -
+          VkDeviceSize overflow = memory_budget -
               num_full_backing_allocations *
                   VulkanConfig::texture_backing_size;
 
@@ -486,7 +487,7 @@ MemoryAllocator::MemoryAllocator(const DeviceState &d,
       })
 {
     VkDeviceSize rounded_memory_budget =
-        (texture_memory_budget / sparse_.tileBytes) * sparse_.tileBytes;
+        (memory_budget / sparse_.tileBytes) * sparse_.tileBytes;
     VkMemoryAllocateInfo alloc;
     alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     alloc.pNext = nullptr;
