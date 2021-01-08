@@ -53,6 +53,29 @@ public:
     std::vector<VkClearValue> clearValues;
 };
 
+struct RTBindingTable {
+    HostBuffer sbt;
+    VkStridedDeviceAddressRegionKHR raygenEntry;
+    VkStridedDeviceAddressRegionKHR missEntry;
+    VkStridedDeviceAddressRegionKHR hitEntry;
+    VkStridedDeviceAddressRegionKHR callableEntry;
+};
+
+struct RasterPipelineState {
+    VkPipelineLayout gfxLayout;
+    VkPipeline gfxPipeline;
+
+    VkPipelineLayout meshCullLayout;
+    VkPipeline meshCullPipeline;
+};
+
+struct RTPipelineState {
+    VkPipelineLayout layout;
+    VkPipeline pipeline;
+    
+    RTBindingTable bindingTable;
+};
+
 // FIXME separate out things like the layout, cache (maybe renderpass)
 // into PipelineManager
 struct PipelineState {
@@ -60,16 +83,9 @@ struct PipelineState {
 
     VkPipelineCache pipelineCache;
 
-    VkPipelineLayout gfxLayout;
-    VkPipeline gfxPipeline;
-
-    HostBuffer shaderBindingTable;
-    VkStridedDeviceAddressRegionKHR raygenEntry;
-    VkStridedDeviceAddressRegionKHR missEntry;
-    VkStridedDeviceAddressRegionKHR hitEntry;
-    VkStridedDeviceAddressRegionKHR callableEntry;
+    std::optional<RasterPipelineState> rasterState;
+    std::optional<RTPipelineState> rtState;
 };
-
 
 struct ParamBufferConfig {
     VkDeviceSize totalTransformBytes;
@@ -144,6 +160,8 @@ struct PipelineImpl {
     static PipelineState makePipeline(const DeviceState &dev,
                                       const FramebufferConfig &fb_cfg,
                                       const RenderState &render_state,
+                                      bool use_raster,
+                                      bool use_rt,
                                       MemoryAllocator &alloc);
 };
 
@@ -302,6 +320,13 @@ public:
     template <typename PipelineType>
     VulkanState(const RenderConfig &cfg,
                 const RenderFeatures<PipelineType> &features,
+                CoreVulkanHandles &&handles);
+
+    template <typename PipelineType>
+    VulkanState(const RenderConfig &cfg,
+                const RenderFeatures<PipelineType> &features,
+                bool use_raster,
+                bool use_rt,
                 CoreVulkanHandles &&handles);
 
     LoaderState makeLoader();

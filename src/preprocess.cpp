@@ -21,7 +21,7 @@ struct SceneData {
 };
 
 using DepthPipeline = Unlit<RenderOutputs::Depth, DataSource::None>;
-using RGBPipeline = BlinnPhong<RenderOutputs::Color, DataSource::Uniform, DataSource::Uniform, DataSource::Uniform>;
+using RGBPipeline = Unlit<RenderOutputs::Color, DataSource::Texture>;
 
 static SceneData parseSceneData(string_view gltf_path)
 {

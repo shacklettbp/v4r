@@ -394,12 +394,17 @@ static MemoryTypeIndices findTypeIndices(const DeviceState &dev,
 
     uint32_t rt_storage_idx = -1;
     if (enable_rt_usage) {
-        VkMemoryRequirements rt_storage_reqs =
-            get_generic_image_reqs(formats.rtStorageImage,
+        VkMemoryRequirements rgb_storage_reqs =
+            get_generic_image_reqs(formats.rtStorageImageRGB,
+                                   ImageFlags::rtStorageUsage);
+
+        VkMemoryRequirements depth_storage_reqs =
+            get_generic_image_reqs(formats.rtStorageImageDepth,
                                    ImageFlags::rtStorageUsage);
 
         rt_storage_idx = findMemoryTypeIndex(
-            rt_storage_reqs.memoryTypeBits,
+            rgb_storage_reqs.memoryTypeBits |
+                depth_storage_reqs.memoryTypeBits,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             dev_mem_props);
     }
@@ -450,7 +455,10 @@ MemoryAllocator::MemoryAllocator(const DeviceState &d,
                        array { VK_FORMAT_R32_SFLOAT }),
           chooseFormat(dev.phy, inst,
                        ImageFlags::rtStorageReqs,
-                       array { VK_FORMAT_R8G8B8A8_UNORM })
+                       array { VK_FORMAT_R8G8B8A8_UNORM }),
+          chooseFormat(dev.phy, inst,
+                       ImageFlags::rtStorageReqs,
+                       array { VK_FORMAT_R32_SFLOAT }),
       },
       type_indices_(findTypeIndices(dev, inst, formats_, enable_rt_usage)),
       alignments_(getMemoryAlignments(inst, dev.phy)),
@@ -693,9 +701,12 @@ LocalImage MemoryAllocator::makeLinearDepthAttachment(uint32_t width,
 }
 
 LocalImage MemoryAllocator::makeRTStorageImage(uint32_t width,
-                                               uint32_t height)
+                                               uint32_t height,
+                                               bool rgb)
 {
-    return makeDedicatedImage(width, height, 1, formats_.rtStorageImage,
+    return makeDedicatedImage(width, height, 1,
+                              rgb ? formats_.rtStorageImageRGB :
+                                  formats_.rtStorageImageDepth,
                               ImageFlags::rtStorageUsage,
                               type_indices_.rtStorage);
 }

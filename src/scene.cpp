@@ -1332,7 +1332,6 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     VkDescriptorBufferInfo material_buffer_info;
     vector<VkDescriptorImageInfo> descriptor_views;
 
-#if 0
     // FIXME null descriptorManager feels a bit indirect
     if (material_set.hdl != VK_NULL_HANDLE &&
         material_metadata.numMaterials > 0) {
@@ -1412,6 +1411,7 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
         }
     }
 
+    // FIXME only update raster culling descriptors if raster is used
     VkDescriptorBufferInfo mesh_chunk_buffer_info;
     mesh_chunk_buffer_info.buffer = data.buffer;
     mesh_chunk_buffer_info.offset = staged.hdr.meshChunkOffset;
@@ -1429,7 +1429,6 @@ shared_ptr<Scene> LoaderState::makeScene(SceneLoadInfo load_info)
     cull_desc_update.pBufferInfo = &mesh_chunk_buffer_info;
     cull_desc_update.pTexelBufferView = nullptr;
     desc_updates.push_back(cull_desc_update);
-#endif
 
     VkDescriptorBufferInfo vertex_buffer_info;
     VkDescriptorBufferInfo index_buffer_info;

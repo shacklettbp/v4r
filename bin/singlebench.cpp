@@ -50,8 +50,8 @@ int main(int argc, char *argv[]) {
         };
     }
 
-    using Pipeline = BlinnPhong<RenderOutputs::Color,
-                           DataSource::Uniform, DataSource::Uniform, DataSource::Uniform>;
+    using Pipeline = Unlit<RenderOutputs::Color,
+                           DataSource::Texture>;
 
     BatchRenderer renderer({0, 1, 1, batch_size, res, res,
         glm::mat4(
@@ -60,7 +60,7 @@ int main(int argc, char *argv[]) {
             0, 1, -1.19209e-07, 0,
             0, 0, 0, 1
         )},
-        RenderFeatures<Pipeline> { RenderOptions::CpuSynchronization | RenderOptions::RayTracePrimary }
+        RenderFeatures<Pipeline> { RenderOptions::CpuSynchronization }
     );
 
     auto loader = renderer.makeLoader();

@@ -361,7 +361,6 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
     if constexpr (Props::needMaterial) {
         using SceneLayout = typename Props::PerSceneLayout;
 
-
         array<VkSampler *, SceneLayout::NumBindings> layout_args;
         layout_args.fill(nullptr);
 
@@ -408,33 +407,19 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
         rt_image_pool = RTImageDescriptorLayout::makePool(dev,
             num_streams * frames_per_stream);
 
-        // FIXME needs to be moved into Props
-#if 0
-        using RTSceneLayout = DescriptorLayout<
-            BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                          VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>,
-            BindingConfig<1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                          VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>,
-            BindingConfig<2, VK_DESCRIPTOR_TYPE_SAMPLER, 1,
-                          VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>,
-            BindingConfig<3, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
-                          VulkanConfig::max_materials,
-                          VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
-                          VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT>
+        using RTSceneLayout = typename Props::PerSceneRTLayout;
 
-        >;
+        array<VkSampler *, RTSceneLayout::NumBindings> layout_args;
+        layout_args.fill(nullptr);
 
-        rt_scene_layout = RTSceneLayout::makeSetLayout(dev, nullptr, nullptr,
-            &texture_sampler, nullptr);
-#endif
-        using RTSceneLayout = DescriptorLayout<
-            BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                          VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>,
-            BindingConfig<1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
-                          VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>
-        >;
+        if constexpr (Props::needTextures) {
+            layout_args[0] = &texture_sampler;
+        }
 
-        rt_scene_layout = RTSceneLayout::makeSetLayout(dev, nullptr, nullptr);
+        rt_scene_layout = apply([&](auto ...args) {
+            return RTSceneLayout::makeSetLayout(dev, args...);
+        }, layout_args);
+
         make_rt_scene_pool = RTSceneLayout::makePool;
     }
 
@@ -465,6 +450,7 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
                                         MemoryAllocator &alloc,
                                         const FramebufferConfig &fb_cfg,
                                         VkRenderPass render_pass,
+                                        bool use_raster,
                                         bool use_rt)
 {
     vector<LocalImage> attachments;
@@ -484,8 +470,9 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
         if (use_rt) {
             attachments.emplace_back(
                 alloc.makeRTStorageImage(fb_cfg.totalWidth,
-                                         fb_cfg.totalHeight));
-        } else {
+                                         fb_cfg.totalHeight,
+                                         true));
+        } else if (use_raster) {
             attachments.emplace_back(
                     alloc.makeColorAttachment(fb_cfg.totalWidth,
                                               fb_cfg.totalHeight));
@@ -505,8 +492,9 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
         if (use_rt) {
             attachments.emplace_back(
                 alloc.makeRTStorageImage(fb_cfg.totalWidth,
-                                         fb_cfg.totalHeight));
-        } else {
+                                         fb_cfg.totalHeight,
+                                         false));
+        } else if (use_raster) {
             attachments.emplace_back(
                 alloc.makeLinearDepthAttachment(fb_cfg.totalWidth,
                                             fb_cfg.totalHeight));
@@ -523,7 +511,7 @@ static FramebufferState makeFramebuffer(const DeviceState &dev,
     }
 
     VkFramebuffer fb_handle = VK_NULL_HANDLE;
-    if (!use_rt) {
+    if (use_raster) {
         attachments.emplace_back(
                 alloc.makeDepthAttachment(fb_cfg.totalWidth, fb_cfg.totalHeight));
 
@@ -602,17 +590,12 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
         const DeviceState &dev,
         const FramebufferConfig &fb_cfg,
         const RenderState &render_state,
+        bool use_raster,
+        bool use_rt,
         MemoryAllocator &alloc)
 {
     using Props = PipelineProps<PipelineType>;
     using VertexType = typename PipelineType::Vertex;
-
-    (void)fb_cfg;
-    array<VkDescriptorSetLayout, 3> gfx_desc_layouts {
-        render_state.rtImageDescriptorLayout,
-        render_state.rtDescriptorLayout,
-        render_state.rtSceneDescriptorLayout,
-    };
 
     // Pipeline cache (FIXME)
     VkPipelineCacheCreateInfo pcache_info {};
@@ -621,179 +604,475 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
     REQ_VK(dev.dt.createPipelineCache(dev.hdl, &pcache_info,
                                       nullptr, &pipeline_cache));
 
-    const array<pair<const char *, VkShaderStageFlagBits>, 3> shader_cfg {{
-        {"primary.rgen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR},
-        {"primary.rmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR},
-        {"primary_unlit_color_texture.rchit.spv",
-            VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
+    const array<pair<const char *,
+                VkShaderStageFlagBits>, 3> raster_shader_cfg {{
+        {Props::vertexShaderName, VK_SHADER_STAGE_VERTEX_BIT},
+        {Props::fragmentShaderName, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {"meshcull.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT},
     }};
 
-    constexpr size_t num_shaders = shader_cfg.size();
+    const array<pair<const char *, VkShaderStageFlagBits>, 3> rt_shader_cfg {{
+        {"primary.rgen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+        {"primary.rmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR},
+        {Props::closestHitShaderName, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
+    }};
+
+    size_t num_shaders = 0;
+    if (use_raster) {
+        num_shaders += raster_shader_cfg.size();
+    }
+
+    size_t rt_shader_offset = num_shaders;
+
+    if (use_rt) {
+        num_shaders += rt_shader_cfg.size();
+    }
 
     vector<VkShaderModule> shader_modules(num_shaders);
-    array<VkPipelineShaderStageCreateInfo, num_shaders> shader_stages;
+    vector<VkPipelineShaderStageCreateInfo> shader_stages(num_shaders);
 
-    for (size_t shader_idx = 0; shader_idx < shader_cfg.size();
-         shader_idx++) {
-        auto [shader_name, shader_stage_flag] = shader_cfg[shader_idx];
+    auto loadShaders = [&](const auto &shader_cfg, size_t offset) {
+        for (size_t shader_idx = 0; shader_idx < shader_cfg.size();
+             shader_idx++) {
+            auto [shader_name, shader_stage_flag] = shader_cfg[shader_idx];
 
-        shader_modules[shader_idx] = loadShader(dev, shader_name);
+            shader_modules[shader_idx + offset] = loadShader(dev, shader_name);
 
-        shader_stages[shader_idx] = {
-            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-            nullptr,
-            0,
-            shader_stage_flag,
-            shader_modules[shader_idx],
-            "main",
-            nullptr
+            shader_stages[shader_idx + offset] = {
+                VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                nullptr,
+                0,
+                shader_stage_flag,
+                shader_modules[shader_idx],
+                "main",
+                nullptr
+            };
+        }
+    };
+    
+    if (use_raster) {
+        loadShaders(raster_shader_cfg, 0);
+    }
+
+    if (use_rt) {
+        loadShaders(rt_shader_cfg, rt_shader_offset);
+    }
+
+    optional<RasterPipelineState> raster_state;
+    optional<RTPipelineState> rt_state;
+
+    if (use_raster) {
+        // Vertex input assembly
+        constexpr size_t num_bindings = Props::needMaterial ? 3 : 2;
+
+        array<VkVertexInputBindingDescription, num_bindings> input_bindings;
+        input_bindings[0] = {
+            0, sizeof(VertexType), VK_VERTEX_INPUT_RATE_VERTEX
         };
+
+        input_bindings[1] = {
+            1, sizeof(glm::mat4x3), VK_VERTEX_INPUT_RATE_INSTANCE
+        };
+
+        if constexpr (Props::needMaterial) {
+            input_bindings[2] = {
+                2, sizeof(uint32_t), VK_VERTEX_INPUT_RATE_INSTANCE
+            };
+        }
+
+        const auto &vertex_attributes = Props::vertexAttributes;
+        constexpr size_t total_attributes = vertex_attributes.size() +
+            3 + (Props::needMaterial ? 1 : 0);
+
+        array<VkVertexInputAttributeDescription, total_attributes>
+            input_attributes;
+
+        std::copy(vertex_attributes.begin(), vertex_attributes.end(),
+                  input_attributes.begin());
+
+        // 3 vec4s for mat4x3 transform matrix
+        for (uint32_t idx_offset = 0; idx_offset < 3; idx_offset++) {
+            size_t attr_idx = vertex_attributes.size() + idx_offset;
+            input_attributes[attr_idx] = {
+                Props::transformLocationVertex + idx_offset, 1,
+                VK_FORMAT_R32G32B32A32_SFLOAT,
+                static_cast<uint32_t>(idx_offset * sizeof(glm::vec4))
+            };
+        }
+
+        if constexpr (Props::needMaterial) {
+            input_attributes[input_attributes.size() - 1] = {
+                Props::materialLocationVertex, 2,
+                VK_FORMAT_R32_UINT, 0
+            };
+        }
+    
+        constexpr size_t total_layouts = Props::needMaterial ? 2 : 1;
+    
+        array<VkDescriptorSetLayout, total_layouts> gfx_desc_layouts;
+        gfx_desc_layouts[0] = render_state.frameDescriptorLayout;
+    
+        if constexpr (Props::needMaterial) {
+            gfx_desc_layouts[1] = render_state.sceneDescriptorLayout;
+        }
+
+        VkPipelineVertexInputStateCreateInfo vert_info;
+        vert_info.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        vert_info.pNext = nullptr;
+        vert_info.flags = 0;
+        vert_info.vertexBindingDescriptionCount =
+            static_cast<uint32_t>(input_bindings.size());
+        vert_info.pVertexBindingDescriptions = input_bindings.data();
+        vert_info.vertexAttributeDescriptionCount =
+            static_cast<uint32_t>(input_attributes.size());
+        vert_info.pVertexAttributeDescriptions = input_attributes.data();
+
+        // Assembly
+        VkPipelineInputAssemblyStateCreateInfo input_assembly_info {};
+        input_assembly_info.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+        input_assembly_info.topology =
+            VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        input_assembly_info.primitiveRestartEnable = VK_FALSE;
+
+        // Viewport
+        VkRect2D scissors {
+            { 0, 0 },
+            { fb_cfg.totalWidth, fb_cfg.totalHeight }
+        };
+
+        VkPipelineViewportStateCreateInfo viewport_info {};
+        viewport_info.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewport_info.viewportCount = 1;
+        viewport_info.pViewports = nullptr;
+        viewport_info.scissorCount = 1;
+        viewport_info.pScissors = &scissors;
+
+        // Multisample
+        VkPipelineMultisampleStateCreateInfo multisample_info {};
+        multisample_info.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+        multisample_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        multisample_info.sampleShadingEnable = VK_FALSE;
+        multisample_info.alphaToCoverageEnable = VK_FALSE;
+        multisample_info.alphaToOneEnable = VK_FALSE;
+
+        // Rasterization
+        VkPipelineRasterizationStateCreateInfo raster_info {};
+        raster_info.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        raster_info.depthClampEnable = VK_FALSE;
+        raster_info.rasterizerDiscardEnable = VK_FALSE;
+        raster_info.polygonMode = VK_POLYGON_MODE_FILL;
+        raster_info.cullMode = VK_CULL_MODE_BACK_BIT;
+        raster_info.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        raster_info.depthBiasEnable = VK_FALSE;
+        raster_info.lineWidth = 1.0f;
+
+        // Depth/Stencil
+        VkPipelineDepthStencilStateCreateInfo depth_info {};
+        depth_info.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        depth_info.depthTestEnable = VK_TRUE;
+        depth_info.depthWriteEnable = VK_TRUE;
+        depth_info.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+        depth_info.depthBoundsTestEnable = VK_FALSE;
+        depth_info.stencilTestEnable = VK_FALSE;
+        depth_info.back.compareOp = VK_COMPARE_OP_ALWAYS;
+
+        // Blend
+        VkPipelineColorBlendAttachmentState blend_attach {};
+        blend_attach.blendEnable = VK_FALSE;
+        blend_attach.colorWriteMask =
+            VK_COLOR_COMPONENT_R_BIT |
+            VK_COLOR_COMPONENT_G_BIT |
+            VK_COLOR_COMPONENT_B_BIT |
+            VK_COLOR_COMPONENT_A_BIT;
+
+        vector<VkPipelineColorBlendAttachmentState> blend_attachments;
+        if (fb_cfg.colorOutput) {
+            blend_attachments.push_back(blend_attach);
+        }
+
+        if (fb_cfg.depthOutput) {
+            blend_attachments.push_back(blend_attach);
+        }
+
+        VkPipelineColorBlendStateCreateInfo blend_info {};
+        blend_info.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        blend_info.logicOpEnable = VK_FALSE;
+        blend_info.attachmentCount =
+            static_cast<uint32_t>(blend_attachments.size());
+        blend_info.pAttachments = blend_attachments.data();
+
+        // Dynamic
+        VkDynamicState dyn_viewport_enable = VK_DYNAMIC_STATE_VIEWPORT;
+    
+        VkPipelineDynamicStateCreateInfo dyn_info {};
+        dyn_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        dyn_info.dynamicStateCount = 1;
+        dyn_info.pDynamicStates = &dyn_viewport_enable;
+    
+        // Push constant
+        VkPushConstantRange push_const {
+            VK_SHADER_STAGE_VERTEX_BIT |
+                VK_SHADER_STAGE_FRAGMENT_BIT, // FIXME this isn't necessary for all pipelines
+            0,
+            sizeof(RenderPushConstant),
+        };
+
+        // Layout configuration
+        VkPipelineLayoutCreateInfo gfx_layout_info;
+        gfx_layout_info.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        gfx_layout_info.pNext = nullptr;
+        gfx_layout_info.flags = 0;
+        gfx_layout_info.setLayoutCount =
+            static_cast<uint32_t>(gfx_desc_layouts.size());
+        gfx_layout_info.pSetLayouts = gfx_desc_layouts.data();
+        gfx_layout_info.pushConstantRangeCount = 1;
+        gfx_layout_info.pPushConstantRanges = &push_const;
+
+        VkPipelineLayout gfx_layout;
+        REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &gfx_layout_info,
+                                           nullptr, &gfx_layout));
+
+        VkGraphicsPipelineCreateInfo gfx_info;
+        gfx_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        gfx_info.pNext = nullptr;
+        gfx_info.flags = 0;
+        gfx_info.stageCount = 2;
+        gfx_info.pStages = shader_stages.data();
+        gfx_info.pVertexInputState = &vert_info;
+        gfx_info.pInputAssemblyState = &input_assembly_info;
+        gfx_info.pTessellationState = nullptr;
+        gfx_info.pViewportState = &viewport_info;
+        gfx_info.pRasterizationState = &raster_info;
+        gfx_info.pMultisampleState = &multisample_info;
+        gfx_info.pDepthStencilState = &depth_info;
+        gfx_info.pColorBlendState = &blend_info;
+        gfx_info.pDynamicState = &dyn_info;
+        gfx_info.layout = gfx_layout;
+        gfx_info.renderPass = render_state.renderPass;
+        gfx_info.subpass = 0;
+        gfx_info.basePipelineHandle = VK_NULL_HANDLE;
+        gfx_info.basePipelineIndex = -1;
+
+        VkPipeline gfx_pipeline;
+        REQ_VK(dev.dt.createGraphicsPipelines(dev.hdl, pipeline_cache, 1,
+                                              &gfx_info, nullptr,
+                                              &gfx_pipeline));
+
+        // Compute shaders for culling
+        array cull_layouts { render_state.meshCullDescriptorLayout,
+                             render_state.meshCullSceneDescriptorLayout };
+
+        VkPushConstantRange cull_const {
+            VK_SHADER_STAGE_COMPUTE_BIT,
+            0,
+            sizeof(CullPushConstant),
+        };
+
+        VkPipelineLayoutCreateInfo mesh_cull_layout_info;
+        mesh_cull_layout_info.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        mesh_cull_layout_info.pNext = nullptr;
+        mesh_cull_layout_info.flags = 0;
+        mesh_cull_layout_info.setLayoutCount = cull_layouts.size();
+        mesh_cull_layout_info.pSetLayouts = cull_layouts.data();
+        mesh_cull_layout_info.pushConstantRangeCount = 1;
+        mesh_cull_layout_info.pPushConstantRanges = &cull_const;
+
+        VkPipelineLayout mesh_cull_layout;
+        REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &mesh_cull_layout_info,
+                                           nullptr, &mesh_cull_layout));
+
+        array<VkComputePipelineCreateInfo, 1> compute_infos;
+        VkComputePipelineCreateInfo &mesh_cull_info = compute_infos[0];
+        mesh_cull_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        mesh_cull_info.pNext = nullptr;
+        mesh_cull_info.flags = 0;
+        mesh_cull_info.stage = shader_stages[2];
+        mesh_cull_info.layout = mesh_cull_layout;
+        mesh_cull_info.basePipelineHandle = VK_NULL_HANDLE;
+        mesh_cull_info.basePipelineIndex = -1;
+
+        array<VkPipeline, compute_infos.size()> compute_pipelines;
+        REQ_VK(dev.dt.createComputePipelines(dev.hdl, pipeline_cache,
+                                             compute_pipelines.size(),
+                                             compute_infos.data(),
+                                             nullptr,
+                                             compute_pipelines.data()));
+
+        raster_state.emplace(RasterPipelineState {
+            gfx_layout,
+            gfx_pipeline,
+            mesh_cull_layout,
+            compute_pipelines[0],
+        });
     }
 
-    array<VkRayTracingShaderGroupCreateInfoKHR, 3> shader_groups;
+    if (use_rt) {
+        array<VkRayTracingShaderGroupCreateInfoKHR, 3> rt_shader_groups;
 
-    shader_groups[0].sType =
-        VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
-    shader_groups[0].pNext = nullptr;
-    shader_groups[0].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
-    shader_groups[0].generalShader = 0;
-    shader_groups[0].closestHitShader = VK_SHADER_UNUSED_KHR;
-    shader_groups[0].anyHitShader = VK_SHADER_UNUSED_KHR;
-    shader_groups[0].intersectionShader = VK_SHADER_UNUSED_KHR;
-    shader_groups[0].pShaderGroupCaptureReplayHandle = nullptr;
+        rt_shader_groups[0].sType =
+            VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+        rt_shader_groups[0].pNext = nullptr;
+        rt_shader_groups[0].type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+        rt_shader_groups[0].generalShader = rt_shader_offset;
+        rt_shader_groups[0].closestHitShader = VK_SHADER_UNUSED_KHR;
+        rt_shader_groups[0].anyHitShader = VK_SHADER_UNUSED_KHR;
+        rt_shader_groups[0].intersectionShader = VK_SHADER_UNUSED_KHR;
+        rt_shader_groups[0].pShaderGroupCaptureReplayHandle = nullptr;
 
-    shader_groups[1].sType =
-        VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
-    shader_groups[1].pNext = nullptr;
-    shader_groups[1].type =
-        VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
-    shader_groups[1].generalShader = 1;
-    shader_groups[1].closestHitShader = VK_SHADER_UNUSED_KHR;
-    shader_groups[1].anyHitShader = VK_SHADER_UNUSED_KHR;
-    shader_groups[1].intersectionShader = VK_SHADER_UNUSED_KHR;
-    shader_groups[1].pShaderGroupCaptureReplayHandle = nullptr;
+        rt_shader_groups[1].sType =
+            VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+        rt_shader_groups[1].pNext = nullptr;
+        rt_shader_groups[1].type =
+            VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
+        rt_shader_groups[1].generalShader = rt_shader_offset + 1;
+        rt_shader_groups[1].closestHitShader = VK_SHADER_UNUSED_KHR;
+        rt_shader_groups[1].anyHitShader = VK_SHADER_UNUSED_KHR;
+        rt_shader_groups[1].intersectionShader = VK_SHADER_UNUSED_KHR;
+        rt_shader_groups[1].pShaderGroupCaptureReplayHandle = nullptr;
 
-    shader_groups[2].sType =
-        VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
-    shader_groups[2].pNext = nullptr;
-    shader_groups[2].type =
-        VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
-    shader_groups[2].generalShader = VK_SHADER_UNUSED_KHR;
-    shader_groups[2].closestHitShader = 2;
-    shader_groups[2].anyHitShader = VK_SHADER_UNUSED_KHR;
-    shader_groups[2].intersectionShader = VK_SHADER_UNUSED_KHR;
-    shader_groups[2].pShaderGroupCaptureReplayHandle = nullptr;
+        rt_shader_groups[2].sType =
+            VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
+        rt_shader_groups[2].pNext = nullptr;
+        rt_shader_groups[2].type =
+            VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
+        rt_shader_groups[2].generalShader = VK_SHADER_UNUSED_KHR;
+        rt_shader_groups[2].closestHitShader = rt_shader_offset + 2;
+        rt_shader_groups[2].anyHitShader = VK_SHADER_UNUSED_KHR;
+        rt_shader_groups[2].intersectionShader = VK_SHADER_UNUSED_KHR;
+        rt_shader_groups[2].pShaderGroupCaptureReplayHandle = nullptr;
 
+        // Push constant
+        VkPushConstantRange rt_push_const {
+            VK_SHADER_STAGE_RAYGEN_BIT_KHR |
+                VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
+            0,
+            sizeof(Shader::RTRenderPushConstant)
+        };
 
-    // Push constant
-    VkPushConstantRange push_const {
-        VK_SHADER_STAGE_RAYGEN_BIT_KHR |
-            VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
-        0,
-        sizeof(Shader::RTRenderPushConstant)
-    };
+        array<VkDescriptorSetLayout, 3> rt_desc_layouts {
+            render_state.rtImageDescriptorLayout,
+            render_state.rtDescriptorLayout,
+            render_state.rtSceneDescriptorLayout,
+        };
 
-    // Layout configuration
-    VkPipelineLayoutCreateInfo gfx_layout_info;
-    gfx_layout_info.sType =
-        VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    gfx_layout_info.pNext = nullptr;
-    gfx_layout_info.flags = 0;
-    gfx_layout_info.setLayoutCount =
-        static_cast<uint32_t>(gfx_desc_layouts.size());
-    gfx_layout_info.pSetLayouts = gfx_desc_layouts.data();
-    gfx_layout_info.pushConstantRangeCount = 1;
-    gfx_layout_info.pPushConstantRanges = &push_const;
+        // Layout configuration
+        VkPipelineLayoutCreateInfo rt_layout_info;
+        rt_layout_info.sType =
+            VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        rt_layout_info.pNext = nullptr;
+        rt_layout_info.flags = 0;
+        rt_layout_info.setLayoutCount =
+            static_cast<uint32_t>(rt_desc_layouts.size());
+        rt_layout_info.pSetLayouts = rt_desc_layouts.data();
+        rt_layout_info.pushConstantRangeCount = 1;
+        rt_layout_info.pPushConstantRanges = &rt_push_const;
 
-    VkPipelineLayout gfx_layout;
-    REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &gfx_layout_info,
-                                       nullptr, &gfx_layout));
+        VkPipelineLayout rt_layout;
+        REQ_VK(dev.dt.createPipelineLayout(dev.hdl, &rt_layout_info,
+                                           nullptr, &rt_layout));
 
-    VkRayTracingPipelineCreateInfoKHR rt_pipeline_info;
-    rt_pipeline_info.sType =
-        VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
-    rt_pipeline_info.pNext = nullptr;
-    rt_pipeline_info.flags = 0;
-    rt_pipeline_info.stageCount = shader_stages.size();
-    rt_pipeline_info.pStages = shader_stages.data();
-    rt_pipeline_info.groupCount = shader_groups.size();
-    rt_pipeline_info.pGroups = shader_groups.data();
-    rt_pipeline_info.maxPipelineRayRecursionDepth = 1;
-    rt_pipeline_info.pLibraryInfo = nullptr;
-    rt_pipeline_info.pLibraryInterface = nullptr;
-    rt_pipeline_info.pDynamicState = nullptr;
-    rt_pipeline_info.layout = gfx_layout;
-    rt_pipeline_info.basePipelineHandle = 0;
-    rt_pipeline_info.basePipelineIndex = 0;
+        VkRayTracingPipelineCreateInfoKHR rt_pipeline_info;
+        rt_pipeline_info.sType =
+            VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
+        rt_pipeline_info.pNext = nullptr;
+        rt_pipeline_info.flags = 0;
+        rt_pipeline_info.stageCount = shader_stages.size() - rt_shader_offset;
+        rt_pipeline_info.pStages = &shader_stages[rt_shader_offset];
+        rt_pipeline_info.groupCount = rt_shader_groups.size();
+        rt_pipeline_info.pGroups = rt_shader_groups.data();
+        rt_pipeline_info.maxPipelineRayRecursionDepth = 1;
+        rt_pipeline_info.pLibraryInfo = nullptr;
+        rt_pipeline_info.pLibraryInterface = nullptr;
+        rt_pipeline_info.pDynamicState = nullptr;
+        rt_pipeline_info.layout = rt_layout;
+        rt_pipeline_info.basePipelineHandle = 0;
+        rt_pipeline_info.basePipelineIndex = 0;
 
-    VkPipeline gfx_pipeline;
-    REQ_VK(dev.dt.createRayTracingPipelinesKHR(dev.hdl, VK_NULL_HANDLE,
-                                               VK_NULL_HANDLE, 1,
-                                               &rt_pipeline_info,
-                                               nullptr, &gfx_pipeline));
+        VkPipeline rt_pipeline;
+        REQ_VK(dev.dt.createRayTracingPipelinesKHR(dev.hdl, VK_NULL_HANDLE,
+                                                   VK_NULL_HANDLE, 1,
+                                                   &rt_pipeline_info,
+                                                   nullptr, &rt_pipeline));
 
-    VkDeviceSize group_size = alignOffset(dev.rtShaderGroupHandleSize,
-                                          dev.rtShaderGroupBaseAlignment);
+        VkDeviceSize group_size = alignOffset(dev.rtShaderGroupHandleSize,
+                                              dev.rtShaderGroupBaseAlignment);
 
-    // FIXME device local shader binding table?
-    const VkDeviceSize sbt_size =
-        group_size * shader_groups.size();
+        // FIXME device local shader binding table?
+        const VkDeviceSize sbt_size =
+            group_size * rt_shader_groups.size();
 
-    HostBuffer shader_binding_table = alloc.makeSBTBuffer(sbt_size);
+        HostBuffer shader_binding_table = alloc.makeSBTBuffer(sbt_size);
 
-    DynArray<uint8_t> sbt_scratch(sbt_size);
-    REQ_VK(dev.dt.getRayTracingShaderGroupHandlesKHR(dev.hdl, gfx_pipeline, 0,
-                                                     shader_groups.size(),
-                                                     sbt_size,
-                                                     sbt_scratch.data()));
+        DynArray<uint8_t> sbt_scratch(sbt_size);
+        REQ_VK(dev.dt.getRayTracingShaderGroupHandlesKHR(dev.hdl, rt_pipeline, 0,
+                                                         rt_shader_groups.size(),
+                                                         sbt_size,
+                                                         sbt_scratch.data()));
 
-    uint8_t *sbt_ptr = (uint8_t *)shader_binding_table.ptr;
-    for (uint32_t i = 0; i < shader_groups.size(); i++) {
-        memcpy(sbt_ptr, sbt_scratch.data() + i * dev.rtShaderGroupHandleSize,
-               dev.rtShaderGroupHandleSize);
+        uint8_t *sbt_ptr = (uint8_t *)shader_binding_table.ptr;
+        for (uint32_t i = 0; i < rt_shader_groups.size(); i++) {
+            memcpy(sbt_ptr, sbt_scratch.data() + i * dev.rtShaderGroupHandleSize,
+                   dev.rtShaderGroupHandleSize);
 
-        sbt_ptr += dev.rtShaderGroupBaseAlignment;
+            sbt_ptr += dev.rtShaderGroupBaseAlignment;
+        }
+
+        shader_binding_table.flush(dev);
+
+        VkBufferDeviceAddressInfoKHR sbt_addr_info;
+        sbt_addr_info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR;
+        sbt_addr_info.pNext = nullptr;
+        sbt_addr_info.buffer = shader_binding_table.buffer;
+        VkDeviceAddress sbt_base_addr =
+            dev.dt.getBufferDeviceAddressKHR(dev.hdl, &sbt_addr_info);
+
+        VkStridedDeviceAddressRegionKHR raygen_entry {
+            sbt_base_addr,
+            group_size,
+            group_size,
+        };
+
+        VkStridedDeviceAddressRegionKHR miss_entry {
+            sbt_base_addr + group_size,
+            group_size,
+            group_size,
+        };
+
+        VkStridedDeviceAddressRegionKHR hit_entry {
+            sbt_base_addr + group_size * 2,
+            group_size,
+            group_size,
+        };
+
+        VkStridedDeviceAddressRegionKHR callable_entry {};
+
+        rt_state.emplace(RTPipelineState {
+            rt_layout,
+            rt_pipeline,
+            RTBindingTable {
+                move(shader_binding_table),
+                raygen_entry,
+                miss_entry,
+                hit_entry,
+                callable_entry,
+            },
+        });
     }
-
-    shader_binding_table.flush(dev);
-
-    VkBufferDeviceAddressInfoKHR sbt_addr_info;
-    sbt_addr_info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR;
-    sbt_addr_info.pNext = nullptr;
-    sbt_addr_info.buffer = shader_binding_table.buffer;
-    VkDeviceAddress sbt_base_addr =
-        dev.dt.getBufferDeviceAddressKHR(dev.hdl, &sbt_addr_info);
-
-    VkStridedDeviceAddressRegionKHR raygen_entry {
-        sbt_base_addr,
-        group_size,
-        group_size,
-    };
-
-    VkStridedDeviceAddressRegionKHR miss_entry {
-        sbt_base_addr + group_size,
-        group_size,
-        group_size,
-    };
-
-    VkStridedDeviceAddressRegionKHR hit_entry {
-        sbt_base_addr + group_size * 2,
-        group_size,
-        group_size,
-    };
-
-    VkStridedDeviceAddressRegionKHR callable_entry {};
 
     return PipelineState {
         shader_modules,
         pipeline_cache,
-        gfx_layout,
-        gfx_pipeline,
-        move(shader_binding_table),
-        raygen_entry,
-        miss_entry,
-        hit_entry,
-        callable_entry,
+        move(raster_state),
+        move(rt_state),
     };
 }
 
@@ -823,7 +1102,9 @@ static PerFrameState makeFrameState(const DeviceState &dev,
                                     uint32_t batch_size,
                                     uint32_t frame_idx,
                                     uint32_t num_frames_per_stream,
-                                    uint32_t stream_idx)
+                                    uint32_t stream_idx,
+                                    bool use_raster,
+                                    bool use_rt)
 {
     VkCommandBuffer render_command = makeCmdBuffer(dev, gfx_pool);
     VkCommandBuffer copy_command = makeCmdBuffer(dev, gfx_pool);
@@ -849,8 +1130,6 @@ static PerFrameState makeFrameState(const DeviceState &dev,
     const bool use_materials = param_config.totalMaterialIndexBytes > 0;
     const bool use_lights = param_config.totalLightParamBytes > 0;
 
-    VkDescriptorSet frame_set = makeDescriptorSet(dev, frame_set_pool,
-                                                  frame_set_layout);
     vector<VkWriteDescriptorSet> desc_set_updates;
     desc_set_updates.reserve(2 + 5); // Frame set + cull set
 
@@ -880,21 +1159,8 @@ static PerFrameState makeFrameState(const DeviceState &dev,
     VkDescriptorBufferInfo view_buffer_info = {
         param_buffer.buffer,
         base_offset + param_config.viewOffset,
-        param_config.totalViewBytes
+        param_config.totalViewBytes,
     };
-
-    VkWriteDescriptorSet binding_update;
-    binding_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    binding_update.pNext = nullptr;
-    binding_update.dstSet = frame_set;
-    binding_update.dstBinding = 0;
-    binding_update.dstArrayElement = 0;
-    binding_update.descriptorCount = 1;
-    binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    binding_update.pImageInfo = nullptr;
-    binding_update.pBufferInfo = &view_buffer_info;
-    binding_update.pTexelBufferView = nullptr;
-    desc_set_updates.push_back(binding_update);
 
     uint32_t *material_ptr = nullptr;
     LightProperties *light_ptr = nullptr;
@@ -909,6 +1175,7 @@ static PerFrameState makeFrameState(const DeviceState &dev,
     }
 
     VkDescriptorBufferInfo light_info;
+
     if (use_lights) {
         light_ptr = reinterpret_cast<LightProperties *>(
                 base_ptr + param_config.lightsOffset);
@@ -919,94 +1186,124 @@ static PerFrameState makeFrameState(const DeviceState &dev,
         light_info = {
             param_buffer.buffer,
             base_offset + param_config.lightsOffset,
-            param_config.totalLightParamBytes
+            param_config.totalLightParamBytes,
         };
+    }
+
+    VkDescriptorSet frame_set = VK_NULL_HANDLE;
+    VkDescriptorSet cull_set = VK_NULL_HANDLE;
+
+    VkDescriptorBufferInfo transform_info;
+    VkDescriptorBufferInfo indirect_input_buffer_info;
+    VkDescriptorBufferInfo indirect_output_buffer_info;
+    VkDescriptorBufferInfo indirect_count_buffer_info;
+
+    VkDeviceSize count_indirect_offset = 0;
+    VkDeviceSize draw_indirect_offset = 0;
+    DrawInput *draw_ptr = nullptr;
+
+    VkWriteDescriptorSet binding_update;
+
+    if (use_raster) {
+        frame_set = makeDescriptorSet(dev, frame_set_pool,
+                                      frame_set_layout);
+
+        binding_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        binding_update.pNext = nullptr;
+        binding_update.dstSet = frame_set;
+        binding_update.dstBinding = 0;
+        binding_update.dstArrayElement = 0;
+        binding_update.descriptorCount = 1;
+        binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        binding_update.pImageInfo = nullptr;
+        binding_update.pBufferInfo = &view_buffer_info;
+        binding_update.pTexelBufferView = nullptr;
+        desc_set_updates.push_back(binding_update);
+
+        if (light_ptr) {
+            binding_update.dstBinding = 1;
+            binding_update.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            binding_update.pBufferInfo = &light_info;
+            desc_set_updates.push_back(binding_update);
+        }
+
+        draw_ptr = reinterpret_cast<DrawInput *>(
+                base_ptr + param_config.cullInputOffset);
+
+        VkDeviceSize base_indirect_offset =
+            param_config.totalIndirectBytes * frame_idx;
+
+        count_indirect_offset = 
+            base_indirect_offset + param_config.countIndirectOffset;
+
+        draw_indirect_offset = 
+            base_indirect_offset + param_config.drawIndirectOffset;
+
+        cull_set = makeDescriptorSet(dev, mesh_cull_set_pool,
+                                     mesh_cull_set_layout);
+
+        transform_info = {
+            param_buffer.buffer,
+            base_offset,
+            param_config.totalTransformBytes
+        };
+        
+        binding_update.dstSet = cull_set;
+        binding_update.dstBinding = 0;
+        binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        binding_update.pBufferInfo = &transform_info;
+        desc_set_updates.push_back(binding_update);
 
         binding_update.dstBinding = 1;
-        binding_update.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        binding_update.pBufferInfo = &light_info;
+        binding_update.pBufferInfo = &view_buffer_info;
+        desc_set_updates.push_back(binding_update);
+
+        indirect_input_buffer_info = {
+            param_buffer.buffer,
+            param_config.cullInputOffset,
+            param_config.totalCullInputBytes
+        };
+
+        binding_update.dstBinding = 2;
+        binding_update.pBufferInfo = &indirect_input_buffer_info;
+        desc_set_updates.push_back(binding_update);
+
+        indirect_output_buffer_info = {
+            indirect_buffer.buffer,
+            draw_indirect_offset,
+            param_config.totalDrawIndirectBytes
+        };
+
+        binding_update.dstBinding = 3;
+        binding_update.pBufferInfo = &indirect_output_buffer_info;
+        desc_set_updates.push_back(binding_update);
+
+        indirect_count_buffer_info = {
+            indirect_buffer.buffer,
+            count_indirect_offset,
+            param_config.totalCountIndirectBytes
+        };
+
+        binding_update.dstBinding = 4;
+        binding_update.pBufferInfo = &indirect_count_buffer_info;
         desc_set_updates.push_back(binding_update);
     }
 
-    // Indirect draw stuff
-    
-    DrawInput *draw_ptr = reinterpret_cast<DrawInput *>(
-            base_ptr + param_config.cullInputOffset);
+    VkDescriptorSet rt_set = VK_NULL_HANDLE;
+    VkDescriptorImageInfo storage_image_info;
+    VkDescriptorBufferInfo material_buffer_info;
 
-    VkDeviceSize base_indirect_offset =
-        param_config.totalIndirectBytes * frame_idx;
+    if (use_rt) {
+        rt_set = makeDescriptorSet(dev, rt_set_pool,
+                                   rt_set_layout);
 
-    VkDeviceSize count_indirect_offset = 
-        base_indirect_offset + param_config.countIndirectOffset;
+        // FIXME depth vs RGB output
+        storage_image_info = {
+            VK_NULL_HANDLE,                      
+            fb.attachmentViews[0],
+            VK_IMAGE_LAYOUT_GENERAL,
+        };
 
-    VkDeviceSize draw_indirect_offset = 
-        base_indirect_offset + param_config.drawIndirectOffset;
-
-    VkDescriptorSet cull_set = makeDescriptorSet(dev, mesh_cull_set_pool,
-                                                 mesh_cull_set_layout);
-
-    VkDescriptorBufferInfo transform_info {
-        param_buffer.buffer,
-        base_offset,
-        param_config.totalTransformBytes
-    };
-    
-    binding_update.dstSet = cull_set;
-    binding_update.dstBinding = 0;
-    binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    binding_update.pBufferInfo = &transform_info;
-    desc_set_updates.push_back(binding_update);
-
-    binding_update.dstBinding = 1;
-    binding_update.pBufferInfo = &view_buffer_info;
-    desc_set_updates.push_back(binding_update);
-
-    VkDescriptorBufferInfo indirect_input_buffer_info {
-        param_buffer.buffer,
-        param_config.cullInputOffset,
-        param_config.totalCullInputBytes
-    };
-
-    binding_update.dstBinding = 2;
-    binding_update.pBufferInfo = &indirect_input_buffer_info;
-    desc_set_updates.push_back(binding_update);
-
-    VkDescriptorBufferInfo indirect_output_buffer_info {
-        indirect_buffer.buffer,
-        draw_indirect_offset,
-        param_config.totalDrawIndirectBytes
-    };
-
-    binding_update.dstBinding = 3;
-    binding_update.pBufferInfo = &indirect_output_buffer_info;
-    desc_set_updates.push_back(binding_update);
-
-    VkDescriptorBufferInfo indirect_count_buffer_info {
-        indirect_buffer.buffer,
-        count_indirect_offset,
-        param_config.totalCountIndirectBytes
-    };
-
-    binding_update.dstBinding = 4;
-    binding_update.pBufferInfo = &indirect_count_buffer_info;
-    desc_set_updates.push_back(binding_update);
-
-    VkDescriptorSet rt_set = makeDescriptorSet(dev, rt_set_pool,
-                                               rt_set_layout);
-
-    VkDescriptorBufferInfo material_buffer_info = {
-        param_buffer.buffer,
-        base_offset + param_config.materialIndicesOffset,
-        param_config.totalMaterialIndexBytes,
-    };
-
-    VkDescriptorImageInfo storage_image_info = {
-        VK_NULL_HANDLE,                      
-        fb.attachmentViews[0],
-        VK_IMAGE_LAYOUT_GENERAL,
-    };
-
-    if (rt_set != VK_NULL_HANDLE) {
         binding_update.dstSet = rt_set;
         binding_update.dstBinding = 0;
         binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -1020,17 +1317,27 @@ static PerFrameState makeFrameState(const DeviceState &dev,
         binding_update.pImageInfo = nullptr;
         desc_set_updates.push_back(binding_update);
 
-        binding_update.dstBinding = 2;
-        binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        binding_update.pBufferInfo = &material_buffer_info;
-        binding_update.pImageInfo = nullptr;
-        desc_set_updates.push_back(binding_update);
+        if (material_ptr) {
+            material_buffer_info = {
+                param_buffer.buffer,
+                base_offset + param_config.materialIndicesOffset,
+                param_config.totalMaterialIndexBytes,
+            };
 
-        binding_update.dstBinding = 3;
-        binding_update.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        binding_update.pBufferInfo = &light_info;
-        binding_update.pImageInfo = nullptr;
-        desc_set_updates.push_back(binding_update);
+            binding_update.dstBinding = 2;
+            binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            binding_update.pBufferInfo = &material_buffer_info;
+            binding_update.pImageInfo = nullptr;
+            desc_set_updates.push_back(binding_update);
+        }
+
+        if (light_ptr) {
+            binding_update.dstBinding = 3;
+            binding_update.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            binding_update.pBufferInfo = &light_info;
+            binding_update.pImageInfo = nullptr;
+            desc_set_updates.push_back(binding_update);
+        }
     }
 
     dev.dt.updateDescriptorSets(dev.hdl,
@@ -1273,7 +1580,8 @@ CommandStreamState::CommandStreamState(
                 render_state.rtImageDescriptorPool,
                 render_state.rtImageDescriptorLayout,
                 cpu_sync, batch_size,
-                frame_idx, num_frames_inflight, stream_idx));
+                frame_idx, num_frames_inflight, stream_idx,
+                !enable_rt_, enable_rt_));
 
         recordFBToLinearCopy(dev, frame_states_.back(), fb_cfg_, fb_,
                              enable_rt);
@@ -1378,9 +1686,21 @@ template <typename PipelineType>
 VulkanState::VulkanState(const RenderConfig &cfg,
                          const RenderFeatures<PipelineType> &features,
                          CoreVulkanHandles &&handles)
+    : VulkanState(cfg, features,
+                  !(features.options & RenderOptions::RayTracePrimary),
+                  features.options & RenderOptions::RayTracePrimary,
+                  move(handles))
+{}
+
+template <typename PipelineType>
+VulkanState::VulkanState(const RenderConfig &cfg,
+                         const RenderFeatures<PipelineType> &features,
+                         bool use_raster,
+                         bool use_rt,
+                         CoreVulkanHandles &&handles)
     : inst(move(handles.inst)),
       dev(move(handles.dev)),
-      alloc(dev, inst, features.options & RenderOptions::RayTracePrimary),
+      alloc(dev, inst, use_rt),
       fbCfg(PipelineImpl<PipelineType>::getFramebufferConfig(
               cfg.batchSize, cfg.imgWidth,
               cfg.imgHeight, cfg.numStreams,
@@ -1389,9 +1709,9 @@ VulkanState::VulkanState(const RenderConfig &cfg,
               dev, cfg.batchSize, cfg.numStreams,
               features.options, alloc)),
       pipeline(PipelineImpl<PipelineType>::makePipeline(
-              dev, fbCfg, renderState, alloc)),
-      fb(makeFramebuffer(dev, alloc, fbCfg, renderState.renderPass,
-                         features.options & RenderOptions::RayTracePrimary)),
+              dev, fbCfg, renderState, use_raster, use_rt, alloc)),
+      fb(makeFramebuffer(dev, alloc, fbCfg, renderState.renderPass, use_raster,
+                         use_rt)),
       globalTransform(cfg.coordinateTransform),
       loader_impl_(
               LoaderImpl::create<typename PipelineType::Vertex,
@@ -1402,12 +1722,12 @@ VulkanState::VulkanState(const RenderConfig &cfg,
       max_num_streams_(cfg.numStreams),
       transfer_queues_(dev.numTransferQueues),
       graphics_queues_(dev.numGraphicsQueues),
-      compute_queues_(features.options & RenderOptions::RayTracePrimary ? 
+      compute_queues_(use_rt ? 
                       dev.numComputeQueues : 0),
       batch_size_(cfg.batchSize),
       double_buffered_(features.options & RenderOptions::DoubleBuffered),
       cpu_sync_(features.options & RenderOptions::CpuSynchronization),
-      enable_rt_(features.options & RenderOptions::RayTracePrimary)
+      enable_rt_(use_rt)
 {
     bool transfer_shared = cfg.numLoaders > dev.numTransferQueues;
 

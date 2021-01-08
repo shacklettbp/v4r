@@ -114,7 +114,8 @@ struct ResourceFormats {
     VkFormat colorAttachment;
     VkFormat depthAttachment;
     VkFormat linearDepthAttachment;
-    VkFormat rtStorageImage;
+    VkFormat rtStorageImageRGB;
+    VkFormat rtStorageImageDepth;
 };
 
 struct Alignments {
@@ -162,7 +163,7 @@ public:
     LocalImage makeColorAttachment(uint32_t width, uint32_t height);
     LocalImage makeDepthAttachment(uint32_t width, uint32_t height);
     LocalImage makeLinearDepthAttachment(uint32_t width, uint32_t height);
-    LocalImage makeRTStorageImage(uint32_t width, uint32_t height);
+    LocalImage makeRTStorageImage(uint32_t width, uint32_t height, bool rgb);
 
     const ResourceFormats &getFormats() const { return formats_; }
 

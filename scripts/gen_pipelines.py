@@ -392,10 +392,21 @@ struct MaterialImpl<{parent_type}::MaterialParams> {{
     
     def gen_scene_layout(self):
         bindings = []
+        rt_bindings = []
+        rt_bindings.append(
+f"""BindingConfig<{len(rt_bindings)}, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                      VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>""")
+        rt_bindings.append(
+f"""BindingConfig<{len(rt_bindings)}, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                      VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>""")
+
         if self.num_textures > 0:
             bindings.append(
 f"""BindingConfig<{len(bindings)}, VK_DESCRIPTOR_TYPE_SAMPLER, 1,
                       VK_SHADER_STAGE_FRAGMENT_BIT>""")
+            rt_bindings.append(
+f"""BindingConfig<{len(rt_bindings)}, VK_DESCRIPTOR_TYPE_SAMPLER, 1,
+                      VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>""")
 
             for i in range(self.num_textures):
                 bindings.append(
@@ -403,20 +414,37 @@ f"""BindingConfig<{len(bindings)}, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
                       VulkanConfig::max_materials,
                       VK_SHADER_STAGE_FRAGMENT_BIT,
                       VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT>""")
+                rt_bindings.append(
+f"""BindingConfig<{len(rt_bindings)}, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                      VulkanConfig::max_materials,
+                      VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
+                      VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT>""")
 
         if self.num_params > 0:
             bindings.append(
 f"""BindingConfig<{len(bindings)}, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
                       VK_SHADER_STAGE_FRAGMENT_BIT>""")
-
-        if len(bindings) == 0:
-            return None
+            rt_bindings.append(
+f"""BindingConfig<{len(rt_bindings)}, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
+                      VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>""")
 
         sep = f",\n        "
-        return \
+        if len(bindings) == 0:
+            return \
+f"""using PerSceneRTLayout = DescriptorLayout<
+        {sep.join(rt_bindings)}
+    >;
+"""
+        else:
+            return \
 f"""using PerSceneLayout = DescriptorLayout<
         {sep.join(bindings)}
-    >;"""
+    >;
+
+using PerSceneRTLayout = DescriptorLayout<
+        {sep.join(rt_bindings)}
+    >;
+"""
 
 def build_vertex(props, iface):
     vertex = Vertex()
@@ -548,6 +576,9 @@ struct PipelineProps<{specialization_type}> {{
         "{shader_name}.vert.spv";
     static constexpr const char *fragmentShaderName =
         "{shader_name}.frag.spv";
+
+    static constexpr const char *closestHitShaderName =
+        "primary_{shader_name}.rchit.spv";
 
     {vertex.gen_attrs(specialization_type)}
 
