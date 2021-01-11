@@ -24,7 +24,10 @@ int main(int argc, char *argv[]) {
             0, 1, -1.19209e-07, 0,
             0, 0, 0, 1
         ) },
-        RenderFeatures<Pipeline> { RenderOptions::CpuSynchronization }
+        RenderFeatures<Pipeline> {
+            RenderOptions::CpuSynchronization |
+                RenderOptions::RayTracePrimary,
+        }
     );
 
     RenderDoc rdoc {};

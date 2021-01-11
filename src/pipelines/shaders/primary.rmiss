@@ -1,9 +1,12 @@
 #version 460
 #extension GL_EXT_ray_tracing : require
+#extension GL_GOOGLE_include_directive : require
 
-layout (location = 0) rayPayloadInEXT vec3 payload; 
+#include "rt_common.h"
+
+layout (location = 0) rayPayloadInEXT RTPayload payload; 
 
 void main()
 {
-    payload = vec3(0.f, 0.f, 0.f);
+    payload.color = vec3(0.f, 0.f, 0.f);
 }

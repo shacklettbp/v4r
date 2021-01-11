@@ -4,20 +4,27 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "shader_common.h"
+#include "rt_common.h"
 
 layout (push_constant, scalar) uniform PushConstant {
     RTRenderPushConstant render_const;
 };
 
-layout (set = 0, binding = 0, rgba8) uniform image2D image;
+#ifdef OUTPUT_COLOR
+layout (set = 0, binding = RGEN_COLOR_POS, rgba8) uniform image2D colorImage;
+#endif
 
-layout (set = 0, binding = 1) readonly buffer ViewInfos {
+#ifdef OUTPUT_DEPTH
+layout (set = 0, binding = RGEN_DEPTH_POS, r32) uniform image2D depthImage;
+#endif
+
+layout (set = 0, binding = RGEN_VIEW_POS) readonly buffer ViewInfos {
     ViewInfo view_info[];
 };
 
 layout (set = 1, binding = 0) uniform accelerationStructureEXT tlas;
 
-layout (location = 0) rayPayloadEXT vec3 payload;
+layout (location = 0) rayPayloadEXT RTPayload payload;
 
 void main()
 {
@@ -38,7 +45,15 @@ void main()
     traceRayEXT(tlas, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, o.xyz,
                 tmin, d.xyz, tmax, 0);
 
-	imageStore(image, ivec2(gl_LaunchIDEXT.xy) + ivec2(render_const.xOffset,
-                                                       render_const.yOffset),
-               vec4(payload, 1.f));
+#ifdef OUTPUT_COLOR
+	imageStore(colorImage, ivec2(gl_LaunchIDEXT.xy) + ivec2(render_const.xOffset,
+                                                            render_const.yOffset),
+               vec4(payload.color, 1.f));
+#endif
+
+#ifdef OUTPUT_DEPTH
+	imageStore(depthImage, ivec2(gl_LaunchIDEXT.xy) + ivec2(render_const.xOffset,
+                                                            render_const.yOffset),
+               vec4(payload.depth, 1.f));
+#endif
 }
