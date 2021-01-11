@@ -13,58 +13,72 @@
 
 struct Vertex
 {
-RCHIT_VERTEX_ATTRS
+    float px;
+    float py;
+    float pz;
+#ifdef LIT_PIPELINE
+    float nx;
+    float ny;
+    float nz;
+#endif
+#ifdef HAS_TEXTURES
+    float ux;
+    float uy;
+#endif
+#ifdef VERTEX_COLOR
+    u8vec4 color;
+#endif
 };
 
 layout (push_constant, scalar) uniform PushConstant {
     RenderPushConstant render_const;
 };
 
-layout (set = 0, binding = 0) readonly buffer ViewInfos {
+layout (set = 1, binding = 0) readonly buffer ViewInfos {
     ViewInfo view_info[];
 };
 
 #ifdef HAS_MATERIALS
 
-layout (set = 0, binding = RCHIT_MAT_IDX_POS) readonly buffer MatIdxs {
+layout (set = 1, binding = RCHIT_MATERIAL_BIND) readonly buffer MatIdxs {
     uint material_indices[];
 };
 
 #endif
 
 #ifdef LIT_PIPELINE
-layout (set = 0, binding = RCHIT_LIGHT_POS, scalar) uniform LightingInfo {
+layout (set = 1, binding = RCHIT_LIGHT_BIND, scalar) uniform LightingInfo {
     LightProperties lights[MAX_LIGHTS];
     uint numLights;
 } lighting_info;
 
-layout (set = 1, binding = 0) uniform accelerationStructureEXT tlas;
+layout (set = 2, binding = 0) uniform accelerationStructureEXT tlas;
 #endif
 
-layout (set = 2, binding = 0, scalar) buffer Vertices {
+layout (set = 3, binding = 0, scalar) buffer Vertices {
     Vertex vertices[];
 };
 
-layout (set = 2, binding = 1) buffer Indices {
+layout (set = 3, binding = 1) buffer Indices {
     uint indices[];
 };
 
 #ifdef HAS_TEXTURES
-layout (set = 2, binding = 2) uniform sampler texture_sampler;
+layout (set = 3, binding = 2) uniform sampler texture_sampler;
 #endif
 
 #ifdef ALBEDO_COLOR_TEXTURE
-layout (set = 2, binding = RCHIT_ALBEDO_COLOR_TEXTURE_BIND)
+layout (set = 3, binding = RCHIT_ALBEDO_COLOR_TEXTURE_BIND)
     uniform texture2D albedo_textures[];
 #endif
 
 #ifdef DIFFUSE_COLOR_TEXTURE
-layout (set = 2, binding = RCHIT_DIFFUSE_COLOR_TEXTURE_BIND)
+layout (set = 3, binding = RCHIT_DIFFUSE_COLOR_TEXTURE_BIND)
     uniform texture2D diffuse_textures[];
 #endif
 
 #ifdef SPECULAR_COLOR_TEXTURE
-layout (set = 2, binding = RCHIT_SPECULAR_COLOR_TEXTURE_BIND)
+layout (set = 3, binding = RCHIT_SPECULAR_COLOR_TEXTURE_BIND)
     uniform texture2D specular_textures[];
 #endif
 
@@ -73,16 +87,16 @@ struct MaterialParams {
     vec4 data[NUM_PARAM_VECS];
 };
 
-layout (set = 2, binding = RCHIT_PARAM_BIND) uniform Params {
+layout (set = 3, binding = RCHIT_PARAM_BIND) uniform Params {
     MaterialParams material_params[MAX_MATERIALS];
 };
 #endif
 
-layout (location = 0) rayPayloadInEXT vec3 payload;
+layout (location = 0) rayPayloadInEXT RTPayload payload;
 hitAttributeEXT vec3 hitAttrs;
 
 #ifdef LIT_PIPELINE
-vec3 readNormal(vec3 barycentrics, vec3 idxs)
+vec3 readNormal(vec3 barycentrics, uvec3 idxs)
 {
     float n00 = vertices[idxs.x].nx;
     float n01 = vertices[idxs.x].ny;
@@ -102,7 +116,7 @@ vec3 readNormal(vec3 barycentrics, vec3 idxs)
 #endif
 
 #ifdef HAS_TEXTURES
-vec2 readUV(vec3 barycentrics, vec3 idxs)
+vec2 readUV(vec3 barycentrics, uvec3 idxs)
 {
     float u00 = vertices[idxs.x].ux;
     float u01 = vertices[idxs.x].uy;
@@ -117,38 +131,42 @@ vec2 readUV(vec3 barycentrics, vec3 idxs)
 }
 #endif
 
-#ifdef HAS_VERTEX_COLOR
-vec3 readVertexColor(vec3 barycentrics, vec3 idxs)
+#ifdef VERTEX_COLOR
+vec3 readVertexColor(vec3 barycentrics, uvec3 idxs)
 {
-    float c00 = vertices[idxs.x].cx;
-    float c01 = vertices[idxs.x].cy;
-    float c02 = vertices[idxs.x].cz;
-    float c10 = vertices[idxs.y].cx;
-    float c11 = vertices[idxs.y].cy;
-    float c12 = vertices[idxs.y].cz;
-    float c20 = vertices[idxs.z].cx;
-    float c21 = vertices[idxs.z].cy;
-    float c22 = vertices[idxs.z].cz;
+    vec3 c0 = uvec4(vertices[idxs.x].color).xyz / 255.f;
+    vec3 c1 = uvec4(vertices[idxs.y].color).xyz / 255.f;
+    vec3 c2 = uvec4(vertices[idxs.z].color).xyz / 255.f;
 
     return vec3(
-        barycentrics.x * c00 + barycentrics.y * c10 + barycentrics.z * c20,
-        barycentrics.x * c01 + barycentrics.y * c11 + barycentrics.z * c21,
-        barycentrics.x * c02 + barycentrics.y * c12 + barycentrics.z * c22);
+        barycentrics.x * c0.x + barycentrics.y * c1.x + barycentrics.z * c2.x,
+        barycentrics.x * c0.y + barycentrics.y * c1.y + barycentrics.z * c2.y,
+        barycentrics.x * c0.z + barycentrics.y * c1.z + barycentrics.z * c2.z);
 }
 #endif
 
-#ifdef LIT_PIPELINE
+vec3 computeBarycentrics()
+{
+    return vec3(1.f - hitAttrs.x - hitAttrs.y,
+                hitAttrs.x, hitAttrs.y);
+}
 
-void computeColor()
+uvec3 computeIndices()
 {
     uint base_primitive = gl_InstanceCustomIndexEXT + 3 * gl_PrimitiveID;
 
-    const vec3 barycentrics = vec3(1.f - hitAttrs.x - hitAttrs.y,
-        hitAttrs.x, hitAttrs.y);
+    return uvec3(indices[nonuniformEXT(base_primitive)],
+                 indices[nonuniformEXT(base_primitive + 1)],
+                 indices[nonuniformEXT(base_primitive + 2)]);
+}
 
-    const uvec3 idxs = uvec3(indices[nonuniformEXT(base_primitive)],
-                             indices[nonuniformEXT(base_primitive + 1)],
-                             indices[nonuniformEXT(base_primitive + 2)]);
+#ifdef OUTPUT_COLOR
+#ifdef LIT_PIPELINE
+
+vec3 computeColor()
+{
+    vec3 barycentrics = computeBarycentrics();
+    uvec3 idxs = computeIndices();
 
     vec3 normal = readNormal(barycentrics, idxs);
 
@@ -159,6 +177,36 @@ void computeColor()
                              1.f / dot(normal_mat[1], normal_mat[1]),
                              1.f / dot(normal_mat[2], normal_mat[2]));
     normal = normal_mat * normal * normal_scale;
+
+#ifdef HAS_MATERIALS
+    uint material_idx = material_indices[gl_InstanceID];
+#endif
+
+#ifdef HAS_TEXTURES
+    vec2 uv = readUV(barycentrics, idxs);
+#endif
+
+#ifdef MATERIAL_PARAMS
+    MaterialParams params = material_params[material_idx];
+#endif
+
+#if defined(DIFFUSE_COLOR_TEXTURE)
+    vec3 diffuse = texture(sampler2D(diffuse_textures[material_idx],
+                                     texture_sampler), uv).xyz;
+#elif defined(DIFFUSE_COLOR_UNIFORM)
+    vec3 diffuse = DIFFUSE_COLOR_ACCESS;
+#endif
+
+#if defined(SPECULAR_COLOR_TEXTURE)
+    vec3 specular = texture(sampler2D(specular_textures[material_idx],
+                                      texture_sampler), uv).xyz;
+#elif defined(SPECULAR_COLOR_UNIFORM)
+    vec3 specular = SPECULAR_COLOR_ACCESS;
+#endif
+
+#if defined(SHININESS_UNIFORM)
+    float shininess = SHININESS_ACCESS;
+#endif
     
     vec3 Lo = vec3(0.f);
     for (int light_idx = 0; light_idx < lighting_info.numLights; light_idx++) {
@@ -189,18 +237,55 @@ void computeColor()
         if (rayQueryGetIntersectionTypeEXT(shadow_query, true) ==
             gl_RayQueryCommittedIntersectionNoneEXT)
         {
+#ifdef BLINN_PHONG
             Lo += blinnPhong(brdf_params, 32.f, vec3(1.f), vec3(1.f));
+#endif
         }
     }
 
-    payload = Lo;
+    return Lo;
 }
 
+#else
+
+vec3 computeColor()
+{
+    vec3 barycentrics = computeBarycentrics();
+    uvec3 idxs = computeIndices();
+
+#ifdef HAS_TEXTURES
+    vec2 uv = readUV(barycentrics, idxs);
+#endif
+
+#ifdef HAS_MATERIALS
+    uint material_idx = material_indices[gl_InstanceID];
+#endif
+
+#ifdef ALBEDO_COLOR_TEXTURE
+    vec3 albedo = texture(sampler2D(albedo_textures[material_idx],
+                                    texture_sampler), uv).xyz;
+
+#endif
+
+#ifdef ALBEDO_COLOR_UNIFORM
+    MaterialParams params = material_params[material_idx];
+    vec3 albedo = ALBEDO_COLOR_ACCESS;
+#endif
+
+#ifdef ALBEDO_COLOR_VERTEX
+    vec3 albedo = readVertexColor(barycentrics, idxs);
+#endif
+
+    return albedo;
+}
+
+#endif
 #endif
 
 #ifdef OUTPUT_DEPTH
 float computeDepth()
 {
+    return length(gl_WorldRayDirectionEXT * gl_HitTEXT);
 }
 #endif
 

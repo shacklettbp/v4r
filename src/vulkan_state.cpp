@@ -376,10 +376,12 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
         make_scene_pool = SceneLayout::makePool;
     }
 
-    VkDescriptorSetLayout rt_layout = VK_NULL_HANDLE;
-    DescriptorManager::MakePoolType make_rt_pool = nullptr;
-    VkDescriptorSetLayout rt_image_layout = VK_NULL_HANDLE;
-    VkDescriptorPool rt_image_pool = VK_NULL_HANDLE;
+    VkDescriptorSetLayout rt_accel_layout = VK_NULL_HANDLE;
+    DescriptorManager::MakePoolType make_rt_accel_pool = nullptr;
+    VkDescriptorSetLayout rgen_layout = VK_NULL_HANDLE;
+    VkDescriptorPool rgen_pool = VK_NULL_HANDLE;
+    VkDescriptorSetLayout rchit_layout = VK_NULL_HANDLE;
+    VkDescriptorPool rchit_pool = VK_NULL_HANDLE;
     VkDescriptorSetLayout rt_scene_layout = VK_NULL_HANDLE;
     DescriptorManager::MakePoolType make_rt_scene_pool = nullptr;
     if (opts & RenderOptions::RayTracePrimary) {
@@ -388,23 +390,20 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
                           1, VK_SHADER_STAGE_RAYGEN_BIT_KHR |
                              VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>>;
 
-        rt_layout = RTDescriptorLayout::makeSetLayout(dev, nullptr);
-        make_rt_pool = RTDescriptorLayout::makePool;
+        rt_accel_layout = RTDescriptorLayout::makeSetLayout(dev, nullptr);
+        make_rt_accel_pool = RTDescriptorLayout::makePool;
 
-        using RTImageDescriptorLayout = DescriptorLayout<
-            BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
-                          1, VK_SHADER_STAGE_RAYGEN_BIT_KHR>,
-            BindingConfig<1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                          1, VK_SHADER_STAGE_RAYGEN_BIT_KHR |
-                             VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>,
-            BindingConfig<2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-                          1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>,
-            BindingConfig<3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                          1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>>;
+        using RGenDescriptorLayout = typename Props::RGenDescriptorLayout;
+        rgen_layout = RGenDescriptorLayout::makeSetLayout(dev);
 
-        rt_image_layout =
-            RTImageDescriptorLayout::makeSetLayout(dev, nullptr, nullptr, nullptr, nullptr);
-        rt_image_pool = RTImageDescriptorLayout::makePool(dev,
+        rgen_pool = RGenDescriptorLayout::makePool(dev,
+            num_streams * frames_per_stream);
+
+        using RCHitDescriptorLayout = typename Props::RCHitDescriptorLayout;
+        rchit_layout =
+            RCHitDescriptorLayout::makeSetLayout(dev);
+
+        rchit_pool = RCHitDescriptorLayout::makePool(dev,
             num_streams * frames_per_stream);
 
         using RTSceneLayout = typename Props::PerSceneRTLayout;
@@ -413,7 +412,7 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
         layout_args.fill(nullptr);
 
         if constexpr (Props::needTextures) {
-            layout_args[0] = &texture_sampler;
+            layout_args[2] = &texture_sampler;
         }
 
         rt_scene_layout = apply([&](auto ...args) {
@@ -433,10 +432,12 @@ RenderState PipelineImpl<PipelineType>::makeRenderState(
         frame_descriptor_pool,
         scene_descriptor_layout,
         make_scene_pool,
-        rt_layout,
-        make_rt_pool,
-        rt_image_layout,
-        rt_image_pool,
+        rt_accel_layout,
+        make_rt_accel_pool,
+        rgen_layout,
+        rgen_pool,
+        rchit_layout,
+        rchit_pool,
         rt_scene_layout,
         make_rt_scene_pool,
         texture_sampler,
@@ -612,8 +613,8 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
     }};
 
     const array<pair<const char *, VkShaderStageFlagBits>, 3> rt_shader_cfg {{
-        {"primary.rgen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR},
-        {"primary.rmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR},
+        {Props::rayGenShaderName, VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+        {Props::missShaderName, VK_SHADER_STAGE_MISS_BIT_KHR},
         {Props::closestHitShaderName, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
     }};
 
@@ -958,9 +959,10 @@ PipelineState PipelineImpl<PipelineType>::makePipeline(
             sizeof(Shader::RTRenderPushConstant)
         };
 
-        array<VkDescriptorSetLayout, 3> rt_desc_layouts {
-            render_state.rtImageDescriptorLayout,
-            render_state.rtDescriptorLayout,
+        array<VkDescriptorSetLayout, 4> rt_desc_layouts {
+            render_state.rgenDescriptorLayout,
+            render_state.rchitDescriptorLayout,
+            render_state.rtAccelDescriptorLayout,
             render_state.rtSceneDescriptorLayout,
         };
 
@@ -1092,12 +1094,10 @@ static PerFrameState makeFrameState(const DeviceState &dev,
                                     const HostBuffer &param_buffer,
                                     const LocalBuffer &indirect_buffer,
                                     VkCommandPool gfx_pool,
-                                    VkDescriptorPool frame_set_pool,
-                                    VkDescriptorSetLayout frame_set_layout,
-                                    VkDescriptorPool mesh_cull_set_pool,
-                                    VkDescriptorSetLayout mesh_cull_set_layout,
-                                    VkDescriptorPool rt_set_pool,
-                                    VkDescriptorSetLayout rt_set_layout,
+                                    VkDescriptorSet frame_set,
+                                    VkDescriptorSet cull_set,
+                                    VkDescriptorSet rgen_set,
+                                    VkDescriptorSet rchit_set,
                                     bool cpu_sync,
                                     uint32_t batch_size,
                                     uint32_t frame_idx,
@@ -1131,7 +1131,6 @@ static PerFrameState makeFrameState(const DeviceState &dev,
     const bool use_lights = param_config.totalLightParamBytes > 0;
 
     vector<VkWriteDescriptorSet> desc_set_updates;
-    desc_set_updates.reserve(2 + 5); // Frame set + cull set
 
     const size_t num_vertex_inputs = use_materials ? 3 : 2;
 
@@ -1190,9 +1189,6 @@ static PerFrameState makeFrameState(const DeviceState &dev,
         };
     }
 
-    VkDescriptorSet frame_set = VK_NULL_HANDLE;
-    VkDescriptorSet cull_set = VK_NULL_HANDLE;
-
     VkDescriptorBufferInfo transform_info;
     VkDescriptorBufferInfo indirect_input_buffer_info;
     VkDescriptorBufferInfo indirect_output_buffer_info;
@@ -1203,21 +1199,18 @@ static PerFrameState makeFrameState(const DeviceState &dev,
     DrawInput *draw_ptr = nullptr;
 
     VkWriteDescriptorSet binding_update;
+    binding_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    binding_update.pNext = nullptr;
+    binding_update.dstArrayElement = 0;
+    binding_update.descriptorCount = 1;
+    binding_update.pTexelBufferView = nullptr;
 
     if (use_raster) {
-        frame_set = makeDescriptorSet(dev, frame_set_pool,
-                                      frame_set_layout);
-
-        binding_update.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        binding_update.pNext = nullptr;
         binding_update.dstSet = frame_set;
         binding_update.dstBinding = 0;
-        binding_update.dstArrayElement = 0;
-        binding_update.descriptorCount = 1;
         binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         binding_update.pImageInfo = nullptr;
         binding_update.pBufferInfo = &view_buffer_info;
-        binding_update.pTexelBufferView = nullptr;
         desc_set_updates.push_back(binding_update);
 
         if (light_ptr) {
@@ -1238,9 +1231,6 @@ static PerFrameState makeFrameState(const DeviceState &dev,
 
         draw_indirect_offset = 
             base_indirect_offset + param_config.drawIndirectOffset;
-
-        cull_set = makeDescriptorSet(dev, mesh_cull_set_pool,
-                                     mesh_cull_set_layout);
 
         transform_info = {
             param_buffer.buffer,
@@ -1289,34 +1279,59 @@ static PerFrameState makeFrameState(const DeviceState &dev,
         desc_set_updates.push_back(binding_update);
     }
 
-    VkDescriptorSet rt_set = VK_NULL_HANDLE;
-    VkDescriptorImageInfo storage_image_info;
+    VkDescriptorImageInfo color_storage_image_info;
+    VkDescriptorImageInfo depth_storage_image_info;
     VkDescriptorBufferInfo material_buffer_info;
 
     if (use_rt) {
-        rt_set = makeDescriptorSet(dev, rt_set_pool,
-                                   rt_set_layout);
-
-        // FIXME depth vs RGB output
-        storage_image_info = {
-            VK_NULL_HANDLE,                      
-            fb.attachmentViews[0],
-            VK_IMAGE_LAYOUT_GENERAL,
-        };
-
-        binding_update.dstSet = rt_set;
+        binding_update.dstSet = rgen_set;
         binding_update.dstBinding = 0;
-        binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        binding_update.pBufferInfo = nullptr;
-        binding_update.pImageInfo = &storage_image_info;
-        desc_set_updates.push_back(binding_update);
-
-        binding_update.dstBinding = 1;
         binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         binding_update.pBufferInfo = &view_buffer_info;
         binding_update.pImageInfo = nullptr;
         desc_set_updates.push_back(binding_update);
 
+        binding_update.dstSet = rchit_set;
+        desc_set_updates.push_back(binding_update);
+
+        uint32_t cur_view_offset = 0;
+        if (fb_cfg.colorOutput) {
+            color_storage_image_info = {
+                VK_NULL_HANDLE,                      
+                fb.attachmentViews[0],
+                VK_IMAGE_LAYOUT_GENERAL,
+            };
+
+            binding_update.dstSet = rgen_set;
+            binding_update.dstBinding = 1 + cur_view_offset;
+            binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            binding_update.pBufferInfo = nullptr;
+            binding_update.pImageInfo = &color_storage_image_info;
+            desc_set_updates.push_back(binding_update);
+
+            cur_view_offset++;
+        }
+
+        if (fb_cfg.depthOutput) {
+            depth_storage_image_info = {
+                VK_NULL_HANDLE,
+                fb.attachmentViews[cur_view_offset],
+                VK_IMAGE_LAYOUT_GENERAL,
+            };
+
+            binding_update.dstSet = rgen_set;
+            binding_update.dstBinding = 1 + cur_view_offset;
+            binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            binding_update.pBufferInfo = nullptr;
+            binding_update.pImageInfo = &depth_storage_image_info;
+            desc_set_updates.push_back(binding_update);
+
+            cur_view_offset++;
+        }
+
+        binding_update.dstSet = rchit_set;
+
+        uint32_t cur_rchit_offset = 1;
         if (material_ptr) {
             material_buffer_info = {
                 param_buffer.buffer,
@@ -1324,19 +1339,23 @@ static PerFrameState makeFrameState(const DeviceState &dev,
                 param_config.totalMaterialIndexBytes,
             };
 
-            binding_update.dstBinding = 2;
+            binding_update.dstBinding = cur_rchit_offset;
             binding_update.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             binding_update.pBufferInfo = &material_buffer_info;
             binding_update.pImageInfo = nullptr;
             desc_set_updates.push_back(binding_update);
+
+            cur_rchit_offset++;
         }
 
         if (light_ptr) {
-            binding_update.dstBinding = 3;
+            binding_update.dstBinding = cur_rchit_offset;
             binding_update.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             binding_update.pBufferInfo = &light_info;
             binding_update.pImageInfo = nullptr;
             desc_set_updates.push_back(binding_update);
+
+            cur_rchit_offset++;
         }
     }
 
@@ -1358,7 +1377,8 @@ static PerFrameState makeFrameState(const DeviceState &dev,
         depth_buffer_offset,
         cull_set,
         frame_set,
-        rt_set,
+        rgen_set,
+        rchit_set,
         move(vertex_buffers),
         move(vertex_offsets),
         transform_ptr,
@@ -1543,8 +1563,8 @@ CommandStreamState::CommandStreamState(
           }
           return move(opt_buffer.value());
       }()),
-      rt_desc_mgr_(dev, render_state.rtDescriptorLayout,
-                   render_state.makeRTDescriptorPool),
+      rt_desc_mgr_(dev, render_state.rtAccelDescriptorLayout,
+                   render_state.makeRTAccelDescriptorPool),
       mini_batch_size_(fb_cfg.miniBatchSize),
       num_mini_batches_(batch_size / mini_batch_size_),
       per_elem_render_size_(fb_cfg.imgWidth, fb_cfg.imgHeight),
@@ -1564,6 +1584,16 @@ CommandStreamState::CommandStreamState(
     assert(num_mini_batches_ * mini_batch_size_ == batch_size);
 
     frame_states_.reserve(num_frames_inflight);
+
+    auto condMakeDescriptorSet = [&](VkDescriptorPool pool,
+                                     VkDescriptorSetLayout layout) {
+        if (layout == VK_NULL_HANDLE) {
+            return (VkDescriptorSet)VK_NULL_HANDLE;
+        }
+
+        return makeDescriptorSet(dev, pool, layout);
+    };
+
     for (uint32_t frame_idx = 0; frame_idx < num_frames_inflight;
          frame_idx++) {
         frame_states_.emplace_back(makeFrameState(dev,
@@ -1573,12 +1603,14 @@ CommandStreamState::CommandStreamState(
                 per_render_buffer_,
                 indirect_draw_buffer_,
                 gfxPool,
-                render_state.frameDescriptorPool,
-                render_state.frameDescriptorLayout,
-                render_state.meshCullDescriptorPool,
-                render_state.meshCullDescriptorLayout,
-                render_state.rtImageDescriptorPool,
-                render_state.rtImageDescriptorLayout,
+                condMakeDescriptorSet(render_state.frameDescriptorPool,
+                                      render_state.frameDescriptorLayout),
+                condMakeDescriptorSet(render_state.meshCullDescriptorPool,
+                                      render_state.meshCullDescriptorLayout),
+                condMakeDescriptorSet(render_state.rgenDescriptorPool,
+                                      render_state.rgenDescriptorLayout),
+                condMakeDescriptorSet(render_state.rchitDescriptorPool,
+                                      render_state.rchitDescriptorLayout),
                 cpu_sync, batch_size,
                 frame_idx, num_frames_inflight, stream_idx,
                 !enable_rt_, enable_rt_));

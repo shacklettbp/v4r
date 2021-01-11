@@ -390,7 +390,7 @@ struct MaterialImpl<{parent_type}::MaterialParams> {{
 }};
 """
     
-    def gen_scene_layout(self):
+    def gen_scene_layouts(self):
         bindings = []
         rt_bindings = []
         rt_bindings.append(
@@ -431,17 +431,17 @@ f"""BindingConfig<{len(rt_bindings)}, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,
         sep = f",\n        "
         if len(bindings) == 0:
             return \
-f"""using PerSceneRTLayout = DescriptorLayout<
+f"""    using PerSceneRTLayout = DescriptorLayout<
         {sep.join(rt_bindings)}
     >;
 """
         else:
             return \
-f"""using PerSceneLayout = DescriptorLayout<
+f"""    using PerSceneLayout = DescriptorLayout<
         {sep.join(bindings)}
     >;
 
-using PerSceneRTLayout = DescriptorLayout<
+    using PerSceneRTLayout = DescriptorLayout<
         {sep.join(rt_bindings)}
     >;
 """
@@ -555,18 +555,57 @@ f"""BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
 
     frame_sep = ",\n        "
 
+    rgen_bindings = [
+f"""BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                      1, VK_SHADER_STAGE_RAYGEN_BIT_KHR>"""]
+    
+    if "needColorOutput" in props:
+        rgen_bindings.append(
+f"""BindingConfig<{len(rgen_bindings)}, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                      1, VK_SHADER_STAGE_RAYGEN_BIT_KHR>""")
+
+    if "needDepthOutput" in props:
+        rgen_bindings.append(
+f"""BindingConfig<{len(rgen_bindings)}, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                      1, VK_SHADER_STAGE_RAYGEN_BIT_KHR>""")
+
+    rchit_bindings = [
+f"""BindingConfig<0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                      1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>"""]
+
+    if "needMaterial" in props:
+        rchit_bindings.append(
+f"""BindingConfig<{len(rchit_bindings)}, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                      1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>""")
+
+    if "needLighting" in props:
+        rchit_bindings.append(
+f"""BindingConfig<{len(rchit_bindings)}, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                      1, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR>""")
+            
     layouts = \
 f"""using PerFrameLayout = DescriptorLayout<
         {frame_sep.join(frame_bindings)}
+    >;
+
+    using RGenDescriptorLayout = DescriptorLayout<
+        {frame_sep.join(rgen_bindings)}
+    >;
+
+    using RCHitDescriptorLayout = DescriptorLayout<
+        {frame_sep.join(rchit_bindings)}
+
     >;"""
 
-    per_scene_layout = material.gen_scene_layout()
+    per_scene_layouts = material.gen_scene_layouts()
 
-    if per_scene_layout:
+    if per_scene_layouts:
         layouts += \
 f"""
 
-    {per_scene_layout}"""
+{per_scene_layouts}
+
+"""
 
     return f"""template <>
 struct PipelineProps<{specialization_type}> {{
@@ -577,8 +616,12 @@ struct PipelineProps<{specialization_type}> {{
     static constexpr const char *fragmentShaderName =
         "{shader_name}.frag.spv";
 
+    static constexpr const char *rayGenShaderName =
+        "primary_{shader_name}.rgen.spv";
     static constexpr const char *closestHitShaderName =
         "primary_{shader_name}.rchit.spv";
+    static constexpr const char *missShaderName =
+        "primary_{shader_name}.rmiss.spv";
 
     {vertex.gen_attrs(specialization_type)}
 
@@ -693,8 +736,15 @@ def generate_pipelines(cfg_file, interface_path, implementation_path, cmake):
 
         for param_config in combinations:
             iface = InterfaceTracker()
+            rt_iface = InterfaceTracker()
             iface.bind(0) # set 0 binding 0 is ViewInfo
             iface.bind(0) # set 0 binding 1 is LightingInfo
+
+            rt_iface.bind(0) # set 0 binding 0 is ViewInfo
+            rt_iface.bind(1) # set 1 binding 0 is ViewInfo
+            rt_iface.bind(3) # Vertex buffer
+            rt_iface.bind(3) # Index buffer
+
             sampler_bound = False
             
             shader_name = pipeline_name
@@ -726,12 +776,18 @@ def generate_pipelines(cfg_file, interface_path, implementation_path, cmake):
                         if param_value == "Texture":
                             if not sampler_bound:
                                 iface.bind(1) # set 1 bind 0: texture sampler
+                                rt_iface.bind(3) # set 2 bind 2: texture sampler
                                 sampler_bound = True
 
                             texture_bind_num = iface.bind(1)
                             param_bind_define = \
                                 f"{param_define}_BIND={texture_bind_num}"
                             flag_defines.append(param_bind_define)
+
+                            rc_texture_bind_num = rt_iface.bind(3)
+                            rc_param_bind_define = \
+                        f"RCHIT_{param_define}_BIND={rc_texture_bind_num}"
+                            flag_defines.append(rc_param_bind_define)
 
                             material.add_param(param_name,
                                     "std::shared_ptr<Texture>",
@@ -785,16 +841,19 @@ def generate_pipelines(cfg_file, interface_path, implementation_path, cmake):
             # Miscellaneous flags
             if "needColorOutput" in props:
                 flag_defines.append(f"COLOR_OUT_LOC={iface.frag_out()}")
+                flag_defines.append(f"RGEN_COLOR_BIND={rt_iface.bind(0)}")
 
             if "needDepthOutput" in props:
                 flag_defines.append(f"DEPTH_LOC={iface.vert_out()}")
                 flag_defines.append(f"DEPTH_OUT_LOC={iface.frag_out()}")
+                flag_defines.append(f"RGEN_DEPTH_BIND={rt_iface.bind(0)}")
 
             if "needMaterial" in props:
                 material_input_location = iface.vert_in()
                 flag_defines.append(
                         f"MATERIAL_IN_LOC={material_input_location}")
                 flag_defines.append(f"MATERIAL_LOC={iface.vert_out()}")
+                flag_defines.append(f"RCHIT_MATERIAL_BIND={rt_iface.bind(1)}")
                 
                 packed_material = material.pack()
 
@@ -811,12 +870,17 @@ def generate_pipelines(cfg_file, interface_path, implementation_path, cmake):
                 material_param_bind = f"PARAM_BIND={param_bind_num}"
                 flag_defines.append(material_param_bind)
 
+                rc_param_bind_num = rt_iface.bind(3)
+                rc_material_param_bind = f"RCHIT_PARAM_BIND={rc_param_bind_num}"
+                flag_defines.append(rc_material_param_bind)
+
                 flag_defines += packed_material.gen_access_flags()
                 flag_defines.append(
                     f"NUM_PARAM_VECS={packed_material.num_param_vecs()}")
                 
             if "needLighting" in props:
                 flag_defines.append(f"CAMERA_POS_LOC={iface.vert_out()}")
+                flag_defines.append(f"RCHIT_LIGHT_BIND={rt_iface.bind(1)}")
 
             shader_name = shader_name.lower()
 

@@ -10,19 +10,19 @@ layout (push_constant, scalar) uniform PushConstant {
     RTRenderPushConstant render_const;
 };
 
-#ifdef OUTPUT_COLOR
-layout (set = 0, binding = RGEN_COLOR_POS, rgba8) uniform image2D colorImage;
-#endif
-
-#ifdef OUTPUT_DEPTH
-layout (set = 0, binding = RGEN_DEPTH_POS, r32) uniform image2D depthImage;
-#endif
-
-layout (set = 0, binding = RGEN_VIEW_POS) readonly buffer ViewInfos {
+layout (set = 0, binding = 0) readonly buffer ViewInfos {
     ViewInfo view_info[];
 };
 
-layout (set = 1, binding = 0) uniform accelerationStructureEXT tlas;
+#ifdef OUTPUT_COLOR
+layout (set = 0, binding = RGEN_COLOR_BIND, rgba8) uniform image2D colorImage;
+#endif
+
+#ifdef OUTPUT_DEPTH
+layout (set = 0, binding = RGEN_DEPTH_BIND, r32f) uniform image2D depthImage;
+#endif
+
+layout (set = 2, binding = 0) uniform accelerationStructureEXT tlas;
 
 layout (location = 0) rayPayloadEXT RTPayload payload;
 
@@ -54,6 +54,6 @@ void main()
 #ifdef OUTPUT_DEPTH
 	imageStore(depthImage, ivec2(gl_LaunchIDEXT.xy) + ivec2(render_const.xOffset,
                                                             render_const.yOffset),
-               vec4(payload.depth, 1.f));
+               vec4(payload.depth, 0.f, 0.f, 0.f));
 #endif
 }

@@ -128,11 +128,14 @@ struct RenderState {
     VkDescriptorSetLayout sceneDescriptorLayout;
     DescriptorManager::MakePoolType makeScenePool;
 
-    VkDescriptorSetLayout rtDescriptorLayout;
-    DescriptorManager::MakePoolType makeRTDescriptorPool;
+    VkDescriptorSetLayout rtAccelDescriptorLayout;
+    DescriptorManager::MakePoolType makeRTAccelDescriptorPool;
 
-    VkDescriptorSetLayout rtImageDescriptorLayout;
-    VkDescriptorPool rtImageDescriptorPool;
+    VkDescriptorSetLayout rgenDescriptorLayout;
+    VkDescriptorPool rgenDescriptorPool;
+
+    VkDescriptorSetLayout rchitDescriptorLayout;
+    VkDescriptorPool rchitDescriptorPool;
 
     VkDescriptorSetLayout rtSceneDescriptorLayout;
     DescriptorManager::MakePoolType makeRTScenePool;
@@ -195,7 +198,8 @@ struct PerFrameState {
 
     VkDescriptorSet cullSet;
     VkDescriptorSet frameSet;
-    VkDescriptorSet rtSet;
+    VkDescriptorSet rgenSet;
+    VkDescriptorSet rchitSet;
 
     DynArray<VkBuffer> vertexBuffers;
     DynArray<VkDeviceSize> vertexOffsets;

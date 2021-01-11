@@ -292,7 +292,13 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
         dev.dt.cmdBindDescriptorSets(render_cmd,
                                      VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
                                      pipeline.rtState->layout, 0,
-                                     1, &frame_state.rtSet,
+                                     1, &frame_state.rgenSet,
+                                     0, nullptr);
+
+        dev.dt.cmdBindDescriptorSets(render_cmd,
+                                     VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
+                                     pipeline.rtState->layout, 1,
+                                     1, &frame_state.rchitSet,
                                      0, nullptr);
 
         auto input_profile = Profiler::start(ProfileType::InputSetup);
@@ -354,13 +360,13 @@ uint32_t CommandStreamState::render(const std::vector<Environment> &envs,
 
             dev.dt.cmdBindDescriptorSets(render_cmd,
                                          VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
-                                         pipeline.rtState->layout, 1,
+                                         pipeline.rtState->layout, 2,
                                          1, &env.state_->rtState->tlasSet.hdl,
                                          0, nullptr);
 
             dev.dt.cmdBindDescriptorSets(render_cmd,
                                          VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR,
-                                         pipeline.rtState->layout, 2,
+                                         pipeline.rtState->layout, 3,
                                          1, &scene.rtSet->hdl,
                                          0, nullptr);
 

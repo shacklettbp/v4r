@@ -1,6 +1,8 @@
 set(VERTEX_SHADER shaders/uber.vert)
 set(FRAGMENT_SHADER shaders/uber.frag)
+set(PRIMARY_RAYGEN_SHADER shaders/primary_uber.rgen)
 set(PRIMARY_HIT_SHADER shaders/primary_uber.rchit)
+set(PRIMARY_MISS_SHADER shaders/primary_uber.rmiss)
 set(SHADER_DEPENDENCIES
     shaders/shader_common.h
     shaders/mesh_common.h
@@ -14,7 +16,9 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 set(CFG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/pipeline_cfg.json")
 set(VERTEX_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${VERTEX_SHADER}")
 set(FRAGMENT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${FRAGMENT_SHADER}")
+set(PRIMARY_RAYGEN_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${PRIMARY_RAYGEN_SHADER}")
 set(PRIMARY_HIT_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${PRIMARY_HIT_SHADER}")
+set(PRIMARY_MISS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/${PRIMARY_MISS_SHADER}")
 
 set(IFACE_DIR "${CMAKE_CURRENT_BINARY_DIR}/interface")
 set(IMPL_DIR "${CMAKE_CURRENT_BINARY_DIR}/implementation")
@@ -60,11 +64,11 @@ FOREACH(CFG_STR ${SHADER_DEFINES})
 
     add_shader("${SHADER_NAME}.vert" "${VERTEX_SRC}" "${SHADER_ARGS}")
     add_shader("${SHADER_NAME}.frag" "${FRAGMENT_SRC}" "${SHADER_ARGS}")
+    add_shader("primary_${SHADER_NAME}.rgen" "${PRIMARY_RAYGEN_SRC}" "${SHADER_ARGS}")
     add_shader("primary_${SHADER_NAME}.rchit" "${PRIMARY_HIT_SRC}" "${SHADER_ARGS}")
+    add_shader("primary_${SHADER_NAME}.rmiss" "${PRIMARY_MISS_SRC}" "${SHADER_ARGS}")
 ENDFOREACH()
 
 add_shader("meshcull.comp" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/meshcull.comp" "")
-add_shader("primary.rgen" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/primary.rgen" "")
-add_shader("primary.rmiss" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/primary.rmiss" "")
 
 add_custom_target(compile_shaders DEPENDS ${COMPILED_SHADERS})

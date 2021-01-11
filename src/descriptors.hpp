@@ -26,6 +26,16 @@ template<typename... Binding>
 struct DescriptorLayout {
     static constexpr size_t NumBindings = sizeof...(Binding);
 
+    static VkDescriptorSetLayout makeSetLayout(
+        const DeviceState &dev)
+    {
+        std::array<VkSampler *, NumBindings> layout_args;
+        layout_args.fill(nullptr);
+        return apply([&](auto ...args) {
+            return makeSetLayout(dev, args...);
+        }, layout_args);
+    }
+
     template<typename... SamplerType>
     static VkDescriptorSetLayout makeSetLayout(
             const DeviceState &dev,
