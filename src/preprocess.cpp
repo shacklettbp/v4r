@@ -193,8 +193,8 @@ vector<MeshChunk> assignChunks(const vector<Meshlet> &meshlets)
             radius,
             cur_meshlet_idx,
             cur_num_meshlets,
-            0, // Set to mesh vertex offset in processMesh
             chunk_index_offset, // Updated to be global offset
+            0, // Padding
         });
 
         // FIXME hack
