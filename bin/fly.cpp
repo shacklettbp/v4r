@@ -103,10 +103,8 @@ int main(int argc, char *argv[]) {
 
     RenderDoc rdoc;
 
-    using Pipeline = BlinnPhong<RenderOutputs::Color,
-                                DataSource::Uniform,
-                                DataSource::Uniform,
-                                DataSource::Uniform>;
+    using Pipeline = Unlit<RenderOutputs::Color,
+                           DataSource::Texture>;
 
     BatchPresentRenderer renderer({0, 1, 1, 1, 1024, 1024,
         glm::mat4(1.f) },

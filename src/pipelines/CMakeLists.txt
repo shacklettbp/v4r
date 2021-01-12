@@ -6,6 +6,7 @@ set(PRIMARY_MISS_SHADER shaders/primary_uber.rmiss)
 set(SHADER_DEPENDENCIES
     shaders/shader_common.h
     shaders/mesh_common.h
+    shaders/rt_common.h
     shaders/brdf.glsl)
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS

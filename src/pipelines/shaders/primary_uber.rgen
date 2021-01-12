@@ -28,22 +28,18 @@ layout (location = 0) rayPayloadEXT RTPayload payload;
 
 void main()
 {
-	const vec2 raster = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
-	const vec2 norm_raster = raster / vec2(gl_LaunchSizeEXT.xy);
-	vec2 screen = norm_raster * 2.0 - 1.0;
-
+    // FIXME, don't use view / projection matrices here
     mat4 view_inv = inverse(view_info[render_const.batchIdx].view);
     mat4 proj_inv = inverse(view_info[render_const.batchIdx].projection);
 
-	vec4 o = view_inv * vec4(0, 0, 0, 1);
-	vec4 cam_pos = proj_inv * vec4(screen.x, screen.y, 1, 1);
-	vec4 d = view_inv * vec4(normalize(cam_pos.xyz), 0);
+    vec3 o = (view_inv * vec4(0, 0, 0, 1)).xyz;
+    vec3 d = computeRayDir(gl_LaunchIDEXT.xy, view_inv, proj_inv);
 
 	float tmin = 0.00001f;
 	float tmax = 10000.f;
 
-    traceRayEXT(tlas, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, o.xyz,
-                tmin, d.xyz, tmax, 0);
+    traceRayEXT(tlas, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, o,
+                tmin, d, tmax, 0);
 
 #ifdef OUTPUT_COLOR
 	imageStore(colorImage, ivec2(gl_LaunchIDEXT.xy) + ivec2(render_const.xOffset,

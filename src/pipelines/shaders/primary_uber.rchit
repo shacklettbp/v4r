@@ -160,6 +160,80 @@ uvec3 computeIndices()
                  indices[nonuniformEXT(base_primitive + 2)]);
 }
 
+#ifdef HAS_TEXTURES
+void computePrimaryDerivatives(in uvec3 indices, out vec2 dpdx,
+                               out vec2 dpdy)
+{
+    // Barycentric derivatives
+    vec3 p0 = vec3(vertices[indices.x].px,
+                   vertices[indices.x].py,
+                   vertices[indices.x].pz);
+
+    vec3 p1 = vec3(vertices[indices.y].px,
+                   vertices[indices.y].py,
+                   vertices[indices.y].pz);
+
+    vec3 p2 = vec3(vertices[indices.z].px,
+                   vertices[indices.z].py,
+                   vertices[indices.z].pz);
+
+    vec2 uv0 = vec2(vertices[indices.x].ux,
+                    vertices[indices.x].uy);
+
+    vec2 uv1 = vec2(vertices[indices.y].ux,
+                    vertices[indices.y].uy);
+
+    vec2 uv2 = vec2(vertices[indices.z].ux,
+                    vertices[indices.z].uy);
+
+    vec3 d = gl_WorldRayDirectionEXT;
+    float t = gl_HitTEXT;
+    
+    vec3 e1 = p1 - p0;
+    vec3 e2 = p2 - p0;
+
+    vec3 cu = cross(e2, d);
+    vec3 cv = cross(d, e1);
+
+    // FIXME don't use view / projection matrices here
+    mat4 view_inv = inverse(view_info[render_const.batchIdx].view);
+    mat4 proj_inv = inverse(view_info[render_const.batchIdx].projection);
+
+    vec3 d_rightx = computeRayDir(gl_LaunchIDEXT.xy + uvec2(1, 0), view_inv,
+                                  proj_inv);
+
+    vec3 d_upy = computeRayDir(gl_LaunchIDEXT.xy + uvec2(0, 1), view_inv,
+                               proj_inv);
+
+    vec3 rbar = d_rightx - gl_WorldRayDirectionEXT;
+    vec3 ubar = d_upy - gl_WorldRayDirectionEXT;
+
+    vec3 ddir_drasterx = (dot(d, d) * rbar - dot(d, rbar) * d) /
+                         pow(dot(d, d), 1.5f);
+    vec3 ddir_drastery = (dot(d, d) * ubar - dot(d, ubar) * d) /
+                         pow(dot(d, d), 1.5f);
+
+    vec3 q = ddir_drasterx * t;
+    vec3 r = ddir_drastery * t;
+
+    float k = dot(cross(e1, e2), d);
+
+    float dbx_dx = 1.f / k * dot(cu, q);
+    float dbx_dy = 1.f / k * dot(cu, r);
+    float dby_dx = 1.f / k * dot(cv, q);
+    float dby_dy = 1.f / k * dot(cv, r);
+
+    vec2 g1 = uv1 - uv0;
+    vec2 g2 = uv2 - uv0;
+
+    dpdx = vec2(dbx_dx * g1.x + dby_dx * g2.x,
+                dbx_dx * g1.y + dby_dx * g2.y);
+
+    dpdy = vec2(dbx_dy * g1.x + dby_dy * g2.x,
+                dbx_dy * g1.y + dby_dy * g2.y);
+}
+#endif
+
 #ifdef OUTPUT_COLOR
 #ifdef LIT_PIPELINE
 
@@ -255,6 +329,8 @@ vec3 computeColor()
 
 #ifdef HAS_TEXTURES
     vec2 uv = readUV(barycentrics, idxs);
+    vec2 dpdx, dpdy;
+    computePrimaryDerivatives(idxs, dpdx, dpdy);
 #endif
 
 #ifdef HAS_MATERIALS
@@ -262,8 +338,8 @@ vec3 computeColor()
 #endif
 
 #ifdef ALBEDO_COLOR_TEXTURE
-    vec3 albedo = texture(sampler2D(albedo_textures[material_idx],
-                                    texture_sampler), uv).xyz;
+    vec3 albedo = textureGrad(sampler2D(albedo_textures[material_idx],
+                                        texture_sampler), uv, dpdx, dpdy).xyz;
 
 #endif
 
