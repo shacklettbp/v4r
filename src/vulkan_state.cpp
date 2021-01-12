@@ -1399,6 +1399,7 @@ static void recordFBToLinearCopy(const DeviceState &dev,
     // FIXME move this to FramebufferState
     vector<VkImageMemoryBarrier> fb_barriers;
 
+    uint32_t view_offset = 0;
     if (fb_cfg.colorOutput) {
         fb_barriers.emplace_back(VkImageMemoryBarrier {
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1411,12 +1412,14 @@ static void recordFBToLinearCopy(const DeviceState &dev,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             VK_QUEUE_FAMILY_IGNORED,
             VK_QUEUE_FAMILY_IGNORED,
-            fb.attachments[0].image,
+            fb.attachments[view_offset].image,
             {
                 VK_IMAGE_ASPECT_COLOR_BIT,
                 0, 1, 0, 1
             }
         });
+
+        view_offset++;
     }
 
     if (fb_cfg.depthOutput) {
@@ -1431,12 +1434,14 @@ static void recordFBToLinearCopy(const DeviceState &dev,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             VK_QUEUE_FAMILY_IGNORED,
             VK_QUEUE_FAMILY_IGNORED,
-            fb.attachments[fb.attachments.size() - 2].image,
+            fb.attachments[view_offset].image,
             {
                 VK_IMAGE_ASPECT_COLOR_BIT,
                 0, 1, 0, 1
             }
         });
+
+        view_offset++;
     }
 
     VkCommandBuffer copy_cmd = state.commands[1];
@@ -1496,14 +1501,19 @@ static void recordFBToLinearCopy(const DeviceState &dev,
                                     copy_regions.data());
     };
 
+    uint32_t attachment_offset = 0;
     if (fb_cfg.colorOutput) {
         make_copy_cmd(state.colorBufferOffset, sizeof(uint8_t) * 4,
-                      fb.attachments[0].image);
+                      fb.attachments[attachment_offset].image);
+
+        attachment_offset++;
     }
 
     if (fb_cfg.depthOutput) {
         make_copy_cmd(state.depthBufferOffset, sizeof(float),
-                      fb.attachments[fb.attachments.size() - 2].image);
+                      fb.attachments[attachment_offset].image);
+
+        attachment_offset++;
     }
 
     if (rt_primary) {
@@ -1620,35 +1630,61 @@ CommandStreamState::CommandStreamState(
     }
 
     if (enable_rt) {
-        // FIXME, depth output
         VkCommandBuffer fb_init_command = frame_states_[0].commands[0];
 
         VkCommandBufferBeginInfo begin_info {};
         begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         REQ_VK(dev.dt.beginCommandBuffer(fb_init_command, &begin_info));
 
-        VkImageMemoryBarrier storage_barrier {
-            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-            nullptr,
-            0,
-            VK_ACCESS_SHADER_WRITE_BIT,
-            VK_IMAGE_LAYOUT_UNDEFINED,
-            VK_IMAGE_LAYOUT_GENERAL,
-            VK_QUEUE_FAMILY_IGNORED,
-            VK_QUEUE_FAMILY_IGNORED,
-            fb_.attachments[0].image,
-            {
-                VK_IMAGE_ASPECT_COLOR_BIT,
-                0, 1, 0, 1
-            }
-        };
+        vector<VkImageMemoryBarrier> fb_barriers;
+
+        uint32_t view_offset = 0;
+        if (fb_cfg.colorOutput) {
+            fb_barriers.push_back(VkImageMemoryBarrier {
+                VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                nullptr,
+                0,
+                VK_ACCESS_SHADER_WRITE_BIT,
+                VK_IMAGE_LAYOUT_UNDEFINED,
+                VK_IMAGE_LAYOUT_GENERAL,
+                VK_QUEUE_FAMILY_IGNORED,
+                VK_QUEUE_FAMILY_IGNORED,
+                fb_.attachments[view_offset].image,
+                {
+                    VK_IMAGE_ASPECT_COLOR_BIT,
+                    0, 1, 0, 1
+                }
+            });
+
+            view_offset++;
+        }
+
+        if (fb_cfg.depthOutput) {
+            fb_barriers.push_back(VkImageMemoryBarrier {
+                VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                nullptr,
+                0,
+                VK_ACCESS_SHADER_WRITE_BIT,
+                VK_IMAGE_LAYOUT_UNDEFINED,
+                VK_IMAGE_LAYOUT_GENERAL,
+                VK_QUEUE_FAMILY_IGNORED,
+                VK_QUEUE_FAMILY_IGNORED,
+                fb_.attachments[view_offset].image,
+                {
+                    VK_IMAGE_ASPECT_COLOR_BIT,
+                    0, 1, 0, 1
+                }
+            });
+
+            view_offset++;
+        }
 
         dev.dt.cmdPipelineBarrier(fb_init_command,
                                   VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                                   VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
                                   0,
                                   0, nullptr, 0, nullptr,
-                                  1, &storage_barrier);
+                                  fb_barriers.size(), fb_barriers.data());
 
         REQ_VK(dev.dt.endCommandBuffer(fb_init_command));
 
